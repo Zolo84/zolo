@@ -121,6 +121,24 @@ fn print_warnings(warnings: &[Warning], limit: usize) {
     }
 }
 
+/// Counts warnings per file and per message so systematic parser gaps stand out.
+fn summarize_warnings(warnings: &[Warning]) {
+    let mut by_file: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut by_message: BTreeMap<&str, usize> = BTreeMap::new();
+    for w in warnings {
+        *by_file.entry(&w.file).or_default() += 1;
+        *by_message.entry(&w.message).or_default() += 1;
+    }
+    for (title, counts) in [("files", by_file), ("messages", by_message)] {
+        let mut counts: Vec<_> = counts.into_iter().collect();
+        counts.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+        println!("  top {title} ({} distinct):", counts.len());
+        for (name, n) in counts.iter().take(15) {
+            println!("    {n:>6}  {name}");
+        }
+    }
+}
+
 fn scan(args: &Args) -> Result<(), String> {
     let vfs = args.vfs()?;
     let files = vfs.walk();
@@ -159,6 +177,7 @@ fn scan(args: &Args) -> Result<(), String> {
         "\nparsed {parsed} script files: {} parse warnings",
         warnings.len()
     );
+    summarize_warnings(&warnings);
     print_warnings(&warnings, 30);
 
     let mut warnings = Vec::new();

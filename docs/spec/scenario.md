@@ -89,7 +89,8 @@ Full (§4.14, §7).
 | `scenarios\<тека>\vp.inc` | тека include | провінції: переможні очки (`points`) | `Models/Game.cs:493`, `Writers/ScenarioWriter.cs:936-958` |
 | `scenarios\data\...` | — | зображення панелей сценаріїв (`panel`), стартова тека для вибору include-теки | `Models/Game.cs:313`, `Forms/ScenarioEditorForm.cs:831`, `:850` |
 | `ai\*.ai` | тека `ai` | AI-файли країн (ключ `ai`) | `Models/Game.cs:218`, `Forms/ScenarioEditorForm.cs:6757` |
-| `scenario_text.csv` | тека `config` (припущення щодо теки) | рядки локалізації, що їх редактор додає для назв сценарію/союзів/провінцій | `Models/Game.cs:418`, `Controllers/ScenarioEditorController.cs:3133` |
+| `config\scenario_text.csv` | тека `config` (з урахуванням мод/експорт-кореня) | рядки локалізації, що їх редактор додає для назв сценарію/союзів/провінцій | `Models/Game.cs:223`, `:418`, `Models/Config.cs:747-749`, `Controllers/ScenarioEditorController.cs:3133` |
+| `scenarios\data\propaganda_<TAG>.bmp` | `scenarios\data` | запасне пропагандистське зображення головної країни, якщо `picture` порожній або файл відсутній (поведінка редактора; чи робить так гра — припущення) | `Forms/ScenarioEditorForm.cs:1683-1684` |
 
 Порівняння імен спеціальних include-файлів — **нечутливе до регістру** (`bases_DOD.inc` == `bases_dod.inc`)
 (`Parsers/ScenarioParser.cs:10157-10181`), але при записі редактор використовує саме написання
@@ -105,7 +106,12 @@ Full (§4.14, §7).
   `<tag у нижньому регістрі>.inc`, **крім** тегу `CON`, для якого використовується `congo.inc`
   (`Models/Scenarios.cs:786-790`) — бо `CON` є зарезервованим іменем пристрою у Windows (припущення щодо
   причини). Новий include дописується у вигляді `scenarios\<тека>\<файл>` (`Models/Scenarios.cs:799`).
-* Якщо ім'я файлу невідоме при збереженні — `<tag>.inc` (`Models/Scenarios.cs:624-626`).
+* Якщо ім'я файлу невідоме при збереженні — `<tag у нижньому регістрі>.inc` (`Models/Scenarios.cs:624-626`).
+  Зберігається лише ім'я файлу (без теки): при записі файл кладеться в `scenarios\<тека include>\`
+  (`Parsers/ScenarioParser.cs:304-311`, `Models/Scenarios.cs:615-626`). Квірк: якщо перший блок `country` для
+  тегу стоїть прямо у верхньому `.eug`, «ім'ям файлу країни» стане ім'я самого `.eug`.
+* Блок `country` без ключа `tag` не відкидається: він отримує «порожній» тег (`Country.None`) і додається до
+  списку країн (`Parsers/ScenarioParser.cs:3801`, `:300-310`) — для реалізації такий блок слід вважати помилкою.
 
 ### 2.4 «Верхній» файл vs. включений
 
@@ -140,6 +146,10 @@ Full (§4.14, §7).
   буде прочитано за BOM (поведінка .NET, не код редактора; припущення щодо практичної значущості).
 * Лексер приймає `\r\n`, `\r` і `\n` як кінець рядка (`Parsers/TextLexer.cs:237-255`). Редактор пише через
   `StreamWriter.WriteLine` під Windows → **CRLF**, без BOM (припущення щодо платформи виконання).
+* Шляхи в `include`/`event`/`ai`/`panel`/`picture` записуються з роздільником `\` (напр.
+  `scenarios\1936\ger.inc`, `Models/Scenarios.cs:799`) і резолвляться через Windows-API, тобто **без урахування
+  регістру**. Реалізація під Linux/macOS має нормалізувати `\` → `/` і шукати файли регістронезалежно
+  (припущення, що оригінальні файли мають розбіжності регістру — на Windows це непомітно).
 
 ---
 
@@ -151,8 +161,8 @@ Full (§4.14, §7).
 |---|---|---|
 | пробіли/керуючі | будь-який `char.IsWhiteSpace` або `char.IsControl`; пропускаються | `Parsers/TextLexer.cs:235-256` |
 | коментар | `#` поза рядком — до кінця рядка | `Parsers/TextLexer.cs:259-265` |
-| число | починається з цифри, `-` або `.`; далі цифри й одна `.`; парсинг `double` з `InvariantCulture` (крапка як роздільник, допускається експонента `NumberStyles.Float`) | `Parsers/TextLexer.cs:273-276`, `:335-404`, `Utilities/DoubleHelper.cs:349-352` |
-| число→ідентифікатор | якщо після цифр (без `-` і без `.`) йде літера або `_`, токен стає **ідентифікатором** (напр. `1abc`) | `Parsers/TextLexer.cs:377-394` |
+| число | починається з цифри, `-` або `.`; далі лише цифри й не більше однієї `.`; текст парситься як `double` з `InvariantCulture` (крапка як роздільник). Експонентна форма **неможлива**: лексер ніколи не включає `e`/`E` у числовий токен (див. наступний рядок), хоча `DoubleHelper.TryParse` її б і прийняв. Голий `-` або `.` дає невалідний токен | `Parsers/TextLexer.cs:273-276`, `:335-404`, `Utilities/DoubleHelper.cs:349-352` |
+| число→ідентифікатор | якщо після цифр (без `-` і без `.`) йде літера або `_`, токен стає **ідентифікатором** (напр. `1abc`, `1e5`); якщо вже була `-` або `.`, літера просто завершує число (`1.5e3` → число `1.5` + ідентифікатор `e3`) | `Parsers/TextLexer.cs:368-394` |
 | ідентифікатор | починається з літери або `_`; далі літери, цифри, `_`. «Літера» — у сенсі Unicode, тобто символи CP1252 типу `é` теж допустимі | `Parsers/TextLexer.cs:279-282`, `:410-437` |
 | рядок | `"` … `"`; **без екранування**; незакритий рядок обривається на кінці рядка | `Parsers/TextLexer.cs:285-289`, `:443-476` |
 | `=`, `{`, `}` | окремі токени | `Parsers/TextLexer.cs:292-310` |
@@ -177,7 +187,7 @@ Full (§4.14, §7).
 | id-list | `{ N N … }` — цілі | `Parsers/ScenarioParser.cs:9255-9313` |
 | date | блок `{ year month day hour }` (§5.1) | `Parsers/ScenarioParser.cs:9394-9571` |
 | type-id | блок `{ type = int id = int }` | `Parsers/ScenarioParser.cs:9578-9664` |
-| flags | блок пар `ключ = значення`, ключ — ідентифікатор **або число**, значення — `0`/`1` або `yes`/`no`; зберігається текст значення як є | `Parsers/ScenarioParser.cs:9671-9769` |
+| flags | блок пар `ключ = значення`, ключ — ідентифікатор **або число**; регістр ключа **зберігається** (ключ не переводиться в нижній регістр, на відміну від ключових слів); значення — число, що після усічення до цілого дає `0`/`1`, або `yes`/`no` (без регістру); зберігається текст значення як є (`Yes` лишиться `Yes`); інші значення відкидаються | `Parsers/ScenarioParser.cs:9671-9769` |
 | building-size | або голе число (`ic = 2`), або блок `{ size = double current_size = double }` (обидва ≥ 0; від'ємні відкидаються) | `Parsers/ScenarioParser.cs:2563-2667` |
 | division-type | ідентифікатор з таблиці типів дивізій поточної гри | `Parsers/ScenarioParser.cs:10022-10064` |
 | brigade-type | ідентифікатор з таблиці типів бригад поточної гри | `Parsers/ScenarioParser.cs:10071-10113` |
@@ -192,10 +202,23 @@ Full (§4.14, §7).
 
 * Невідоме ключове слово в будь-якому блоці → пропуск до кінця рядка (`lexer.SkipLine`, напр.
   `Parsers/ScenarioParser.cs:315-317`).
+* Якщо після `ключ =` стоїть токен не того типу (напр. рядок замість числа), примітив повертає «нічого»,
+  токен значення вже спожито, але решта рядка **не** пропускається — розбір продовжується з наступного токена
+  (`Parsers/ScenarioParser.cs:9780-9800` та аналогічні). Відсутній `=` після ключа скалярного примітива
+  пропускає решту рядка; у блокових примітивах (`date`, `typeid`, id-список) — ні.
+* Невалідне значення `dormant_leaders` (не `yes`/`no` і не `{`) у `globaldata` змушує парсер повернути «нічого»
+  для **всього** блоку `globaldata` — він губиться цілком (`Parsers/ScenarioParser.cs:1085-1089`).
 * **Евристика пропущеної `}`**: у блоках юніта, дивізії, виробничої черги дивізії, `spyinfo` і в id-списках
   редактор запам'ятовує номер рядка останнього успішно розібраного ключа. Якщо незнайомий токен стоїть на
   **іншому** рядку, вважається, що автор забув `}`: токен повертається в потік і блок закривається
   (`Parsers/ScenarioParser.cs:6430-6438`, `:7707-7715`, `:8353-8361`, `:5479-5487`, `:9291-9303`).
+  Наслідки: (а) в id-списку початкове значення «останнього рядка» — `-1`, тож будь-який нечисловий токен одразу
+  після `{` закриває список; (б) вкладений `landunit` усередині `landunit` не є допустимим ключем і, якщо стоїть
+  на новому рядку, **закриває зовнішній** `landunit` — далі країна розбирає його як сусідній юніт
+  (`Parsers/ScenarioParser.cs:6387`, `:6430-6438`). У блоках (юніт, дивізія, черга дивізій, `spyinfo`)
+  евристика діє лише для невідомих **ідентифікаторів** (інші токени просто пропускають рядок); в id-списку — для
+  будь-якого нечислового токена (`Parsers/ScenarioParser.cs:9290-9303`). У `mission`, `convoy`, `convoy_development`,
+  `province_development` її немає.
 * У `diplomacy` будь-який невідомий ключ одразу закриває блок (токен повертається)
   (`Parsers/ScenarioParser.cs:3641-3644`).
 * На рівні юніта ключі `strength` і `locked` (насправді дивізійні) читаються й **відкидаються**
@@ -235,7 +258,9 @@ Full (§4.14, §7).
 Порядок, у якому редактор пише `.eug` (`Writers/ScenarioWriter.cs:22-37`): `name`, `panel`, `header`,
 `globaldata`, `history`, `sleepevent`, `save_date`, `map`, рядок-коментар `# ###################` і всі
 `event`, потім усі `include`. Блоки `province`/`country` у `.eug` редактор **не пише** (вони живуть у
-`.inc`).
+`.inc`). `name` і `panel` пишуться завжди (навіть як `""`), `history`/`sleepevent`/`save_date` — лише непорожні,
+`map` — лише якщо блок був (`Writers/ScenarioWriter.cs:26-27`, `:44-131`). `event` та `include` приймають
+лише рядок у лапках (`ParseString`).
 
 Псевдоприклад (власний):
 
@@ -284,9 +309,14 @@ include = "scenarios\1936\ger.inc"
 | `name` | str\|ident | ключ локалізації назви країни | **DH ≥ 1.04** | `:764-779` |
 | `flag_ext` | str\|ident | суфікс прапора | **DH ≥ 1.04** | `:782-794` |
 
-Якщо `desc` порожній, редактор показує текст за ключем `<TAG>_<yy>_DESC` (yy = дві останні цифри року
-старту з `globaldata.startdate`, інакше `header.startdate`, інакше `header.startyear`), а якщо такого нема —
-`<TAG>_DESC` (`Controllers/ScenarioEditorController.cs:1964-1983`) (припущення, що гра робить так само).
+Якщо `desc` порожній, редактор показує текст за ключем `<TAG>_<yy>_DESC` (yy = рік старту за модулем 100 з
+`globaldata.startdate`, інакше `header.startdate`, інакше `header.startyear`; число **без** доповнення нулем,
+тобто для 1905 р. ключ `<TAG>_5_DESC`), а якщо такого нема — `<TAG>_DESC`
+(`Controllers/ScenarioEditorController.cs:1964-1983`) (припущення, що гра робить так само).
+
+Якщо `picture` порожній або файлу нема, редактор бере `scenarios\data\propaganda_<TAG>.bmp`; прозорим вважає колір
+лівого верхнього пікселя. Для `panel` прозорим вважається колір Lime (`#00FF00`)
+(`Forms/ScenarioEditorForm.cs:873`, `:1667-1692`) — поведінка відображення редактора, для гри — припущення.
 
 Порядок запису в один рядок: `desc`, `countrytactics`, `bottom`, `picture`, `flag_ext`, `name`, `songs`
 (`Writers/ScenarioWriter.cs:247-279`); `flag_ext` і `name` пишуться **без** лапок.
@@ -305,7 +335,7 @@ include = "scenarios\1936\ger.inc"
 | `war` | block | війна; повтор (§4.4.2) | `:971-983` |
 | `treaty` | block | договір; повтор (§4.4.3) | `:986-1011` |
 | `flags` | flags{} | глобальні прапорці подій; **останній** блок замінює | `:1014-1026` |
-| `queued_events` | block | `{ event = { tag = TAG id = int hour = int } … }` — події в черзі (збереження) | `:1029-1041`, `:1183-1362` |
+| `queued_events` | block | `{ event = { tag = TAG id = int hour = int } … }` — події в черзі (збереження); `tag` — країна, для якої спрацює подія, `id` — ID події, `hour` — час очікування до спрацювання (у моделі «イベント発生待ち時間»; одиниця — години, припущення за назвою); повтор блоку — додається | `:1029-1041`, `:1183-1362`, `Models/Scenario.cs:670-690` |
 | `dormant_leaders` | `yes`/`no` **або** ids{} | `yes` — усі генерали «сплячі»; список — конкретні ID | `:1044-1123` |
 | `dormant_ministers` | ids{} | «сплячі» міністри | `:1126-1138` |
 | `dormant_teams` | ids{} | «сплячі» дослідницькі команди | `:1141-1153` |
@@ -327,7 +357,10 @@ include = "scenarios\1936\ger.inc"
 
 Без `name` три стандартні союзи мають назви `EYR_AXIS`, `EYR_ALLIES`, `EYR_COM`
 (`Models/Config.cs:200-202`, `Controllers/ScenarioEditorController.cs:2007-2019`). Редактор пише стандартний
-союз лише якщо в нього є `id` (`Writers/ScenarioWriter.cs:393-404`).
+союз лише якщо в нього є `id` (`Writers/ScenarioWriter.cs:393-404`). Порядок запису союзу: `id`, `name` (у
+лапках), `defensive = yes` (лише якщо так), `participant = { … }` (завжди). Для `attackers`/`defenders` війни
+пишуться лише `id` і `participant` (`Writers/ScenarioWriter.cs:460-532`). Повторний `participant` у союзі
+дописує теги; повторні `axis`/`allies`/`comintern` замінюють попередній блок.
 
 #### 4.4.2 `war` (`Parsers/ScenarioParser.cs:3146-3277`)
 
@@ -361,7 +394,13 @@ include = "scenarios\1936\ger.inc"
 договір вважається `non_aggression` (перше значення enum, `Models/Scenario.cs:1875-1880`) (припущення:
 так виходить із дефолту enum). Редактор пише `country` як рядок у лапках: `country = "GER"`
 (`Writers/ScenarioWriter.cs:553-554`). Договори не є симетричними об'єктами в файлі, але редактор будує
-симетричну таблицю «країна1↔країна2» для пошуку (`Models/Scenarios.cs:699-736`).
+симетричну таблицю «країна1↔країна2» для пошуку — лише для `non_aggression` і `peace`, не для `trade`
+(`Models/Scenarios.cs:699-736`). У коментарі моделі `peace` описано як «перемир'я» (休戦協定), а список — як
+«мирні договори» (`Models/Scenario.cs:1878`, `Models/Scenarios.cs:720`).
+
+Канонічний порядок запису договору: `id`, (`isoversea` — лише AoD), `type`, `country`, `country`, `startdate`,
+`expirydate`, `energy`, `metal`, `rare_materials`, `oil`, `supplies`, `money` (кожен ресурс — лише якщо ≠ 0),
+`cancel = no` (лише якщо заборонено скасування) (`Writers/ScenarioWriter.cs:539-596`).
 
 #### 4.4.4 `weather` (`Parsers/ScenarioParser.cs:1481-1705`)
 
@@ -479,7 +518,7 @@ weather = {
 | `tc_mod` | double | модифікатор транспортної місткості | `:3982-3994` |
 | `tc_occupied_mod` | double | модифікатор TC для окупованих територій | `:3997-4009` |
 | `attrition_mod` | double | модифікатор виснаження | `:4012-4024` |
-| `trickleback_mod` | double | модифікатор повернення людських ресурсів (trickleback) | `:4027-4039` |
+| `trickleback_mod` | double | модифікатор trickleback (у коментарі моделі — «модифікатор поступового відступу», 漸次撤退補正; тлумачення як «повернення людських ресурсів» — припущення) | `:4027-4039`, `Models/Scenario.cs:1968-1971` |
 | `max_amphib_mod` | **int** | модифікатор максимального морського десанту | `:4042-4054` |
 | `supply_dist_mod` | double | модифікатор дальності постачання | `:4057-4069` |
 | `repair_mod` | double | модифікатор ремонту | `:4072-4084` |
@@ -524,9 +563,9 @@ weather = {
 | `ownedprovinces` | ids{} | провінції у власності | усі | `:4462-4474` |
 | `controlledprovinces` | ids{} | контрольовані (окуповані/утримувані) провінції | усі | `:4477-4489` |
 | `claimedprovinces` | ids{} | провінції, на які є претензії | **DH** | `:5073-5085` |
-| `techapps` | ids{} | дослідженні технології (ID з дерева технологій) | усі | `:4492-4504` |
+| `techapps` | ids{} | досліджені (наявні) технології (ID з дерева технологій) | усі | `:4492-4504` |
 | `blueprints` | ids{} | креслення (blueprints) | усі | `:4507-4519` |
-| `inventions` | ids{} | ID подій-винаходів, що вже відбулися | усі | `:4522-4534` |
+| `inventions` | ids{} | ID «подій-винаходів» (модель: 発明イベント); що це вже спрацьовані події — припущення | усі | `:4522-4534` |
 | `deactivate` | ids{} | деактивовані технології | усі | `:4537-4549` |
 
 Усі списки накопичуються при повторі. Редактор попереджає, якщо одна провінція у власності або під
@@ -555,7 +594,7 @@ SpyInfo = { country = "TAG" NumberOfSpies = int }                           # п
 | `relation.tag` | tag | інша країна | `:3706-3718` |
 | `relation.value` | double | дипломатичні відносини | `:3721-3733` |
 | `relation.access` | bool | військовий прохід | `:3736-3748` |
-| `relation.guaranteed` | date | гарантія незалежності діє до дати | `:3751-3763` |
+| `relation.guaranteed` | date | гарантія незалежності діє до дати (модель: 独立保障期限) | `:3751-3763` |
 | `spyinfo` | block | шпигуни в іншій країні; повтор | `:4432-4444`, `:5392-5491` |
 | `spyinfo.country` | tag | цільова країна | `:5444-5459` |
 | `spyinfo.numberofspies` | int | кількість шпигунів | `:5462-5477` |
@@ -583,9 +622,11 @@ SpyInfo = { country = "TAG" NumberOfSpies = int }                           # п
 
 #### 4.8.8 Кабінет (`Parsers/ScenarioParser.cs:4582-4729`)
 
-Кожна посада — `typeid`; `id` — ID міністра з `db\ministers\*.csv`, `type` — довільний простір імен
-(дефолт для нових — `9`, `Models/Scenarios.cs:128`). Редактор шукає міністра лише за `id`, ігноруючи `type`
-(`Writers/ScenarioWriter.cs:2142-2154`).
+Кожна посада — `typeid`; `id` — ID міністра з `db\ministers\*.csv`, `type` — простір імен. Константа `9`
+(`Models/Scenarios.cs:128`) лише заздалегідь реєструє цей `type` у таблиці зайнятих пар; новий `type` посади
+редактор бере як найменший уже відомий `type` ≥ `type` глави держави (або ≥ 1, якщо глави нема)
+(`Controllers/ScenarioEditorController.cs:6720`, `Models/Scenarios.cs:1617-1625`). Редактор шукає міністра лише
+за `id`, ігноруючи `type` (`Writers/ScenarioWriter.cs:2142-2154`), і дописує після пари коментар `# <ім'я>`.
 
 | Ключ | Посада |
 |---|---|
@@ -636,7 +677,7 @@ allowed_brigades  = { <brigade-type>  = bool … }
 | `landunit` | block | сухопутний корпус/армія (§4.9) | `:4888-4900` |
 | `navalunit` | block | флот (§4.9) | `:4903-4915` |
 | `airunit` | block | авіагрупа (§4.9) | `:4918-4930` |
-| `landdivision` | block (division) | **окрема** сухопутна дивізія поза юнітом — «спляча»/резерв (§4.10) | `:4978-4991` |
+| `landdivision` | block (division) | **окрема** сухопутна дивізія поза юнітом (зазвичай з `dormant = yes`; тлумачення як «резерв/сплячі» — припущення) (§4.10) | `:4978-4991` |
 | `navaldivision` | block (division) | окрема морська дивізія | `:4994-5007` |
 | `airdivision` | block (division) | окрема авіадивізія | `:5010-5023` |
 | `convoy` | block | конвой (§4.12) | `:4873-4885` |
@@ -661,6 +702,15 @@ allowed_brigades  = { <brigade-type>  = bool … }
 
 Не пишуться: `nuke`, `nukedate`, чотири слайдери, `convoy` (готові конвої), `nationalidentity` тощо поза
 AoD.
+
+Умовний запис (важливо для round-trip): `belligerence`, `dissent`, `extra_tc` пишуться лише якщо > 0, а
+`max_amphib_mod` — лише якщо > 0 (від'ємні значення губляться); решта модифікаторів, `relative_manpower`,
+`ground_def_eff` — якщо ≠ 0; `capital` (з коментарем-назвою провінції), `manpower`, шість ресурсів запасу
+(після коментаря `# Resource Reserves`) і три списки `nationalprovinces`/`ownedprovinces`/`controlledprovinces`
+пишуться **завжди**, навіть порожні; `claimedprovinces`, `techapps`, `blueprints`, `inventions`, `deactivate` —
+лише непорожні; `policy` — завжди всі сім повзунків (`Writers/ScenarioWriter.cs:1718-1740`, `:1763-1780`,
+`:1910-1993`, `:2000-2076`). Писач **не** перевіряє тип гри для DH-ключів (`name`, `flag_ext`, `ai_settings`,
+`claimedprovinces`): вони пишуться, якщо заповнені (а заповнитися при читанні можуть лише в DH).
 
 ### 4.9 Юніти: `landunit`, `navalunit`, `airunit` (`Parsers/ScenarioParser.cs:5900-6442`)
 
@@ -694,9 +744,12 @@ AoD.
 | `division` | block | дивізія у складі (§4.10); повтор | усі | `:6366-6384` |
 | `landunit` | block | перевезений сухопутний юніт (десант на кораблях / у транспортній авіації); повтор | **лише** в `navalunit`/`airunit` | `:6387-6402` |
 
-У `landunit` вкладений `landunit` не приймається (`Parsers/ScenarioParser.cs:6387`). Дефолтний `type` для
-юнітів, дивізій і генералів у редакторі — `6` (`Models/Scenarios.cs:123`), але це лише вибір редактора для
-нових об'єктів.
+У `landunit` вкладений `landunit` не приймається (`Parsers/ScenarioParser.cs:6387`; див. також §3.3 — він
+закриває зовнішній юніт). Константа `6` (`Models/Scenarios.cs:123`, «тип генерала») лише заздалегідь реєструє
+цей `type` у таблиці зайнятих пар; для нового юніта редактор бере `type` першого сухопутного юніта країни, а якщо
+його нема — найменший уже відомий `type` ≥ 1 (на практиці зазвичай `6`) (`Models/Scenario.cs:2450-2454`,
+`Models/Scenarios.cs:1617-1625`); при ручній зміні `id` юніта/дивізії `type` підбирається так, щоб пара була
+вільною (`Controllers/ScenarioEditorController.cs:6853`, `:6898`). Це лише вибір редактора.
 
 #### 4.9.2 Порядок запису (`Writers/ScenarioWriter.cs:2313-2625`)
 
@@ -712,7 +765,12 @@ AoD.
 #### 4.9.3 Типи юнітів (для `division.type`, `extra*`, `allowed_*`)
 
 Таблиця типів залежить від гри: AoD — свої списки; **DH ≥ 1.03** — списки DH; інакше (HoI2 і DH < 1.03) —
-списки HoI2 (`Models/Units.cs:2058-2073`). Для DH ≥ 1.03 також читаються файли визначення класів дивізій/
+списки HoI2 (`Models/Units.cs:2058-2073`). Списки HoI2 — це рівно перші 31 тип дивізій (від `infantry` до
+`transport`) і перші 27 типів бригад (від `none` до `naval_torpedoes_l`) зі списків DH нижче
+(`Models/Units.cs:1234-1267`, `:1457-1486`); AoD має ті самі 31 тип дивізій, а бригади — 27 базових плюс
+`naval_mines`, `naval_sa_l`, `naval_spotter_l`, `naval_spotter_s`, `b_u1`…`b_u20` (`Models/Units.cs:1491-1544`).
+Ідентифікатор шукається в загальному словнику рядків усіх ігор (без регістру), а потім перевіряється належність до
+списку поточної гри — тобто DH-тип у DH 1.02 відкидається як «непідтримуваний» (`Parsers/ScenarioParser.cs:10022-10064`). Для DH ≥ 1.03 також читаються файли визначення класів дивізій/
 бригад (`Models/Units.cs:2229-2237`; деталі — у специфікації юнітів).
 
 DH ≥ 1.03, типи дивізій (`Models/Units.cs:1310-1452`, рядки — `Models/Units.cs:108-415`):
@@ -802,8 +860,9 @@ DH ≥ 1.03, типи бригад (`Models/Units.cs:1549-1691`): `none`, `artil
 (Усі «Джерело» — рядки `Parsers/ScenarioParser.cs`.) Модель поля: `Models/Scenario.cs:3304-3660`.
 
 **Правило `extra` vs `extra1`** у канонічному записі редактора:
-* сухопутна і авіадивізія (і «сплячі» сухопутні/авіа): якщо бригада одна — `extra = X` /
-  `brigade_model = N`, якщо дві і більше — `extra1 … extra5` / `brigade_model1 …`
+* сухопутна і авіадивізія (і «сплячі» сухопутні/авіа): якщо **слот 2 порожній** — слот 1 пишеться як
+  `extra = X` / `brigade_model = N`, інакше — `extra1` / `brigade_model1`; слоти 2…5 завжди з номером. Рішення
+  залежить саме від слоту 2, а не від кількості бригад: набір «слот 1 + слот 3» дасть `extra` і `extra3`
   (`Writers/ScenarioWriter.cs:2652-2693`, `:3052-3056`, `:3452`, `:3628`);
 * морська дивізія: **завжди** `extra1…`/`brigade_model1…` (`Writers/ScenarioWriter.cs:2864-2867`);
 * `division_development`: те саме, що й у суходолу/авіації, але для морських типів — завжди `extra1`
@@ -823,9 +882,18 @@ convoyattack shorebombardment airattack transportcapability range distance trave
 `… nuke extra.. … surfacedetectioncapability airdetectioncapability surfacedefence airdefence airattack
 strategicattack softattack hardattack transportcapability navalattack range dormant`.
 
-«Сплячі» дивізії на рівні країни (`landdivision` тощо) редактор пише в один рядок зі скороченим набором:
-`dormant id name type model [nuke] strength max_strength organisation morale experience extra*
-brigade_model* [locked|defaultorganisation]` (`Writers/ScenarioWriter.cs:3409-3700`).
+«Сплячі» дивізії на рівні країни (`landdivision` тощо) редактор пише в один рядок зі скороченим набором; порядок
+залежить від роду військ (`Writers/ScenarioWriter.cs:3409-3700`):
+
+* `landdivision`: `dormant id name type model strength max_strength organisation morale experience extra*
+  brigade_model* locked` (без `nuke` і без `defaultorganisation`); числа тут форматуються **культурою ОС**
+  (без `InvariantCulture`), тож на неанглійській Windows можлива кома замість крапки — квірк редактора
+  (`Writers/ScenarioWriter.cs:3430-3448`);
+* `navaldivision`: `dormant id name type model nuke extra1… brigade_model1… strength max_strength organisation
+  morale experience defaultorganisation` (бригади **до** сили; завжди з номером слоту);
+* `airdivision`: як морська, але слот 1 за правилом `extra`/`extra1` вище.
+
+Ці блоки не враховуються в таблиці зайнятих пар `type`/`id` (§5.2).
 
 ### 4.11 `mission` (`Parsers/ScenarioParser.cs:8376-8650`)
 
@@ -842,8 +910,13 @@ brigade_model* [locked|defaultorganisation]` (`Writers/ScenarioWriter.cs:3409-37
 | `org` | double | поріг організації; пишеться, лише якщо ≠ `percentage` | **DH** (флот, авіація) | `:8571`, `Writers/ScenarioWriter.cs:3837-3840` |
 | `startdate` | date | початок місії | усі | `:8586` |
 | `enddate` | date | кінець місії | усі | `:8601` |
-| `task` | int | невідомо (номер завдання) | усі | `:8616` |
-| `location` | int | провінція виконання | усі | `:8631` |
+| `task` | int | невідомо (номер завдання) | **лише суходіл** (флот/авіа — читається, але не пишеться) | `:8616`, `Writers/ScenarioWriter.cs:3787-3794` |
+| `location` | int | провінція виконання | **лише суходіл** (так само) | `:8631`, `Writers/ScenarioWriter.cs:3791-3794` |
+
+`tz` у моделі описано як «цільовий діапазон (лише DH)» — тобто DH-аналог AoD-шного `missionscope`
+(`Models/Scenario.cs:4215-4237`). Місія сухопутного юніта не пише ні `missionscope`, ні `tz`/`ac`/`org`
+(`Writers/ScenarioWriter.cs:3755-3796`). Порядок запису: `type`, `target`, [`missionscope`], `percentage`,
+`night`, `day`, [`tz`, `ac`, `org`], `startdate`, `enddate`, [`task`, `location` — суходіл].
 
 Типи місій (`Models/Scenarios.cs:221-259`; індекс — порядок у редакторі, `Models/Scenario.cs:4397-4434`):
 `attack`(1), `rebase`(2), `strat_redeploy`(3), `support_attack`(4), `support_defense`(5), `reserves`(6),
@@ -892,8 +965,13 @@ brigade_model* [locked|defaultorganisation]` (`Writers/ScenarioWriter.cs:3409-37
 | `close_when_finished` | bool | прибрати з черги після завершення | усі три (пише лише AoD) |
 | `waitingforclosure` | bool | невідомо | усі три (пише лише AoD) |
 | `retooling_time` | double | час переналаштування лінії | division, convoy (пише лише AoD) |
-| `location` | int | провінція | convoy, province |
+| `location` | int | провінція | convoy, province (у `division_development` ключа немає) |
 | `type` | — | див. нижче | усі три |
+
+Запис (`Writers/ScenarioWriter.cs:1524-1594`, `:3225-3348`, `:3939-4013`): числові поля пишуться лише якщо > 0;
+`cost`/`progress`/`manpower`/`gearing_bonus`/`retooling_time` у чергах будівель і конвоїв — з ≥ 4 знаками після
+коми (`ToString4`), `cost` дивізій — з ≥ 1 знаком. Квірки: `division_development` **взагалі не пише `progress`**;
+усі три черги пишуть `total_progress` зі значенням `progress` (§9). `type` будівлі/конвою пишеться останнім.
 
 Специфічні:
 * `division_development`: `type` = division-type; `model`; `extra`/`extra1..5`; `brigade_model`/
@@ -912,11 +990,11 @@ brigade_model* [locked|defaultorganisation]` (`Writers/ScenarioWriter.cs:3409-37
 | Файл | Що потрапляє | Формат | Джерело |
 |---|---|---|---|
 | `bases.inc` (HoI2/AoD/DH не-Full) | провінції з `naval_base`, потім з `air_base` | один рядок на провінцію з коментарем-назвою | `Writers/ScenarioWriter.cs:689-707` |
-| `bases.inc` (DH Full) | **усі** провінційні поля, крім `ic`/`infra` (якщо використовується `bases_DOD.inc`) і `*pool` (якщо використовується `depots.inc`); VP не пишеться | багаторядковий блок | `Writers/ScenarioWriter.cs:714-862`, `:1327-1390` |
+| `bases.inc` (DH Full) | **усі** провінційні поля, крім `ic`/`infra` (якщо використовується `bases_DOD.inc`) і `*pool` (якщо використовується `depots.inc`); VP і AoD-будівлі (`synthetic_*`, `nuclear_power`) не пишуться; `name` (без лапок) і `weather` пишуться; числа — лише > 0 | багаторядковий блок, порожній рядок після кожного | `Writers/ScenarioWriter.cs:714-862`, `:1327-1390` |
 | `bases_DOD.inc` | `ic`, `infra` | один рядок | `Writers/ScenarioWriter.cs:869-890` |
 | `depots.inc` | `supplypool`, `oilpool`, `energypool`, `metalpool`, `rarematerialspool` (> 0) | багаторядковий | `Writers/ScenarioWriter.cs:897-929` |
 | `vp.inc` | `points` ≠ 0 | шапка-коментар `# Victory points distribution #`, далі по рядку | `Writers/ScenarioWriter.cs:936-958` |
-| `<tag>.inc` | провінції, що **контролює** ця країна, і що мають дані, які не пішли в спеціальні файли; для DH Full з `bases.inc` — жодних | однорядковий, якщо лише прості будівлі/`supplypool`/`oilpool`, інакше багаторядковий | `Writers/ScenarioWriter.cs:967-1319`, `:1427-1495` |
+| `<tag>.inc` | провінції, що **контролює** ця країна, і що мають дані, які не пішли в спеціальні файли; для DH Full з `bases.inc` — жодних; лише якщо сценарій мав провінції в країнних inc | однорядковий, якщо всі будівлі задано голим числом і з пулів є лише `supplypool`/`oilpool`, без видобутку, `name`, `weather`; інакше багаторядковий. Відібрана провінція пише `ic`/`infra` і всі пули **навіть якщо** ті вже йдуть у `bases_DOD.inc`/`depots.inc` (дублювання), а `air_base`/`naval_base` — лише якщо `bases.inc` не використовується; `points` не пише ніколи | `Writers/ScenarioWriter.cs:967-1319`, `:1427-1495` |
 
 Провінції сортуються за `id` перед записом (`Models/Scenarios.cs:396`, `:1262-1265`).
 
@@ -933,8 +1011,10 @@ brigade_model* [locked|defaultorganisation]` (`Writers/ScenarioWriter.cs:3409-37
     попередження, значення все одно приймається;
   * `day` — int **0..29**, внутрішньо +1 → 1..30 (`:9521-9543`). Значення `30` трапляється в реальних
     файлах настільки часто, що редактор логує його лише як «info»; воно стає внутрішнім днем 31 (поза
-    нормальним діапазоном);
-  * `hour` — int 0..23 (`:9546-9563`).
+    нормальним діапазоном). Значення < 0 або > 30 дають попередження, але теж приймаються як є (+1);
+  * `hour` — int 0..23 (`:9546-9563`); поза діапазоном — попередження, значення приймається.
+  * Порядок полів у блоці довільний; невідомий ключ у блоці дати пропускає рядок. Назва місяця має бути
+    ідентифікатором (`month = "may"` у лапках — помилка), назва без регістру (`:9486-9511`).
 * Відсутні поля мають дефолт **1936 / january / day 0 / hour 0** (новий `GameDate` = 1936-01-01,
   `Models/GameDate.cs:97-102`).
 * Канонічний запис: `{ year = Y month = <назва> day = D }`, а `hour = H` додається лише якщо `H ≠ 0`
@@ -949,20 +1029,24 @@ brigade_model* [locked|defaultorganisation]` (`Writers/ScenarioWriter.cs:3409-37
 
 * Формат: `{ type = int id = int }` (`Parsers/ScenarioParser.cs:9578-9664`,
   `Writers/ScenarioWriter.cs:4087-4090`).
-* Пара має бути унікальною в межах сценарію; `type` діє як простір імен, `id` — номер у ньому.
-  Редактор збирає всі використані пари (союзи, війни, учасники воєн, договори, погодні фронти, 10 посад
-  кабінету, юніти й дивізії, вкладені юніти, черги дивізій/будівель/конвоїв, конвої та їх `trade_id`) і
-  при створенні нового об'єкта шукає вільний `id` (`Models/Scenarios.cs:1410-1708`).
-* Дефолтні `type` редактора для нових об'єктів (`Models/Scenarios.cs:105-133`):
+* Пара має бути унікальною в межах сценарію (припущення щодо гри; редактор це лише відстежує); `type` діє як
+  простір імен, `id` — номер у ньому. Редактор збирає використані пари: три стандартні союзи й `alliance`,
+  `attackers`/`defenders` воєн (**власний `id` війни не реєструється**), договори всіх трьох типів, погодні
+  фронти, 10 посад кабінету, юніти та їхні дивізії, вкладені в флот/авіацію сухопутні юніти та їхні дивізії,
+  черги дивізій/будівель/конвоїв, конвої та їх `trade_id` (`Models/Scenarios.cs:1410-1548`). **Не**
+  реєструються: `id` війни, окремі `landdivision`/`navaldivision`/`airdivision`, `redep_unit_id`. При створенні
+  нового об'єкта редактор шукає вільний `id` у заданому `type` (`Models/Scenarios.cs:1617-1708`).
+* Константи `type` редактора (`Models/Scenarios.cs:105-133`) — ними заздалегідь засівається таблиця зайнятих
+  пар (`Models/Scenarios.cs:1412-1420`):
 
-  | Об'єкт | type |
-  |---|---|
-  | союз | 15000 |
-  | війна | 9430 |
-  | договір | 16384 |
-  | генерал / юніт (редактор використовує `DefaultLeaderType`) | 6 |
-  | міністр | 9 |
-  | дослідницька команда | 10 |
+  | Константа | type | Де реально використовується |
+  |---|---|---|
+  | союз | 15000 | новий союз (`Forms/ScenarioEditorForm.cs:2337`) |
+  | війна | 9430 | нова війна **і** її `attackers`/`defenders` (`Forms/ScenarioEditorForm.cs:3077-3079`) |
+  | договір | 16384 | новий договір (`Forms/ScenarioEditorForm.cs:5066`, `:5218`, `:5576`) |
+  | «генерал» | 6 | лише засів таблиці; юніти — див. §4.9.1 |
+  | «міністр» | 9 | лише засів таблиці; посади — див. §4.8.8 |
+  | «дослідницька команда» | 10 | лише засів таблиці |
 
   Це вибір редактора; чи має гра фіксовані простори імен для `type` — §10.
 * Посилання між об'єктами: `convoy.trade_id` → `treaty.id`; `division.redep_unit_id` → `id` юніта.
@@ -984,7 +1068,10 @@ brigade_model* [locked|defaultorganisation]` (`Writers/ScenarioWriter.cs:3409-37
   текст (`Controllers/ScenarioEditorController.cs:3129-3137`). Нові тексти редактор пише у
   `scenario_text.csv` (`Models/Game.cs:418`).
 * Назва країни: `header.<TAG>.name` (ключ) → інакше `country.name` (ключ або буквальний текст) → інакше
-  стандартний ключ, рівний тегу (`Models/Scenarios.cs:978-996`, `Models/Countries.cs:1063-1071`).
+  стандартний ключ, рівний тегу (`Models/Scenarios.cs:978-996`, `Models/Countries.cs:1063-1071`). Нюанс
+  редактора: якщо `header.<TAG>.name` задано, але такого ключа немає, показується порожній рядок без переходу
+  до наступних варіантів. При записі `country.name` пишеться без лапок, якщо це існуючий ключ локалізації, і в
+  лапках — якщо буквальний текст (`Writers/ScenarioWriter.cs:1694-1698`).
 * Назва провінції: `province.name` — ключ локалізації (якщо ключа немає, редактор показує порожній рядок)
   → інакше стандартна назва провінції (`Models/Scenarios.cs:1007-1031`).
 * Назва союзу: `ALLIANCE_<name>` або `EYR_AXIS`/`EYR_ALLIES`/`EYR_COM` (§4.4.1).
@@ -1014,8 +1101,10 @@ brigade_model* [locked|defaultorganisation]` (`Writers/ScenarioWriter.cs:3409-37
 * `save_date = { <eventId> = <N> … }` — для кожної події `N` = **кількість днів до** стартової дати
   (`globaldata.startdate`, або 1936-01-01, якщо її ще не прочитано); дата спрацювання = старт − N днів у
   360-денному календарі (`Parsers/ScenarioParser.cs:169-184`, `:330-388`). Отже `save_date` має йти **після**
-  `globaldata`. Запис — зворотне перетворення (`Writers/ScenarioWriter.cs:76-93`). Знак `N` у реальних
-  сейвах (події в минулому дають від'ємне?) — §10;
+  `globaldata`. Запис — зворотне перетворення (`Writers/ScenarioWriter.cs:76-93`). Ключ — **голе число** (ID
+  події), не ідентифікатор; нечисловий ключ пропускає рядок (`Parsers/ScenarioParser.cs:365-381`). Обчислена
+  дата має годину 0 (віднімання в `GameDate` годину не переносить, `Models/GameDate.cs:142-151`). Знак `N` у
+  реальних сейвах (події в минулому дають від'ємне?) — §10;
 * `globaldata.queued_events`, `globaldata.flags`, `country.ai_settings.flags`;
 * у юнітах/дивізіях — `movetime`, `movement`, `attack`, `invasion`, `redep_*`, `offensive`, `travelled`
   тощо; виробничі черги `*_development`.
@@ -1057,7 +1146,17 @@ brigade_model* [locked|defaultorganisation]` (`Writers/ScenarioWriter.cs:3409-37
 | `bases_DOD.inc` | використовується в DH Full (сценарій 1933 р. за коментарем) | — | — | `Models/Game.cs:481-483` |
 
 Парсер **приймає** AoD-ключі (`missionscope`, `halted`, `retooling_time`, `synthetic_*`, ідеї) у будь-якій
-грі — розгалуження лише при записі; DH-ключі з таблиці вище парсер у не-DH грі відкидає як невідомі.
+грі — розгалуження лише при записі; виняток — `treaty.isoversea`, який у DH/HoI2 відкидається як невідомий
+(`Parsers/ScenarioParser.cs:3543`). DH-ключі з таблиці вище парсер у не-DH грі відкидає як невідомі, а писач,
+навпаки, **не** має для них перевірки типу гри — пише їх, якщо поле заповнене (`Writers/ScenarioWriter.cs:469-472`,
+`:851-858`, `:1694-1712`, `:1922-1927`, `:1255-1258`). Ключі `tz`/`ac`/`org` парсер приймає в будь-якій грі
+(`Parsers/ScenarioParser.cs:8541-8583`), гілка лише при записі.
+
+Повний перелік розгалужень за типом гри в коді сценаріїв (усі перевірено): парсер — `:764` (DH ≥ 1.04),
+`:2528`, `:3115`, `:5025` (DH), `:3543` (AoD); писач — `:548`, `:1066`, `:1170`, `:1559`, `:2164`, `:2348`,
+`:2465`, `:2570`, `:3262`, `:3814`, `:3873`, `:3974` (AoD), `:3827`, `:3886` (DH), `:671`, `:1429`, `:1611`
+(DH Full); теги — `Models/Countries.cs:1041-1051`; типи юнітів — `Models/Units.cs:2058-2073`,
+`:2229-2237` (DH ≥ 1.03).
 
 ---
 
@@ -1109,7 +1208,13 @@ U00(183) … U99(282)          # 100 тегів U00, U01, …, U99 підряд
 | Злиття провінцій не переносить `weather` | `Models/Scenarios.cs:1131-1257` |
 | `industrial_modifier` пишеться зі значенням `wartime_ic_mod` | `Writers/ScenarioWriter.cs:2072-2075` |
 | `can_upgrade`/`can_reinforce` пишуться як `no`, коли прапор у моделі `true` (інверсія) | `Writers/ScenarioWriter.cs:2364-2371`, `:2477-2484`, `:2578-2585` |
-| `div_upgr_progress` пишеться зі значенням `experience` | `Writers/ScenarioWriter.cs:2719-2722` |
+| `div_upgr_progress` пишеться зі значенням `experience` (у всіх трьох родах військ) | `Writers/ScenarioWriter.cs:2719-2722`, `:2928-2931`, `:3118-3121` |
+| `division_development` не пише `progress` взагалі | `Writers/ScenarioWriter.cs:3225-3348` |
+| `landdivision` (окрема) пише числа без `InvariantCulture` | `Writers/ScenarioWriter.cs:3430-3448` |
+| Числові поля з від'ємним значенням (`belligerence`, `dissent`, `extra_tc`, `max_amphib_mod`, усі поля провінцій, черг, дивізій, `morale` юніта тощо) не пишуться — пишуться лише > 0 | напр. `Writers/ScenarioWriter.cs:1718-1731`, `:2048-2051`, `:807-850` |
+| Місії флоту/авіації не пишуть `task`/`location` | `Writers/ScenarioWriter.cs:3803-3910` |
+| `id` війни, окремі дивізії й `redep_unit_id` не реєструються в таблиці зайнятих пар | `Models/Scenarios.cs:1410-1548` |
+| Пара `weather.pattern.id` реєструється, але `weather` не пишеться | `Models/Scenarios.cs:1466-1472`, `Writers/ScenarioWriter.cs:290-304` |
 | `redep_unit_id` пишеться з `id` самої дивізії; `redep_unit_name` — без лапок | `Writers/ScenarioWriter.cs:2727-2736` |
 | `defaultorganisation` пишеться лише якщо `organisation > 0` | `Writers/ScenarioWriter.cs:2714-2718` |
 | `total_progress` пишеться зі значенням `progress` | `Writers/ScenarioWriter.cs:1568-1571`, `:3275-3278`, `:3987-3990` |
@@ -1148,4 +1253,49 @@ U00(183) … U99(282)          # 100 тегів U00, U01, …, U99 підряд
 13. Чи справді рушій толерує пропущені `}` так, як це моделює евристика редактора (§3.3), і чи
     `include` у грі також резолвиться через мод-теку з фолбеком на ваніль.
 14. Чи використовує DH ключі `startyear`/`endyear` у `header`, чи лише `startdate`.
-15. Розташування `scenario_text.csv` (тека `config`?) і чи гра читає його автоматично.
+15. Чи гра читає `config\scenario_text.csv` автоматично (тека `config` підтверджена кодом редактора, §2.2), чи
+    його треба підключати окремо.
+16. Чи вимагає гра, щоб `tag` був першим ключем у блоці `country`, і як вона зливає повторні блоки `country`
+    (редактор — див. §4.8, §5.3).
+17. Чи допустимі в грі блоки `province`/`country` прямо у верхньому `.eug` (редактор їх читає, але не пише).
+18. Чи коректні в DH дати з `hour` у `startdate`/`war.date` тощо, і чи впливає `hour` на порядок подій.
+
+---
+
+## Перевірка
+
+Рецензент повторно відкрив кожне цитоване місце в `Parsers/ScenarioParser.cs`, `Parsers/TextLexer.cs`,
+`Models/Scenario.cs`, `Models/Scenarios.cs`, `Models/GameDate.cs`, `Writers/ScenarioWriter.cs`,
+`Models/Countries.cs`, а також вибірково `Models/Game.cs`, `Models/Units.cs`, `Models/Unit.cs`,
+`Models/Config.cs`, `Models/Misc.cs`, `Forms/MainForm.cs`, `Forms/ScenarioEditorForm.cs`,
+`Controllers/ScenarioEditorController.cs`.
+
+Звірено й підтверджено:
+
+* усі ключові слова верхнього рівня, `header`, головних країн, `globaldata`, `rules`, `queued_events`,
+  `weather`, `map`, `province`, союзу/війни/договору, `diplomacy`/`relation`, `country` (усі 82 ключі),
+  `ai_settings`, `free`, `spyinfo`, `policy`, `allowed_*`, юніта, дивізії (усі 67 ключів), трьох черг
+  виробництва, `mission`, `convoy` — назви, типи примітивів і номери рядків;
+* формат дати (`day` 0-базовий, `month` назвою або 0-базовим числом, `hour` опційний, календар 12×30),
+  дефолт 1936-01-01, арифметика `save_date`;
+* перелік тегів: 282 для HoI2/DH (порядок і номери 1…282 збігаються з переліком у коді), 60 додаткових для AoD;
+* усі розгалуження за типом гри/версією (DH ≥ 1.04, DH ≥ 1.03, DH Full, AoD) — перелік у §7;
+* списки типів дивізій/бригад DH ≥ 1.03 (140 + 140) та їх зв'язок зі списками HoI2/AoD;
+* правила розташування файлів (ваніль/мод/експорт, `Mods\` для DH), визначення верхнього файлу, класифікація
+  спеціальних inc, кодові сторінки.
+
+Виправлено: експонента в числах (лексер її не допускає); механізм вибору `type` для нових юнітів і посад
+кабінету (константи 6/9/10 лише засівають таблицю); перелік зареєстрованих пар `type`/`id` (без `id` війни,
+окремих дивізій, `redep_unit_id`); порядок запису «сплячих» морських/авіадивізій; правило `extra`/`extra1`
+(залежить від слоту 2, а не від кількості бригад); `task`/`location` місій пишуться лише для суходолу;
+розташування `scenario_text.csv` (`config`); ключ опису без доповнення нулем; ім'я inc-файлу — тег у нижньому
+регістрі. Додано: квірки відновлення після помилок (втрата всього `globaldata`, закриття юніта вкладеним
+`landunit`, поведінка id-списку), регістр ключів `flags`, умовний запис полів країни/провінцій/черг,
+відсутність `progress` у `division_development`, культурозалежне форматування `landdivision`, поведінка з
+`\`/регістром шляхів, запасне пропагандистське зображення, повний перелік гілок за типом гри.
+
+Залишкові сумніви: усе, що стосується **гри**, а не редактора (360-денний календар, знак `save_date`,
+обов'язковість `tag` першим, семантика `bsize`, одиниці слайдерів, `transport`/`transports` у `free`),
+виведено лише з поведінки редактора й має бути перевірене на реальних файлах DH (§10). Номери рядків
+наведено для поточної ревізії репозиторію редактора; посилання на рядки `Forms/*` і `Controllers/*`
+перевірено вибірково.
