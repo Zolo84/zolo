@@ -14,3 +14,5 @@ dh-text.workspace = true
 dh-vfs.workspace = true
 dh-data.workspace = true
 dh-sim.workspace = true
+dh-map.workspace = true
+png = "0.17"

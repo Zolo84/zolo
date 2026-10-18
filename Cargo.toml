@@ -12,4 +12,5 @@ publish = false
 dh-text = { path = "crates/dh-text" }
 dh-vfs = { path = "crates/dh-vfs" }
 dh-data = { path = "crates/dh-data" }
+dh-map = { path = "crates/dh-map" }
 dh-sim = { path = "crates/dh-sim" }

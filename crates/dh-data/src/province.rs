@@ -42,6 +42,8 @@ impl Provinces {
             };
             let id = match row.get(id_col).map(|s| s.parse::<u32>()) {
                 Some(Ok(id)) => id,
+                // The table ends with a `-1` terminator row.
+                _ if row.get(id_col).map(String::as_str) == Some("-1") => break,
                 _ => {
                     warnings.push(warn(format!("bad province id {:?}", row.get(id_col))));
                     continue;

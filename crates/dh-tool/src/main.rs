@@ -1,6 +1,7 @@
 //! `dh-tool` — inspection and reverse-engineering helper for Darkest Hour data.
 
 mod probe;
+mod render;
 
 use dh_data::{
     load_script, localisation::Language, Localisation, Provinces, Scenario, Vfs, Warning,
@@ -21,6 +22,9 @@ USAGE:
   dh-tool hexdump   <file> [--offset N] [--len N]     hex dump (N may be 0x-prefixed)
   dh-tool scenarios <game-dir> [--mod <dir>]          list scenarios
   dh-tool loc       <game-dir> <KEY>... [--mod <dir>] look up localisation keys
+  dh-tool map       <game-dir> --out <file.png> [--level 1-4] [--mode political|terrain]
+                    [--scenario <scenario.eug>] [--smoothing full|downhill|none] [--mod <dir>]
+                                                      render the world map
   dh-tool sim       <game-dir> <scenario.eug> [--days N] [--mod <dir>]
                                                       load a scenario and run the headless simulation
 ";
@@ -92,6 +96,7 @@ fn main() -> ExitCode {
             Some("scenarios") => scenarios(&args),
             Some("loc") => loc(&args),
             Some("sim") => sim(&args),
+            Some("map") => map(&args),
             Some("help" | "-h") | None => {
                 print!("{USAGE}");
                 Ok(())
@@ -249,6 +254,39 @@ fn loc(args: &Args) -> Result<(), String> {
     for key in args.positional.iter().skip(2) {
         println!("{key} = {}", loc.get(key).unwrap_or("<missing>"));
     }
+    Ok(())
+}
+
+fn map(args: &Args) -> Result<(), String> {
+    let vfs = args.vfs()?;
+    let out = args
+        .options
+        .get("out")
+        .ok_or("--out <file.png> is required")?;
+    let level = dh_map::Level::new(args.num("level", 4)?.wrapping_sub(1) as u8)
+        .ok_or("--level must be 1..4")?;
+    let mode = match args.options.get("mode").map(String::as_str) {
+        None | Some("political") => render::Mode::Political,
+        Some("terrain") => render::Mode::Terrain,
+        Some(m) => return Err(format!("unknown --mode {m}")),
+    };
+    let smoothing = match args.options.get("smoothing").map(String::as_str) {
+        None | Some("full") => dh_map::Smoothing::Full,
+        Some("downhill") => dh_map::Smoothing::DownhillOnly,
+        Some("none") => dh_map::Smoothing::None,
+        Some(s) => return Err(format!("unknown --smoothing {s}")),
+    };
+    let mut warnings = Vec::new();
+    let scenario = match (mode, args.options.get("scenario")) {
+        (render::Mode::Political, Some(path)) => Some(path.clone()),
+        (render::Mode::Political, None) => Some("scenarios/1936.eug".to_owned()),
+        _ => None,
+    }
+    .map(|path| Scenario::load(&vfs, &path, &mut warnings).map_err(|e| format!("{path}: {e}")))
+    .transpose()?;
+    let img = render::render(&vfs, level, mode, scenario.as_ref(), smoothing)?;
+    render::write_png(&img, out)?;
+    println!("wrote {out} ({}x{})", img.width, img.height);
     Ok(())
 }
 
