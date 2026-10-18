@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+publish = false
+
+[workspace.dependencies]
+dh-text = { path = "crates/dh-text" }
+dh-vfs = { path = "crates/dh-vfs" }
+dh-data = { path = "crates/dh-data" }
+dh-sim = { path = "crates/dh-sim" }

@@ -1,0 +1,16 @@
+[package]
+name = "dh-tool"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "dh-tool"
+path = "src/main.rs"
+
+[dependencies]
+dh-text.workspace = true
+dh-vfs.workspace = true
+dh-data.workspace = true
+dh-sim.workspace = true

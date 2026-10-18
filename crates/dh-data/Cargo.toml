@@ -1,0 +1,10 @@
+[package]
+name = "dh-data"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+dh-text.workspace = true
+dh-vfs.workspace = true

@@ -1,0 +1,10 @@
+[package]
+name = "dh-sim"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+dh-data.workspace = true
+dh-text.workspace = true
