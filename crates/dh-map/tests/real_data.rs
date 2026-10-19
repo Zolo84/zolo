@@ -85,3 +85,65 @@ fn colorscales_parse() {
     eprintln!("colour scales: {:?}", cs.scales.keys().collect::<Vec<_>>());
     assert!(cs.scales.len() >= 4);
 }
+
+/// Applies `adj-defs.csv` and compares with the counts the RE spec obtained by
+/// emulating the game's parser (`docs/spec/map-adjacency.md` §5.3).
+#[test]
+fn adjacency_matches_reverse_engineered_counts() {
+    use dh_map::{AdjKind, Adjacency};
+    use std::collections::HashMap;
+    let Some(dir) = map_dir() else { return };
+    let game = dir.parent().unwrap();
+    for (tbl, defs, province_csv, n, expected) in [
+        (
+            "ADJACENT.TBL",
+            "adj-defs.csv",
+            "db/Province.csv",
+            2608,
+            [12812, 1960, 102, 2, 104],
+        ),
+        (
+            "Map_1/adjacent.tbl",
+            "Map_1/adj-defs.csv",
+            "map/Map_1/Province.csv",
+            2770,
+            [12603, 2904, 76, 2, 358],
+        ),
+    ] {
+        let bytes = std::fs::read(dir.join(tbl)).unwrap();
+        assert_eq!(Adjacency::infer_count(&bytes), Some(n));
+        let mut adj = Adjacency::parse(&bytes, n).unwrap();
+        let table =
+            dh_text::CsvTable::parse_with_header(&std::fs::read(game.join(province_csv)).unwrap());
+        let area: HashMap<u32, bool> = table
+            .rows
+            .iter()
+            .filter_map(|(_, r)| {
+                Some((
+                    r.first()?.parse().ok()?,
+                    table.get(r, "area").is_some_and(|a| a != "-"),
+                ))
+            })
+            .collect();
+        let warnings = adj.apply_defs(&std::fs::read(dir.join(defs)).unwrap(), |p| {
+            area.get(&p).copied().unwrap_or(false)
+        });
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let mut counts = [0usize; 5];
+        for (_, link) in adj.iter() {
+            let i = [
+                AdjKind::Normal,
+                AdjKind::River,
+                AdjKind::Sea,
+                AdjKind::Canal,
+                AdjKind::Impassable,
+            ]
+            .iter()
+            .position(|k| *k == link.kind)
+            .unwrap();
+            counts[i] += 1;
+        }
+        eprintln!("{tbl}: normal/river/sea/canal/impassable = {counts:?}");
+        assert_eq!(counts, expected, "{tbl}");
+    }
+}

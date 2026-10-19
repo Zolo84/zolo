@@ -1,12 +1,15 @@
 //! Darkest Hour world map: `lightmap*.tbl` (province ids and relief per
-//! pixel at four zoom levels), `boundbox.tbl` and `colorscales.csv`.
+//! pixel at four zoom levels), `boundbox.tbl`, `colorscales.csv` and the
+//! province adjacency graph (`adjacent.tbl` + `adj-defs.csv`).
 //! Formats are described in `docs/spec/map.md`.
 
+pub mod adjacency;
 pub mod boundbox;
 pub mod colorscale;
 pub mod lightmap;
 pub mod shade;
 
+pub use adjacency::{AdjKind, Adjacency, Link};
 pub use boundbox::{BoundBox, Rect};
 pub use colorscale::ColorScales;
 pub use lightmap::{Block, Leaf, Level, LightMap, BLOCK};

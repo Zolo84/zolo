@@ -14,6 +14,12 @@
 | [tech-commands.md](tech-commands.md) | `db/tech/*.txt`, команди (ефекти) й тригери | ще ні |
 | [leaders-ministers-misc.md](leaders-ministers-misc.md) | лідери, міністри, `db/misc.txt` | ще ні |
 
+## З `Darkest Hour.exe` і даних гри (реверс)
+
+| Файл | Що описує | Перевірка скептиком |
+|---|---|---|
+| [map-adjacency.md](map-adjacency.md) | `adjacent.tbl` (CSR-таблиця сусідів), `adj-defs.csv` (річки, протоки, канали, непрохідні), як гра це використовує | ✅ незалежний декодер; числа відтворено Rust-реалізацією (`dh-map::adjacency`) |
+
 ## Звірка зі справжньою грою (DH 1.05.1, GOG)
 
 - `lightmap1-4.tbl`: таблиця зміщень `N+1` (`offs[0] = 0`, `offs[N]` = довжина даних, зміщення монотонні) — ✅ на всіх 4 рівнях.

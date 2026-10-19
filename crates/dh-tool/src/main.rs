@@ -25,6 +25,8 @@ USAGE:
   dh-tool map       <game-dir> --out <file.png> [--level 1-4] [--mode political|terrain]
                     [--scenario <scenario.eug>] [--smoothing full|downhill|none] [--mod <dir>]
                                                       render the world map
+  dh-tool adj       <game-dir> <province-id>... [--mod <dir>]
+                                                      neighbours with connection types (adjacent.tbl + adj-defs.csv)
   dh-tool sim       <game-dir> <scenario.eug> [--days N] [--mod <dir>]
                                                       load a scenario and run the headless simulation
 ";
@@ -97,6 +99,7 @@ fn main() -> ExitCode {
             Some("loc") => loc(&args),
             Some("sim") => sim(&args),
             Some("map") => map(&args),
+            Some("adj") => adj(&args),
             Some("help" | "-h") | None => {
                 print!("{USAGE}");
                 Ok(())
@@ -287,6 +290,52 @@ fn map(args: &Args) -> Result<(), String> {
     let img = render::render(&vfs, level, mode, scenario.as_ref(), smoothing)?;
     render::write_png(&img, out)?;
     println!("wrote {out} ({}x{})", img.width, img.height);
+    Ok(())
+}
+
+/// Adjacency graph as the game builds it: the table plus `adj-defs.csv`.
+fn load_adjacency(vfs: &Vfs, provinces: &Provinces) -> Result<dh_map::Adjacency, String> {
+    let bytes = vfs.read("map/adjacent.tbl").map_err(|e| e.to_string())?;
+    let n = dh_map::Adjacency::infer_count(&bytes)
+        .ok_or("cannot determine the province count of adjacent.tbl")?;
+    let mut adj = dh_map::Adjacency::parse(&bytes, n).map_err(|e| e.to_string())?;
+    if let Ok(defs) = vfs.read("map/adj-defs.csv") {
+        let has_area = |p: u32| {
+            provinces
+                .get(p)
+                .and_then(|p| p.fields.get("area"))
+                .is_some_and(|a| a != "-")
+        };
+        for w in adj.apply_defs(&defs, has_area) {
+            eprintln!("warning: adj-defs.csv: {w}");
+        }
+    }
+    Ok(adj)
+}
+
+fn adj(args: &Args) -> Result<(), String> {
+    let vfs = args.vfs()?;
+    let mut warnings = Vec::new();
+    let provinces = Provinces::load(&vfs, &mut warnings).map_err(|e| e.to_string())?;
+    let loc = Localisation::load(&vfs, Language::English);
+    let name = |p: u32| {
+        provinces
+            .get(p)
+            .map(|p| loc.text(&p.name).to_owned())
+            .unwrap_or_else(|| format!("#{p}"))
+    };
+    let adj = load_adjacency(&vfs, &provinces)?;
+    for id in args.positional.iter().skip(2) {
+        let p: u32 = id.parse().map_err(|_| format!("not a province id: {id}"))?;
+        println!("{p} {}:", name(p));
+        for l in adj.neighbours(p) {
+            let via = l
+                .through
+                .map(|t| format!(" via {t} {}", name(t)))
+                .unwrap_or_default();
+            println!("  {:>5} {:<28} {}{via}", l.to, name(l.to), l.kind.name());
+        }
+    }
     Ok(())
 }
 

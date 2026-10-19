@@ -19,7 +19,8 @@
 ## Етап 2 — карта і графіка
 - [x] Декодер `lightmap1-4.tbl` (ID провінцій і рельєф), `boundbox.tbl`, `colorscales.csv` — крейт `dh-map`, перевірено на всіх блоках гри
 - [x] Рендер політичної карти та карти рельєфу в PNG (`dh-tool map`)
-- [ ] Реверс `ADJACENT.TBL`, `airdist.tbl`, `navaldist*.tbl`, `index.tbl`, `distances.csv`
+- [x] Сусідство провінцій: `adjacent.tbl` + `adj-defs.csv` з точною семантикою парсера гри (`dh-map::adjacency`, `dh-tool adj`)
+- [ ] `airdist.tbl`, `navaldist*.tbl`, `distances.csv`, `index.tbl` (специфікації є, чекають перевірки)
 - [ ] Завантаження спрайтів/BMP інтерфейсу, шрифтів
 - [ ] Рендер на `wgpu` + `winit`: карта з прокруткою/масштабом, режими карти (політична, рельєф)
 
