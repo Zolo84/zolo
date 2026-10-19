@@ -257,16 +257,16 @@ mod tests {
     /// Builds a table: province 1 – 2 – 3 in a line, N = 4.
     fn sample() -> Vec<u8> {
         let offs = [0u32, 0, 1, 3, 4];
-        let recs = [
-            (2, 0, -842150451i32),
+        let recs: [(i32, i32, i32); 4] = [
+            (2, 0, -842150451),
             (1, 0, -842150451),
             (3, 0, -842150451),
             (2, 0, -842150451),
         ];
         let mut b: Vec<u8> = offs.iter().flat_map(|o| o.to_le_bytes()).collect();
         for (to, t, th) in recs {
-            b.extend((to as i32).to_le_bytes());
-            b.extend((t as i32).to_le_bytes());
+            b.extend(to.to_le_bytes());
+            b.extend(t.to_le_bytes());
             b.extend(th.to_le_bytes());
         }
         b
