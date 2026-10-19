@@ -18,8 +18,8 @@
 
 | Файл | Що описує | Перевірка скептиком |
 |---|---|---|
-| [map-distances.md](map-distances.md) | `airdist.tbl`, `navaldist.tbl`, `navaldist2.tbl`, `distances.csv`, модель відстаней | перевірка триває |
-| [map-index-grids.md](map-index-grids.md) | `index.tbl`, `tiles.bmp`, `Terrain types.csv`, кеші `id.tbl`/`idgrid.tbl`/`incgrid.tbl`/`incognita.tbl` | перевірка триває |
+| [map-distances.md](map-distances.md) | `airdist.tbl`, `navaldist.tbl`, `navaldist2.tbl`, `distances.csv`, модель відстаней, морський A* | ✅ незалежний декодер; виправлено 10 тверджень |
+| [map-index-grids.md](map-index-grids.md) | `index.tbl`, `tiles.bmp`, `Terrain types.csv`, кеші `id.tbl`/`idgrid.tbl`/`incgrid.tbl`/`incognita.tbl` | ✅ незалежний декодер; виправлено 8 тверджень |
 | [map-adjacency.md](map-adjacency.md) | `adjacent.tbl` (CSR-таблиця сусідів), `adj-defs.csv` (річки, протоки, канали, непрохідні), як гра це використовує | ✅ незалежний декодер; числа відтворено Rust-реалізацією (`dh-map::adjacency`) |
 
 ## Звірка зі справжньою грою (DH 1.05.1, GOG)
