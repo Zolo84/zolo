@@ -10,7 +10,7 @@
 | [map.md](map.md) | `lightmap1-4.tbl` (квадродерево, ID провінцій, відтінки), `boundbox.tbl`, `colorscales.csv`, `Map_<N>` у DH | ✅ 130 тверджень, виправлено 7 помилок |
 | [provinces-config.md](provinces-config.md) | `db/province.csv`, локалізація `config/*.csv`, тип гри, моди, лексери | ✅ 923 твердження, виправлено 5 |
 | [scenario.md](scenario.md) | `.eug`/`.inc`, ключі країн, провінцій, юнітів, дати | ✅ 265 тверджень, виправлено 13 |
-| [units.md](units.md) | `db/units/**`, назви юнітів, моделей, корпусів | ще ні |
+| [units.md](units.md) | `db/units/**`, назви юнітів, моделей, корпусів; §17 — звірка з даними гри та exe (поєднання дивізії з бригадами, швидкість, ліміти типів) | звірено з exe і даними, перевірка скептиком триває |
 | [tech-commands.md](tech-commands.md) | `db/tech/*.txt`, команди (ефекти) й тригери | ще ні |
 | [leaders-ministers-misc.md](leaders-ministers-misc.md) | лідери, міністри, `db/misc.txt` | ще ні |
 
