@@ -109,6 +109,11 @@ impl Adjacency {
         Ok(Adjacency { links })
     }
 
+    /// Builds a graph from per-province neighbour lists (index = province id).
+    pub fn from_lists(links: Vec<Vec<Link>>) -> Self {
+        Adjacency { links }
+    }
+
     pub fn province_count(&self) -> usize {
         self.links.len()
     }

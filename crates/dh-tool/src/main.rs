@@ -27,6 +27,8 @@ USAGE:
                                                       render the world map
   dh-tool adj       <game-dir> <province-id>... [--mod <dir>]
                                                       neighbours with connection types (adjacent.tbl + adj-defs.csv)
+  dh-tool route     <game-dir> <from-id> <to-id> [--mod <dir>]
+                                                      shortest land route (old distance model, impassable links avoided)
   dh-tool sim       <game-dir> <scenario.eug> [--days N] [--mod <dir>]
                                                       load a scenario and run the headless simulation
 ";
@@ -100,6 +102,7 @@ fn main() -> ExitCode {
             Some("sim") => sim(&args),
             Some("map") => map(&args),
             Some("adj") => adj(&args),
+            Some("route") => route(&args),
             Some("help" | "-h") | None => {
                 print!("{USAGE}");
                 Ok(())
@@ -336,6 +339,73 @@ fn adj(args: &Args) -> Result<(), String> {
             println!("  {:>5} {:<28} {}{via}", l.to, name(l.to), l.kind.name());
         }
     }
+    Ok(())
+}
+
+/// Land route by straight-line distance between army positions, the game's
+/// default (`DistanceCalculationModel = 0`) distance. Sea zones and
+/// impassable links are excluded; real movement costs come later.
+fn route(args: &Args) -> Result<(), String> {
+    let vfs = args.vfs()?;
+    let mut warnings = Vec::new();
+    let provinces = Provinces::load(&vfs, &mut warnings).map_err(|e| e.to_string())?;
+    let loc = Localisation::load(&vfs, Language::English);
+    let adj = load_adjacency(&vfs, &provinces)?;
+    let id = |i: usize| -> Result<u32, String> {
+        let s = args.pos(i, "province-id")?;
+        s.parse().map_err(|_| format!("not a province id: {s}"))
+    };
+    let (from, to) = (id(2)?, id(3)?);
+    let field = |p: u32, f: &str| provinces.get(p).and_then(|p| p.fields.get(f).cloned());
+    let pos = |p: u32| -> Option<(i64, i64)> {
+        Some((
+            field(p, "army xpos")?.parse().ok()?,
+            field(p, "army ypos")?.parse().ok()?,
+        ))
+    };
+    let is_land = |p: u32| field(p, "terrain").is_some_and(|t| !t.eq_ignore_ascii_case("ocean"));
+    let dist = |a: u32, b: u32| Some(dh_map::distance::pixel_distance(pos(a)?, pos(b)?));
+    let goal = pos(to).ok_or("goal has no army position")?;
+    let path = dh_map::shortest_path(
+        &adj,
+        from,
+        to,
+        |p, l| {
+            (l.kind != dh_map::AdjKind::Impassable && is_land(l.to))
+                .then(|| dist(p, l.to))
+                .flatten()
+        },
+        |p| {
+            pos(p)
+                .map(|xy| dh_map::distance::pixel_distance(xy, goal))
+                .unwrap_or(0.0)
+        },
+    )
+    .ok_or("no land route")?;
+    let name = |p: u32| {
+        provinces
+            .get(p)
+            .map(|p| loc.text(&p.name).to_owned())
+            .unwrap_or_else(|| format!("#{p}"))
+    };
+    let mut total = 0.0;
+    for pair in path.provinces.windows(2) {
+        let d = dist(pair[0], pair[1]).unwrap_or(0.0) * 100.0;
+        total += d;
+        let kind = adj
+            .link(pair[0], pair[1])
+            .map(|l| l.kind.name())
+            .unwrap_or("?");
+        println!(
+            "  {:>5} {:<24} → {:>5} {:<24} {:>5.0} km  {kind}",
+            pair[0],
+            name(pair[0]),
+            pair[1],
+            name(pair[1]),
+            d
+        );
+    }
+    println!("{} hops, {total:.0} km", path.provinces.len() - 1);
     Ok(())
 }
 
