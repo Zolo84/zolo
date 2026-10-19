@@ -1,6 +1,6 @@
 //! Mutable game state.
 
-use dh_data::{GameDate, Scenario};
+use dh_data::{GameDate, Scenario, Unit};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone)]
@@ -18,6 +18,21 @@ pub struct World {
     /// Province id -> controller tag (differs from owner under occupation).
     pub controller: BTreeMap<u32, String>,
     pub flags: BTreeSet<String>,
+    pub units: Vec<UnitState>,
+}
+
+/// A unit on the map and the country it belongs to.
+#[derive(Debug, Clone)]
+pub struct UnitState {
+    pub owner: String,
+    pub unit: Unit,
+}
+
+impl UnitState {
+    /// Country giving the unit orders (expeditionary forces differ from the owner).
+    pub fn controller(&self) -> &str {
+        self.unit.control.as_deref().unwrap_or(&self.owner)
+    }
 }
 
 /// Start date used when a scenario header has none.
@@ -36,6 +51,7 @@ impl World {
             owner: BTreeMap::new(),
             controller: BTreeMap::new(),
             flags: BTreeSet::new(),
+            units: Vec::new(),
         }
     }
 
@@ -59,12 +75,20 @@ impl World {
             for &p in &c.controlled {
                 world.controller.insert(p, c.tag.clone());
             }
+            world.units.extend(c.units.iter().map(|u| UnitState {
+                owner: c.tag.clone(),
+                unit: u.clone(),
+            }));
         }
         // Provinces without an explicit controller are controlled by their owner.
         for (p, tag) in &world.owner {
             world.controller.entry(*p).or_insert_with(|| tag.clone());
         }
         (world, conflicts)
+    }
+
+    pub fn units_of<'a>(&'a self, tag: &'a str) -> impl Iterator<Item = &'a UnitState> + 'a {
+        self.units.iter().filter(move |u| u.owner == tag)
     }
 
     pub fn provinces_owned_by<'a>(&'a self, tag: &'a str) -> impl Iterator<Item = u32> + 'a {

@@ -4,7 +4,7 @@
 //! global data and `country = { ... }` blocks, typically split into included
 //! files per country.
 
-use crate::{load_script, GameDate, Vfs, Warning};
+use crate::{load_script, GameDate, Unit, Vfs, Warning};
 use dh_text::{Block, Item};
 use std::collections::HashSet;
 
@@ -48,6 +48,7 @@ pub struct CountrySetup {
     pub owned: Vec<u32>,
     pub controlled: Vec<u32>,
     pub national: Vec<u32>,
+    pub units: Vec<Unit>,
     /// The full block, for fields not yet modelled.
     pub raw: Block,
 }
@@ -65,6 +66,7 @@ impl CountrySetup {
             owned: ids("ownedprovinces"),
             controlled: ids("controlledprovinces"),
             national: ids("nationalprovinces"),
+            units: Unit::all_in(b),
             raw: b.clone(),
         })
     }

@@ -135,6 +135,9 @@ pub fn render(
             rgb[i * 3..i * 3 + 3].copy_from_slice(&c);
         }
     }
+    if let Some(scenario) = scenario.filter(|_| mode == Mode::Political) {
+        draw_land_units(&mut rgb, w, h, level, scenario, &provinces);
+    }
     Ok(Image {
         width: w,
         height: h,
@@ -153,4 +156,49 @@ pub fn write_png(img: &Image, path: &str) -> Result<(), String> {
     enc.set_depth(png::BitDepth::Eight);
     let mut writer = enc.write_header().map_err(|e| e.to_string())?;
     writer.write_image_data(&img.rgb).map_err(|e| e.to_string())
+}
+
+/// Marks every land unit at its province's army position (`Army XPos`/`Army YPos`
+/// in `Province.csv`, level-1 pixels): a dark square sized by division count.
+fn draw_land_units(
+    rgb: &mut [u8],
+    w: usize,
+    h: usize,
+    level: Level,
+    scenario: &Scenario,
+    provinces: &Provinces,
+) {
+    let mut divisions: HashMap<u32, usize> = HashMap::new();
+    for c in &scenario.countries {
+        for u in c.units.iter().filter(|u| u.branch == dh_data::Branch::Land) {
+            if let Some(p) = u.location {
+                *divisions.entry(p).or_default() += u.divisions.len();
+            }
+        }
+    }
+    let shift = level.index();
+    for (p, n) in divisions {
+        let pos = provinces.get(p).and_then(|p| {
+            let x: usize = p.fields.get("army xpos")?.parse().ok()?;
+            let y: usize = p.fields.get("army ypos")?.parse().ok()?;
+            Some((x >> shift, y >> shift))
+        });
+        let Some((cx, cy)) = pos else { continue };
+        let r = (1 + n.min(12) / 3) as isize;
+        for dy in -r - 1..=r + 1 {
+            for dx in -r - 1..=r + 1 {
+                let (x, y) = (cx as isize + dx, cy as isize + dy);
+                if x < 0 || y < 0 || x as usize >= w || y as usize >= h {
+                    continue;
+                }
+                let edge = dx.abs() > r || dy.abs() > r;
+                let i = (y as usize * w + x as usize) * 3;
+                rgb[i..i + 3].copy_from_slice(if edge {
+                    &[240, 240, 240]
+                } else {
+                    &[20, 20, 20]
+                });
+            }
+        }
+    }
 }

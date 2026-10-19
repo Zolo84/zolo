@@ -33,4 +33,7 @@
 - `colorscales.csv` гри містить 32 шкали, зокрема `border`, `border outline`, `usercolor1-6`.
 - `boundbox.tbl`: 2608 записів по 16 байт (`map/`), 2770 (`map/Map_1/`).
 - `db/Province.csv`: 48 колонок у заголовку, рядок-термінатор з `Id = -1`.
+- Координати `Army XPos`/`Army YPos` у `Province.csv` — пікселі рівня 1 (2559 з 2606 лежать у своєму `boundbox`) — ✅.
+- Сценарій 1936: 668 з'єднань (`landunit`/`navalunit`/`airunit`), 1677 дивізій; дивізія задає лише `type`/`model`/`strength`,
+  характеристики беруться з `db/units` — ✅.
 - Дати сценаріїв: `day = 0` — перше число місяця (1936.eug → 1936-01-01) — ✅.

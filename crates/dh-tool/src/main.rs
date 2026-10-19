@@ -368,9 +368,25 @@ fn sim(args: &Args) -> Result<(), String> {
         .map(|t| (sim.world.provinces_owned_by(t).count(), t))
         .collect();
     sizes.sort_by(|a, b| b.cmp(a));
-    println!("\nlargest countries by provinces:");
+    println!("\nlargest countries by provinces:  provinces  land/naval/air divisions");
     for (n, tag) in sizes.into_iter().take(10) {
-        println!("  {tag} {:<30} {n}", loc.text(tag));
+        let mut divs = [0usize; 3];
+        for u in sim.world.units_of(tag) {
+            let i = u.unit.branch as usize;
+            divs[i] += u.unit.divisions.len();
+        }
+        println!(
+            "  {tag} {:<30} {n:>4}       {:>3}/{:>3}/{:>3}",
+            loc.text(tag),
+            divs[0],
+            divs[1],
+            divs[2]
+        );
     }
+    let total: usize = sim.world.units.iter().map(|u| u.unit.divisions.len()).sum();
+    println!(
+        "\n{} units with {total} divisions on the map",
+        sim.world.units.len()
+    );
     Ok(())
 }

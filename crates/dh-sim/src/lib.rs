@@ -9,7 +9,7 @@ pub mod rng;
 pub mod world;
 
 pub use rng::Rng;
-pub use world::{Country, World};
+pub use world::{Country, UnitState, World};
 
 use dh_data::GameDate;
 
