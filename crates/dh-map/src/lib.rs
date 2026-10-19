@@ -6,12 +6,14 @@
 pub mod adjacency;
 pub mod boundbox;
 pub mod colorscale;
+pub mod distance;
 pub mod lightmap;
 pub mod shade;
 
 pub use adjacency::{AdjKind, Adjacency, Link};
 pub use boundbox::{BoundBox, Rect};
 pub use colorscale::ColorScales;
+pub use distance::{AirDist, NavalDist};
 pub use lightmap::{Block, Leaf, Level, LightMap, BLOCK};
 pub use shade::{shade_raster, Smoothing};
 

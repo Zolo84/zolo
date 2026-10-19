@@ -147,3 +147,93 @@ fn adjacency_matches_reverse_engineered_counts() {
         assert_eq!(counts, expected, "{tbl}");
     }
 }
+
+/// Rebuilding `airdist.tbl` from `distances.csv` must reproduce the shipped
+/// file byte for byte (`docs/spec/map-distances.md` §5).
+#[test]
+fn airdist_recomputes_byte_exact() {
+    use dh_map::distance::read_distances_csv;
+    use dh_map::AirDist;
+    let Some(dir) = map_dir() else { return };
+    for sub in ["", "Map_1/"] {
+        let coords =
+            read_distances_csv(&std::fs::read(dir.join(format!("{sub}distances.csv"))).unwrap())
+                .unwrap();
+        let shipped = std::fs::read(dir.join(format!("{sub}airdist.tbl"))).unwrap();
+        let rebuilt = AirDist::from_coords(&coords).to_bytes();
+        let diff = shipped
+            .chunks(2)
+            .zip(rebuilt.chunks(2))
+            .filter(|(a, b)| a != b)
+            .count();
+        eprintln!(
+            "{sub}airdist.tbl: {} provinces, {diff} differing values",
+            coords.len()
+        );
+        assert_eq!(shipped.len(), rebuilt.len());
+        assert_eq!(diff, 0);
+    }
+}
+
+/// Naval node numbering matches the matrix size, and in the old model the
+/// distance from a port to its sea zone is the army-position pixel distance
+/// (`docs/spec/map-distances.md` §4.5, §6.2).
+#[test]
+fn navaldist_matches_old_model() {
+    use dh_map::distance::{naval_indices, pixel_distance, NavalInput};
+    use dh_map::NavalDist;
+    use std::collections::HashMap;
+    let Some(dir) = map_dir() else { return };
+    let game = dir.parent().unwrap();
+    let table =
+        dh_text::CsvTable::parse_with_header(&std::fs::read(game.join("db/Province.csv")).unwrap());
+    let rows: Vec<_> = table
+        .rows
+        .iter()
+        .filter_map(|(_, r)| {
+            let id: u32 = r.first()?.parse().ok()?;
+            let num = |c: &str| {
+                table
+                    .get(r, c)
+                    .and_then(|v| v.parse::<i64>().ok())
+                    .unwrap_or(0)
+            };
+            (id < 2608).then(|| {
+                (
+                    id,
+                    r,
+                    num("port seazone"),
+                    (num("army xpos"), num("army ypos")),
+                )
+            })
+        })
+        .collect();
+    let index: HashMap<u32, usize> =
+        naval_indices(rows.iter().map(|(id, r, port, _)| NavalInput {
+            id: *id,
+            port_seazone: *port,
+            terrain: table.get(r, "terrain").unwrap_or(""),
+            area: table.get(r, "area").unwrap_or(""),
+        }))
+        .into_iter()
+        .collect();
+    let naval = NavalDist::parse(&std::fs::read(dir.join("navaldist.tbl")).unwrap()).unwrap();
+    assert_eq!(index.len(), naval.nodes());
+    let army: HashMap<u32, (i64, i64)> = rows.iter().map(|(id, _, _, pos)| (*id, *pos)).collect();
+    let (mut checked, mut exact) = (0, 0);
+    for (id, _, port, pos) in &rows {
+        let Some(sea) = u32::try_from(*port).ok().filter(|&s| s > 0) else {
+            continue;
+        };
+        let value = naval.get(index[id], index[&sea]).unwrap();
+        checked += 1;
+        if value == pixel_distance(*pos, army[&sea]) {
+            exact += 1;
+        }
+    }
+    eprintln!(
+        "navaldist.tbl: {} nodes, {exact}/{checked} port→sea-zone values bit-exact",
+        naval.nodes()
+    );
+    assert_eq!(exact, checked);
+}
