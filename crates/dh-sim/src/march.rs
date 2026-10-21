@@ -28,8 +28,7 @@ impl March {
         }
     }
 
-    /// Orders unit `index` to march to `target`. Without diplomacy a stack may
-    /// only pass through provinces its country controls or nobody controls.
+    /// Orders unit `index` to march to `target` along provinces it may enter.
     pub fn order(
         ctx: &MoveContext,
         world: &mut World,
@@ -40,22 +39,26 @@ impl March {
         let from = unit.unit.location.ok_or("unit has no location")?;
         let tag = unit.controller().to_owned();
         let path = ctx
-            .land_route(from, target, |p| {
-                world.controller.get(&p).is_none_or(|c| *c == tag)
-            })
+            .land_route(from, target, |p| world.can_enter(&tag, Some(from), p))
             .ok_or_else(|| format!("no land route from {from} to {target}"))?;
         let unit = &mut world.units[index];
         unit.route = path.provinces[1..].iter().copied().collect();
         unit.depart = world.hour;
-        unit.arrive = world.hour + Self::next_hop_hours(ctx, unit).unwrap_or(1) as u64;
+        let hours = Self::next_hop_hours(ctx, &world.units[index], world).unwrap_or(1);
+        let unit = &mut world.units[index];
+        unit.arrive = world.hour + hours as u64;
         Ok(path.provinces)
     }
 
-    fn next_hop_hours(ctx: &MoveContext, unit: &crate::UnitState) -> Option<u32> {
+    fn next_hop_hours(ctx: &MoveContext, unit: &crate::UnitState, world: &World) -> Option<u32> {
         let from = unit.unit.location?;
         let next = *unit.route.front()?;
         let link = ctx.adjacency.link(from, next)?;
-        ctx.hop_hours(&unit.unit.divisions, from, link)
+        let hostile = world
+            .controller
+            .get(&next)
+            .is_some_and(|c| world.at_war(unit.controller(), c));
+        ctx.hop_hours(&unit.unit.divisions, from, link, hostile)
     }
 }
 
@@ -66,21 +69,33 @@ impl System for March {
 
     fn on_hour(&mut self, world: &mut World, _rng: &mut Rng) {
         let hour = world.hour;
-        for (i, unit) in world.units.iter_mut().enumerate() {
-            while !unit.route.is_empty() && hour >= unit.arrive {
+        for i in 0..world.units.len() {
+            while !world.units[i].route.is_empty() && hour >= world.units[i].arrive {
+                let unit = &mut world.units[i];
                 let next = unit.route.pop_front().unwrap();
                 unit.unit.location = Some(next);
+                let (arrived, tag) = (unit.arrive, unit.controller().to_owned());
                 self.arrivals.push(Arrival {
                     unit: i,
                     province: next,
-                    hour: unit.arrive,
+                    hour: arrived,
                 });
-                if unit.route.is_empty() {
+                // Entering an enemy province takes control of it (assumed; the
+                // spec has not located that code, land-movement.md §11).
+                if world
+                    .controller
+                    .get(&next)
+                    .is_some_and(|c| world.at_war(&tag, c))
+                {
+                    world.controller.insert(next, tag);
+                }
+                if world.units[i].route.is_empty() {
                     break;
                 }
-                unit.depart = unit.arrive;
-                unit.arrive =
-                    unit.depart + Self::next_hop_hours(&self.ctx, unit).unwrap_or(1) as u64;
+                let hours = Self::next_hop_hours(&self.ctx, &world.units[i], world).unwrap_or(1);
+                let unit = &mut world.units[i];
+                unit.depart = arrived;
+                unit.arrive = arrived + hours as u64;
             }
         }
     }

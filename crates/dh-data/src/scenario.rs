@@ -4,7 +4,7 @@
 //! global data and `country = { ... }` blocks, typically split into included
 //! files per country.
 
-use crate::{load_script, GameDate, Unit, Vfs, Warning};
+use crate::{load_script, Diplomacy, GameDate, Relation, Unit, Vfs, Warning};
 use dh_text::{Block, Item};
 use std::collections::HashSet;
 
@@ -49,6 +49,7 @@ pub struct CountrySetup {
     pub controlled: Vec<u32>,
     pub national: Vec<u32>,
     pub units: Vec<Unit>,
+    pub relations: Vec<Relation>,
     /// The full block, for fields not yet modelled.
     pub raw: Block,
 }
@@ -67,6 +68,7 @@ impl CountrySetup {
             controlled: ids("controlledprovinces"),
             national: ids("nationalprovinces"),
             units: Unit::all_in(b),
+            relations: Relation::all_in(b),
             raw: b.clone(),
         })
     }
@@ -78,6 +80,7 @@ pub struct Scenario {
     /// All top-level items with includes spliced in place.
     pub root: Block,
     pub countries: Vec<CountrySetup>,
+    pub diplomacy: Diplomacy,
 }
 
 impl Scenario {
@@ -102,6 +105,7 @@ impl Scenario {
             .collect();
         Ok(Scenario {
             info: ScenarioInfo::from_root(path, &root),
+            diplomacy: Diplomacy::from_globaldata(root.get_block("globaldata")),
             root,
             countries,
         })

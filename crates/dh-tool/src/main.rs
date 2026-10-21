@@ -29,7 +29,7 @@ USAGE:
                                                       neighbours with connection types (adjacent.tbl + adj-defs.csv)
   dh-tool route     <game-dir> <from-id> <to-id> [--mod <dir>]
                                                       shortest land route (old distance model, impassable links avoided)
-  dh-tool march     <game-dir> <scenario.eug> <unit name> <to-id> [--mod <dir>]
+  dh-tool march     <game-dir> <scenario.eug> <unit name> <to-id> [--war TAG] [--mod <dir>]
                                                       march a land unit and print its hourly progress
   dh-tool sim       <game-dir> <scenario.eug> [--days N] [--mod <dir>]
                                                       load a scenario and run the headless simulation
@@ -433,7 +433,16 @@ fn march(args: &Args) -> Result<(), String> {
             .unwrap_or_else(|| format!("#{p}"))
     };
 
-    let (world, _) = World::from_scenario(&scenario);
+    let (mut world, _) = World::from_scenario(&scenario);
+    if let Some(enemy) = args.options.get("war") {
+        let owner = world
+            .units
+            .iter()
+            .find(|u| u.unit.name.eq_ignore_ascii_case(name))
+            .map(|u| u.owner.clone())
+            .ok_or_else(|| format!("no unit named {name:?}"))?;
+        world.declare_war(&owner, &enemy.to_ascii_uppercase());
+    }
     let mut sim = Simulation::new(world, 0xD412_0001);
     let index = sim
         .world

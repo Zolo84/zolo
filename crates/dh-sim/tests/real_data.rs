@@ -33,6 +33,7 @@ fn hop_times_match_worked_example() {
             &corps.divisions,
             from,
             ctx.adjacency.link(from, to).unwrap(),
+            false,
         )
     };
     assert_eq!(hours(300, 299), Some(21), "Berlin → Potsdam");
@@ -70,4 +71,35 @@ fn corps_marches_along_its_route() {
     sim.run_hours(1);
     assert_eq!(sim.world.units[index].unit.location, Some(299));
     assert!(sim.world.units[index].route.is_empty());
+}
+
+/// Without a war German troops stay out of France; with one they cross the
+/// border and take control of the French provinces they enter.
+#[test]
+fn war_opens_the_border() {
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let ctx = Arc::new(ctx);
+    let (mut world, _) = World::from_scenario(&scenario);
+    let index = world
+        .units
+        .iter()
+        .position(|u| u.unit.name == "VIII. Armeekorps")
+        .unwrap();
+    assert!(March::order(&ctx, &mut world, index, 56).is_err());
+    world.declare_war("GER", "FRA");
+    let route = March::order(&ctx, &mut world, index, 56).expect("route to Paris once at war");
+    assert_eq!(route.first(), Some(&300));
+    let mut sim = Simulation::new(world, 1);
+    sim.add_system(March::new(ctx));
+    while !sim.world.units[index].route.is_empty() {
+        sim.tick();
+    }
+    assert_eq!(sim.world.units[index].unit.location, Some(56));
+    assert_eq!(
+        sim.world.controller.get(&56).map(String::as_str),
+        Some("GER")
+    );
+    assert_eq!(sim.world.owner.get(&56).map(String::as_str), Some("FRA"));
 }

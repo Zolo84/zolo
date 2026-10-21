@@ -4,8 +4,7 @@
 //! Not modelled yet (fixed at their neutral values): weather (clear), night
 //! (off in the shipped game), supply efficiency (1.0), country speed
 //! multiplier and difficulty (1.0), leader traits, missions, fuel, and
-//! embarking. Diplomacy does not exist yet, so a stack may only enter
-//! provinces controlled by its own country or by nobody.
+//! embarking.
 
 use dh_data::{Division, Provinces, UnitDb, Vfs};
 use dh_map::{AdjKind, Adjacency, Link, Path};
@@ -202,7 +201,14 @@ impl MoveContext {
     }
 
     /// Whole hours to move a stack across one link (spec §4), at least 1.
-    pub fn hop_hours(&self, divisions: &[Division], from: u32, link: &Link) -> Option<u32> {
+    /// `hostile`: the destination is controlled by a country at war with the stack.
+    pub fn hop_hours(
+        &self,
+        divisions: &[Division],
+        from: u32,
+        link: &Link,
+        hostile: bool,
+    ) -> Option<u32> {
         let dest = self.province(link.to)?;
         let mut d = self.distance(from, link.to)? * 100.0;
         if !dest.is_water() {
@@ -215,6 +221,9 @@ impl MoveContext {
         }
         d = d.max(1.0);
         let v = self.stack_speed(divisions, link.to);
+        if hostile && !dest.is_water() {
+            d *= 1.25;
+        }
         Some(((d as f64 / v as f64) as u32).max(1))
     }
 

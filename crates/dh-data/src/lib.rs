@@ -4,6 +4,7 @@
 //! the original engine tolerates broken mod files.
 
 pub mod date;
+pub mod diplomacy;
 pub mod localisation;
 pub mod province;
 pub mod scenario;
@@ -12,6 +13,7 @@ pub mod units;
 
 pub use date::GameDate;
 pub use dh_vfs::Vfs;
+pub use diplomacy::{Diplomacy, Relation, War};
 pub use localisation::Localisation;
 pub use province::{Province, Provinces};
 pub use scenario::{CountrySetup, Scenario, ScenarioInfo};
