@@ -34,6 +34,7 @@ fn hop_times_match_worked_example() {
             from,
             ctx.adjacency.link(from, to).unwrap(),
             false,
+            1.0,
         )
     };
     assert_eq!(hours(300, 299), Some(21), "Berlin → Potsdam");
@@ -199,6 +200,7 @@ fn strasbourg_attack_breaks_off_like_the_spec_example() {
         let mut sim = Simulation::new(world, seed);
         let mut combat = Combat::new(ctx.clone(), &scenario);
         combat.night = false;
+        combat.supply = false; // the example assumes ESE = 1
         sim.add_system(Engage);
         sim.add_system(combat);
         sim.add_system(March::new(ctx.clone()));
@@ -219,4 +221,18 @@ fn strasbourg_attack_breaks_off_like_the_spec_example() {
     );
     assert!(broke_off >= 190);
     assert!((12.0..=20.0).contains(&mean), "mean {mean}");
+}
+
+/// Berlin connects to the German capital; a lone captured Paris does not.
+#[test]
+fn supply_follows_controlled_land_to_the_capital() {
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let (mut world, _) = World::from_scenario(&scenario);
+    assert!(world.in_supply(&ctx, "GER", 300));
+    world.declare_war("GER", "FRA");
+    world.controller.insert(56, "GER".into());
+    assert!(!world.in_supply(&ctx, "GER", 56));
+    assert_eq!(world.supply_speed_factor(&ctx, "GER", 56), 0.1);
 }

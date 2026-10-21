@@ -10,6 +10,7 @@ pub mod combat;
 pub mod march;
 pub mod movement;
 pub mod rng;
+pub mod supply;
 pub mod world;
 
 pub use battle::{Battle, Engage};

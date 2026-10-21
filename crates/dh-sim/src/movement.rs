@@ -2,7 +2,7 @@
 //! provinces, stack speed, and route finding with the game's land cost.
 //!
 //! Not modelled yet (fixed at their neutral values): weather (clear), night
-//! (off in the shipped game), supply efficiency (1.0), country speed
+//! (off in the shipped game), country speed
 //! multiplier and difficulty (1.0), leader traits, missions, fuel, and
 //! embarking.
 
@@ -184,7 +184,7 @@ impl MoveContext {
     }
 
     /// Speed of a stack in its destination province, km/h (spec §3).
-    pub fn stack_speed(&self, divisions: &[Division], dest: u32) -> f32 {
+    pub fn stack_speed(&self, divisions: &[Division], dest: u32, supply: f32) -> f32 {
         if divisions.is_empty() {
             return 1.0;
         }
@@ -211,17 +211,20 @@ impl MoveContext {
         if halve {
             best /= 2.0;
         }
+        best *= supply;
         best.max(1.0) * 0.75
     }
 
     /// Whole hours to move a stack across one link (spec §4), at least 1.
     /// `hostile`: the destination is controlled by a country at war with the stack.
+    /// `supply`: speed factor from supply (1.0 for a fully supplied stack).
     pub fn hop_hours(
         &self,
         divisions: &[Division],
         from: u32,
         link: &Link,
         hostile: bool,
+        supply: f32,
     ) -> Option<u32> {
         let dest = self.province(link.to)?;
         let mut d = self.distance(from, link.to)? * 100.0;
@@ -234,7 +237,7 @@ impl MoveContext {
             }
         }
         d = d.max(1.0);
-        let v = self.stack_speed(divisions, link.to);
+        let v = self.stack_speed(divisions, link.to, supply);
         if hostile && !dest.is_water() {
             d *= 1.25;
         }

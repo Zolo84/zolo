@@ -108,6 +108,8 @@ pub struct Combat {
     pub results: Vec<(u32, bool)>,
     /// Apply the night modifiers (on in the game; switchable for comparisons).
     pub night: bool,
+    /// Apply the supply-efficiency modifier (on in the game).
+    pub supply: bool,
 }
 
 impl Combat {
@@ -123,6 +125,7 @@ impl Combat {
             forts,
             results: Vec::new(),
             night: true,
+            supply: true,
         }
     }
 
@@ -148,6 +151,14 @@ impl Combat {
                 .controller
                 .get(&battle.province)
                 .is_some_and(|c| world.at_war(unit.controller(), c));
+            // Supply efficiency of the stack where it stands (row 10 of the
+            // modifier table). Out-of-supply stacks are left neutral for now.
+            let ese = match unit.unit.location {
+                Some(p) if self.supply && world.in_supply(ctx, unit.controller(), p) => {
+                    world.supply_efficiency(ctx, p)
+                }
+                _ => 1.0,
+            };
             for (i, d) in unit.unit.divisions.iter().enumerate() {
                 let Some(stats) = ctx.units.division_stats(d) else {
                     continue;
@@ -175,6 +186,9 @@ impl Combat {
                         tm += params::HARD_IN_CITY;
                     }
                     a *= 1.0 + tm;
+                }
+                if ese != 1.0 {
+                    a *= 1.0 + (ese - 1.0) * 0.5;
                 }
                 w *= 1.0 + m(&format!("{side}_CLEAR"));
                 if night {

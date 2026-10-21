@@ -58,7 +58,8 @@ impl March {
             .controller
             .get(&next)
             .is_some_and(|c| world.at_war(unit.controller(), c));
-        ctx.hop_hours(&unit.unit.divisions, from, link, hostile)
+        let supply = world.supply_speed_factor(ctx, unit.controller(), from);
+        ctx.hop_hours(&unit.unit.divisions, from, link, hostile, supply)
     }
 }
 
