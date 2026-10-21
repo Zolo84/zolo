@@ -29,6 +29,8 @@ USAGE:
                                                       neighbours with connection types (adjacent.tbl + adj-defs.csv)
   dh-tool route     <game-dir> <from-id> <to-id> [--mod <dir>]
                                                       shortest land route (old distance model, impassable links avoided)
+  dh-tool march     <game-dir> <scenario.eug> <unit name> <to-id> [--mod <dir>]
+                                                      march a land unit and print its hourly progress
   dh-tool sim       <game-dir> <scenario.eug> [--days N] [--mod <dir>]
                                                       load a scenario and run the headless simulation
 ";
@@ -103,6 +105,7 @@ fn main() -> ExitCode {
             Some("map") => map(&args),
             Some("adj") => adj(&args),
             Some("route") => route(&args),
+            Some("march") => march(&args),
             Some("help" | "-h") | None => {
                 print!("{USAGE}");
                 Ok(())
@@ -406,6 +409,69 @@ fn route(args: &Args) -> Result<(), String> {
         );
     }
     println!("{} hops, {total:.0} km", path.provinces.len() - 1);
+    Ok(())
+}
+
+fn march(args: &Args) -> Result<(), String> {
+    use dh_sim::march::March;
+    let vfs = args.vfs()?;
+    let path = args.pos(2, "scenario.eug")?;
+    let name = args.pos(3, "unit name")?;
+    let target: u32 = args
+        .pos(4, "to-id")?
+        .parse()
+        .map_err(|_| "to-id must be a province id")?;
+    let mut warnings = Vec::new();
+    let scenario = Scenario::load(&vfs, path, &mut warnings).map_err(|e| format!("{path}: {e}"))?;
+    let ctx = std::sync::Arc::new(dh_sim::movement::MoveContext::load(&vfs)?);
+    let provinces = Provinces::load(&vfs, &mut warnings).map_err(|e| e.to_string())?;
+    let loc = Localisation::load(&vfs, Language::English);
+    let pname = |p: u32| {
+        provinces
+            .get(p)
+            .map(|p| loc.text(&p.name).to_owned())
+            .unwrap_or_else(|| format!("#{p}"))
+    };
+
+    let (world, _) = World::from_scenario(&scenario);
+    let mut sim = Simulation::new(world, 0xD412_0001);
+    let index = sim
+        .world
+        .units
+        .iter()
+        .position(|u| u.unit.name.eq_ignore_ascii_case(name))
+        .ok_or_else(|| format!("no unit named {name:?}"))?;
+    let route = March::order(&ctx, &mut sim.world, index, target)?;
+    let unit = &sim.world.units[index];
+    println!(
+        "{} ({}, {} divisions) at {}: route {}",
+        unit.unit.name,
+        unit.owner,
+        unit.unit.divisions.len(),
+        sim.date(),
+        route
+            .iter()
+            .map(|&p| pname(p))
+            .collect::<Vec<_>>()
+            .join(" → ")
+    );
+    sim.add_system(March::new(ctx));
+    let start = sim.date();
+    let mut last = route[0];
+    while !sim.world.units[index].route.is_empty() {
+        sim.tick();
+        let here = sim.world.units[index].unit.location.unwrap_or(last);
+        if here != last {
+            println!(
+                "  {}  arrived in {:<24} (+{} h)",
+                sim.date(),
+                pname(here),
+                sim.world.hour
+            );
+            last = here;
+        }
+    }
+    println!("{start} → {}: {} hours", sim.date(), sim.world.hour);
     Ok(())
 }
 

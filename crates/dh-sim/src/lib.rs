@@ -5,6 +5,8 @@
 //! added as [`System`]s as they are reverse engineered, so each one can be
 //! tested in isolation against recorded behaviour of the original game.
 
+pub mod march;
+pub mod movement;
 pub mod rng;
 pub mod world;
 
@@ -46,6 +48,7 @@ impl Simulation {
     /// Advances one hour.
     pub fn tick(&mut self) {
         self.world.date = self.world.date.add_hours(1);
+        self.world.hour += 1;
         for s in &mut self.systems {
             s.on_hour(&mut self.world, &mut self.rng);
         }

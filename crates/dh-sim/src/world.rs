@@ -1,7 +1,7 @@
 //! Mutable game state.
 
 use dh_data::{GameDate, Scenario, Unit};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[derive(Debug, Clone)]
 pub struct Country {
@@ -19,6 +19,8 @@ pub struct World {
     pub controller: BTreeMap<u32, String>,
     pub flags: BTreeSet<String>,
     pub units: Vec<UnitState>,
+    /// Hours simulated since the scenario start.
+    pub hour: u64,
 }
 
 /// A unit on the map and the country it belongs to.
@@ -26,6 +28,11 @@ pub struct World {
 pub struct UnitState {
     pub owner: String,
     pub unit: Unit,
+    /// Remaining provinces to march through, next first.
+    pub route: VecDeque<u32>,
+    /// Absolute simulation hours when the current hop started and ends.
+    pub depart: u64,
+    pub arrive: u64,
 }
 
 impl UnitState {
@@ -52,6 +59,7 @@ impl World {
             controller: BTreeMap::new(),
             flags: BTreeSet::new(),
             units: Vec::new(),
+            hour: 0,
         }
     }
 
@@ -78,6 +86,9 @@ impl World {
             world.units.extend(c.units.iter().map(|u| UnitState {
                 owner: c.tag.clone(),
                 unit: u.clone(),
+                route: VecDeque::new(),
+                depart: 0,
+                arrive: 0,
             }));
         }
         // Provinces without an explicit controller are controlled by their owner.

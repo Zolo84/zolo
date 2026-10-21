@@ -8,3 +8,5 @@ publish.workspace = true
 [dependencies]
 dh-data.workspace = true
 dh-text.workspace = true
+dh-map.workspace = true
+dh-vfs.workspace = true
