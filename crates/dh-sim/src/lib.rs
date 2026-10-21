@@ -5,11 +5,13 @@
 //! added as [`System`]s as they are reverse engineered, so each one can be
 //! tested in isolation against recorded behaviour of the original game.
 
+pub mod battle;
 pub mod march;
 pub mod movement;
 pub mod rng;
 pub mod world;
 
+pub use battle::{Battle, Engage};
 pub use rng::Rng;
 pub use world::{Country, UnitState, World};
 

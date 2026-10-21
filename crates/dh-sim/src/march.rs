@@ -71,10 +71,17 @@ impl System for March {
         let hour = world.hour;
         for i in 0..world.units.len() {
             while !world.units[i].route.is_empty() && hour >= world.units[i].arrive {
+                // A stack cannot enter a province while enemy land units hold it.
+                let next = world.units[i].route[0];
+                let tag = world.units[i].controller().to_owned();
+                if world.enemy_land_units(&tag, next).next().is_some() {
+                    break;
+                }
                 let unit = &mut world.units[i];
                 let next = unit.route.pop_front().unwrap();
                 unit.unit.location = Some(next);
-                let (arrived, tag) = (unit.arrive, unit.controller().to_owned());
+                // The hour it actually got in: later than planned if it was held up.
+                let (arrived, tag) = (hour, unit.controller().to_owned());
                 self.arrivals.push(Arrival {
                     unit: i,
                     province: next,

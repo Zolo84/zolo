@@ -467,8 +467,27 @@ fn march(args: &Args) -> Result<(), String> {
     sim.add_system(March::new(ctx));
     let start = sim.date();
     let mut last = route[0];
+    sim.add_system(dh_sim::Engage);
+    let limit = sim.world.hour + 24 * 365;
     while !sim.world.units[index].route.is_empty() {
+        if sim.world.hour >= limit {
+            let next = sim.world.units[index].route[0];
+            println!(
+                "  still held up before {} after a year (battles are not resolved yet)",
+                pname(next)
+            );
+            break;
+        }
+        let battles = sim.world.battles.len();
         sim.tick();
+        if sim.world.battles.len() > battles {
+            let b = sim.world.battles.last().unwrap();
+            println!(
+                "  {}  attacks {} (enemy troops there)",
+                sim.date(),
+                pname(b.province)
+            );
+        }
         let here = sim.world.units[index].unit.location.unwrap_or(last);
         if here != last {
             println!(

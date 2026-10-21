@@ -24,6 +24,7 @@ pub struct World {
     pub diplomacy: Diplomacy,
     /// `(grantor, grantee)`: the grantee may move through the grantor's territory.
     pub access: BTreeSet<(String, String)>,
+    pub battles: Vec<crate::Battle>,
 }
 
 /// A unit on the map and the country it belongs to.
@@ -65,6 +66,7 @@ impl World {
             hour: 0,
             diplomacy: Diplomacy::default(),
             access: BTreeSet::new(),
+            battles: Vec::new(),
         }
     }
 

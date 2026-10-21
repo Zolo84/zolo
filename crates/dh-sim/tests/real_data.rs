@@ -74,7 +74,8 @@ fn corps_marches_along_its_route() {
 }
 
 /// Without a war German troops stay out of France; with one they cross the
-/// border and take control of the French provinces they enter.
+/// border and take control of the French provinces they enter (French troops
+/// on the route are removed first, as battles are not resolved yet).
 #[test]
 fn war_opens_the_border() {
     let Some((ctx, scenario)) = load() else {
@@ -91,9 +92,15 @@ fn war_opens_the_border() {
     world.declare_war("GER", "FRA");
     let route = March::order(&ctx, &mut world, index, 56).expect("route to Paris once at war");
     assert_eq!(route.first(), Some(&300));
+    for &p in &route {
+        let defenders: Vec<usize> = world.enemy_land_units("GER", p).collect();
+        for d in defenders {
+            world.units[d].unit.location = None;
+        }
+    }
     let mut sim = Simulation::new(world, 1);
     sim.add_system(March::new(ctx));
-    while !sim.world.units[index].route.is_empty() {
+    while !sim.world.units[index].route.is_empty() && sim.world.hour < 5000 {
         sim.tick();
     }
     assert_eq!(sim.world.units[index].unit.location, Some(56));
@@ -102,4 +109,61 @@ fn war_opens_the_border() {
         Some("GER")
     );
     assert_eq!(sim.world.owner.get(&56).map(String::as_str), Some("FRA"));
+}
+
+/// A battle starts as soon as the next province on the route holds enemy land
+/// units; the attacker waits at the border until the province is clear.
+#[test]
+fn battle_starts_before_entering_a_defended_province() {
+    use dh_sim::Engage;
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let ctx = Arc::new(ctx);
+    let (mut world, _) = World::from_scenario(&scenario);
+    world.declare_war("GER", "FRA");
+    let corps = world
+        .units
+        .iter()
+        .position(|u| u.unit.name == "VIII. Armeekorps")
+        .unwrap();
+    let route = March::order(&ctx, &mut world, corps, 56).unwrap();
+    // The first French-held province on the way and the stop before it.
+    let pos = route
+        .iter()
+        .position(|&p| world.enemy_land_units("GER", p).next().is_some())
+        .expect("French troops somewhere on the road to Paris");
+    let (border, defended) = (route[pos - 1], route[pos]);
+    let defenders: Vec<usize> = world.enemy_land_units("GER", defended).collect();
+
+    let mut sim = Simulation::new(world, 1);
+    sim.add_system(Engage);
+    sim.add_system(March::new(ctx));
+    let limit = 5000;
+    while sim.world.units[corps].unit.location != Some(border) && sim.world.hour < limit {
+        sim.tick();
+    }
+    assert_eq!(sim.world.units[corps].unit.location, Some(border));
+    let reached = sim.world.hour;
+    sim.tick();
+    let battle = sim
+        .world
+        .battle_at(defended)
+        .expect("battle for the defended province");
+    assert!(battle.attackers.contains(&corps));
+    assert!(battle.started <= reached + 1);
+
+    sim.run_hours(1000); // far past any hop time: still held up at the border
+    assert_eq!(sim.world.units[corps].unit.location, Some(border));
+
+    for d in defenders {
+        sim.world.units[d].unit.location = None; // defenders destroyed
+    }
+    sim.run_hours(2);
+    assert!(sim.world.battle_at(defended).is_none());
+    assert_eq!(sim.world.units[corps].unit.location, Some(defended));
+    assert_eq!(
+        sim.world.controller.get(&defended).map(String::as_str),
+        Some("GER")
+    );
 }
