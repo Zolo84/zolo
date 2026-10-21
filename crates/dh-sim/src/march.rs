@@ -41,7 +41,7 @@ impl March {
         let tag = unit.controller().to_owned();
         let path = ctx
             .land_route(from, target, |p| {
-                world.controller.get(&p).map_or(true, |c| *c == tag)
+                world.controller.get(&p).is_none_or(|c| *c == tag)
             })
             .ok_or_else(|| format!("no land route from {from} to {target}"))?;
         let unit = &mut world.units[index];
