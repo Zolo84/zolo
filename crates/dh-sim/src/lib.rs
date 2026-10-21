@@ -6,12 +6,14 @@
 //! tested in isolation against recorded behaviour of the original game.
 
 pub mod battle;
+pub mod combat;
 pub mod march;
 pub mod movement;
 pub mod rng;
 pub mod world;
 
 pub use battle::{Battle, Engage};
+pub use combat::Combat;
 pub use rng::Rng;
 pub use world::{Country, UnitState, World};
 

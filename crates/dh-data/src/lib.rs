@@ -16,7 +16,7 @@ pub use dh_vfs::Vfs;
 pub use diplomacy::{Diplomacy, Relation, War};
 pub use localisation::Localisation;
 pub use province::{Province, Provinces};
-pub use scenario::{CountrySetup, Scenario, ScenarioInfo};
+pub use scenario::{CountrySetup, ProvinceSetup, Scenario, ScenarioInfo};
 pub use unitdb::{DivisionStats, UnitDb};
 pub use units::{Branch, Brigade, Division, TypeId, Unit};
 

@@ -167,3 +167,56 @@ fn battle_starts_before_entering_a_defended_province() {
         Some("GER")
     );
 }
+
+/// The worked example of `docs/spec/land-combat.md` §6: V. Armeekorps attacks
+/// 8ème Armée in Strasbourg across the Rhine and into the Maginot forts. The
+/// spec's own simulation (no night, 2000 runs) has the attackers break off in
+/// every run, after 11–24 hours (mean 15.5).
+#[test]
+fn strasbourg_attack_breaks_off_like_the_spec_example() {
+    use dh_sim::{Combat, Engage};
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let ctx = Arc::new(ctx);
+    let (mut base, _) = World::from_scenario(&scenario);
+    base.declare_war("GER", "FRA");
+    let corps = base
+        .units
+        .iter()
+        .position(|u| u.unit.name == "V. Armeekorps")
+        .unwrap();
+    assert_eq!(base.units[corps].unit.location, Some(314));
+    assert!(
+        base.enemy_land_units("GER", 73).next().is_some(),
+        "French troops in Strasbourg"
+    );
+
+    let (mut broke_off, mut hours) = (0, Vec::new());
+    for seed in 1..=200u64 {
+        let mut world = base.clone();
+        March::order(&ctx, &mut world, corps, 73).unwrap();
+        let mut sim = Simulation::new(world, seed);
+        let mut combat = Combat::new(ctx.clone(), &scenario);
+        combat.night = false;
+        sim.add_system(Engage);
+        sim.add_system(combat);
+        sim.add_system(March::new(ctx.clone()));
+        let start = sim.world.hour;
+        while sim.world.units[corps].route.front() == Some(&73) && sim.world.hour < start + 200 {
+            sim.tick();
+        }
+        if sim.world.units[corps].unit.location == Some(314) {
+            broke_off += 1;
+            hours.push(sim.world.hour - start);
+        }
+    }
+    let mean = hours.iter().sum::<u64>() as f64 / hours.len().max(1) as f64;
+    eprintln!(
+        "attack broke off in {broke_off}/200 runs after {}..={} h (mean {mean:.1})",
+        hours.iter().min().unwrap_or(&0),
+        hours.iter().max().unwrap_or(&0)
+    );
+    assert!(broke_off >= 190);
+    assert!((12.0..=20.0).contains(&mean), "mean {mean}");
+}

@@ -74,6 +74,34 @@ impl CountrySetup {
     }
 }
 
+/// Buildings and other per-province state set by a scenario `province` block.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProvinceSetup {
+    pub id: u32,
+    /// Current land fort level.
+    pub land_fort: f64,
+    pub coastal_fort: f64,
+}
+
+impl ProvinceSetup {
+    pub fn from_block(b: &Block) -> Option<Self> {
+        // A building is `key = n` or `key = { size = n current_size = m }`.
+        let size = |key: &str| match b.get(key) {
+            Some(dh_text::Value::Block(s)) => s
+                .get_f64("current_size")
+                .or(s.get_f64("size"))
+                .unwrap_or(0.0),
+            Some(dh_text::Value::Scalar(v)) => v.as_f64().unwrap_or(0.0),
+            None => 0.0,
+        };
+        Some(ProvinceSetup {
+            id: u32::try_from(b.get_i64("id")?).ok()?,
+            land_fort: size("landfort"),
+            coastal_fort: size("coastalfort"),
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Scenario {
     pub info: ScenarioInfo,
@@ -81,6 +109,7 @@ pub struct Scenario {
     pub root: Block,
     pub countries: Vec<CountrySetup>,
     pub diplomacy: Diplomacy,
+    pub provinces: Vec<ProvinceSetup>,
 }
 
 impl Scenario {
@@ -106,6 +135,10 @@ impl Scenario {
         Ok(Scenario {
             info: ScenarioInfo::from_root(path, &root),
             diplomacy: Diplomacy::from_globaldata(root.get_block("globaldata")),
+            provinces: root
+                .get_all("province")
+                .filter_map(|v| ProvinceSetup::from_block(v.as_block()?))
+                .collect(),
             root,
             countries,
         })

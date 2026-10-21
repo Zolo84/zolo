@@ -55,6 +55,7 @@ impl ProvinceInfo {
 /// columns are division type indices. Values are percentages.
 #[derive(Debug, Clone, Default)]
 pub struct UnitModifiers {
+    names: Vec<String>,
     rows: Vec<Vec<f32>>,
 }
 
@@ -62,18 +63,21 @@ impl UnitModifiers {
     pub fn parse(bytes: &[u8]) -> Self {
         let table = dh_text::CsvTable::parse(bytes);
         // The first line is a header; every later line occupies a row slot.
-        let rows = table
-            .rows
-            .iter()
-            .skip(1)
-            .map(|(_, r)| {
-                r.iter()
-                    .skip(1)
-                    .map(|v| v.parse::<f32>().unwrap_or(0.0))
-                    .collect()
-            })
-            .collect();
-        UnitModifiers { rows }
+        let data = table.rows.iter().skip(1);
+        UnitModifiers {
+            names: data
+                .clone()
+                .map(|(_, r)| r.first().cloned().unwrap_or_default().to_ascii_uppercase())
+                .collect(),
+            rows: data
+                .map(|(_, r)| {
+                    r.iter()
+                        .skip(1)
+                        .map(|v| v.parse::<f32>().unwrap_or(0.0))
+                        .collect()
+                })
+                .collect(),
+        }
     }
 
     /// Modifier as a fraction (CSV percent / 100).
@@ -84,6 +88,16 @@ impl UnitModifiers {
             .copied()
             .unwrap_or(0.0)
             / 100.0
+    }
+
+    /// Row index of a named modifier such as `ATT_RIVER`.
+    pub fn row(&self, name: &str) -> Option<usize> {
+        self.names.iter().position(|n| n == name)
+    }
+
+    /// Named modifier as a fraction; 0 when the row is missing.
+    pub fn named(&self, name: &str, division_type: usize) -> f32 {
+        self.row(name).map_or(0.0, |r| self.get(r, division_type))
     }
 }
 

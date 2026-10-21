@@ -464,10 +464,11 @@ fn march(args: &Args) -> Result<(), String> {
             .collect::<Vec<_>>()
             .join(" → ")
     );
-    sim.add_system(March::new(ctx));
+    sim.add_system(March::new(ctx.clone()));
     let start = sim.date();
     let mut last = route[0];
     sim.add_system(dh_sim::Engage);
+    sim.add_system(dh_sim::Combat::new(ctx.clone(), &scenario));
     let limit = sim.world.hour + 24 * 365;
     while !sim.world.units[index].route.is_empty() {
         if sim.world.hour >= limit {
@@ -478,15 +479,45 @@ fn march(args: &Args) -> Result<(), String> {
             );
             break;
         }
-        let battles = sim.world.battles.len();
+        let before: Vec<u32> = sim.world.battles.iter().map(|b| b.province).collect();
         sim.tick();
-        if sim.world.battles.len() > battles {
-            let b = sim.world.battles.last().unwrap();
+        for b in sim
+            .world
+            .battles
+            .iter()
+            .filter(|b| !before.contains(&b.province))
+        {
             println!(
                 "  {}  attacks {} (enemy troops there)",
                 sim.date(),
                 pname(b.province)
             );
+        }
+        for p in before.iter().filter(|p| sim.world.battle_at(**p).is_none()) {
+            let u = &sim.world.units[index];
+            let (strength, org) = u.unit.divisions.iter().fold((0.0, 0.0), |(s, o), d| {
+                (
+                    s + d.strength.unwrap_or(100.0),
+                    o + d.organisation.unwrap_or(0.0),
+                )
+            });
+            let n = u.unit.divisions.len().max(1) as f64;
+            let outcome = if u.route.front() == Some(p) {
+                "defenders gone"
+            } else {
+                "attack broken off"
+            };
+            println!(
+                "  {}  battle for {} over: {outcome} (strength {strength:.1}, average org {:.1})",
+                sim.date(),
+                pname(*p),
+                org / n
+            );
+        }
+        if sim.world.units[index].route.is_empty()
+            && sim.world.units[index].unit.location != Some(target)
+        {
+            break;
         }
         let here = sim.world.units[index].unit.location.unwrap_or(last);
         if here != last {
