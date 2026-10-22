@@ -127,8 +127,10 @@ impl Treaty {
 pub struct Relation {
     pub tag: String,
     pub value: f64,
-    /// Military access; read as granted by the country owning the block to `tag`
-    /// (`docs/spec/land-movement.md` §7.2).
+    /// Military access of the country owning the block to `tag`'s territory:
+    /// the game stores it in that country's relation record about `tag`, the
+    /// one its stacks consult before entering `tag`'s provinces
+    /// (`docs/spec/land-movement.md` §1.4).
     pub access: bool,
     pub guaranteed: Option<GameDate>,
 }

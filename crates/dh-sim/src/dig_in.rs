@@ -123,7 +123,7 @@ mod tests {
         let ita = stack(&mut world, "ITA", 2, 1);
         let spa = stack(&mut world, "SPA", 3, 1);
         let old = stack(&mut world, "FRA", 4, 1);
-        world.units[old].dig_in = 75.0; // as some scenarios have it
+        world.units[old].dig_in = 75.0; // as Finland's in the 1944 scenario
         let mut sim = Simulation::new(world, 1);
         sim.add_system(DigIn);
         let level = |sim: &Simulation, u: usize| sim.world.units[u].dig_in;

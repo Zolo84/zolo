@@ -200,7 +200,7 @@ fn read_indices(r: &mut Reader, leaves: &mut [Leaf], id_count: usize) -> Result<
         _ => 8,
     };
     let per_byte = 8 / bits;
-    let mask = (1u16 << bits) as u8 - 1;
+    let mask = ((1u16 << bits) - 1) as u8;
     let mut byte = 0;
     for (i, leaf) in leaves.iter_mut().enumerate() {
         if i % per_byte == 0 {

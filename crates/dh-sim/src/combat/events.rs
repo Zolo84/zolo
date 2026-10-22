@@ -5,7 +5,9 @@
 //! The rolls use the world's [`Rng`] in the game's order (surprise, then
 //! the attackers' event, then the defenders'), with `rng.below(n)` standing
 //! in for `rand() % n`, and each roll is made exactly when the game makes
-//! it, including the ones that cannot succeed.
+//! it, including the ones that cannot succeed. The game updates the
+//! commanders as stacks join and leave, and once more every hour after the
+//! rolls ([`Combat::begin_hour`]).
 
 use super::{params, Combat};
 use crate::battle::{ActiveEvent, BattleSide};
@@ -45,17 +47,73 @@ pub fn event_weight(kind: CombatEvent, commander_traits: u32, hq: bool, speed: f
 }
 
 impl Combat {
-    /// Brings a side's commander up to date (§2.4): `stacks` are the side's
-    /// stacks in the order they joined. When the commander's stack has left,
-    /// the side elects anew; a stack's leader takes over only if it ranks
-    /// strictly higher, so ties keep the stack that came first. The side's
-    /// country follows the commander when the commander has one.
+    /// Steps 2–4 of a battle hour up to the multipliers (§3.1). Stacks that
+    /// joined or left since the last hour change the commanders first, as
+    /// they would have on the spot ([`Combat::muster`]); then surprise in
+    /// the first hour, combat events for the attackers and then the
+    /// defenders, and last the hourly commander update
+    /// ([`Combat::elect_commander`]), so a leader promoted meanwhile takes
+    /// over only after this hour's rolls.
+    pub(super) fn begin_hour(
+        &self,
+        world: &World,
+        battle: &mut Battle,
+        attackers: &[usize],
+        defenders: &[usize],
+        rng: &mut Rng,
+    ) {
+        self.muster(world, battle.side_mut(true), attackers);
+        self.muster(world, battle.side_mut(false), defenders);
+        if battle.hours == 0 && self.surprise {
+            self.roll_surprise(world, battle, attackers, defenders, rng);
+        }
+        if battle.event.is_some_and(|e| world.hour > e.until) {
+            battle.event = None;
+        }
+        if self.events {
+            self.roll_event(world, battle, attackers, true, rng);
+            self.roll_event(world, battle, defenders, false, rng);
+        }
+        self.elect_commander(world, battle.side_mut(true), attackers);
+        self.elect_commander(world, battle.side_mut(false), defenders);
+    }
+
+    /// Stacks joining and leaving a side (§2.4, `0x4BD890`, `0x4BDCE0`):
+    /// `stacks` are the side's stacks now, in the order they joined. When
+    /// the commander's stack has left, or there is no commander yet, the
+    /// best of them takes over; otherwise only a stack that has just joined
+    /// can, by ranking strictly higher.
+    pub(super) fn muster(&self, world: &World, side: &mut BattleSide, stacks: &[usize]) {
+        if side.commander.is_some_and(|c| !stacks.contains(&c)) {
+            side.commander = None;
+        }
+        let anew = side.commander.is_none();
+        let candidates: Vec<usize> = stacks
+            .iter()
+            .copied()
+            .filter(|u| anew || !side.stacks.contains(u))
+            .collect();
+        self.promote_commander(world, side, &candidates);
+        side.stacks = stacks.to_vec();
+    }
+
+    /// The hourly commander update (`0x4BD860`, §2.4): `stacks` are the
+    /// side's stacks in the order they joined. When the commander's stack
+    /// has left, the side elects anew; a stack's leader takes over only if
+    /// it ranks strictly higher, so ties keep the stack that came first.
     pub(super) fn elect_commander(&self, world: &World, side: &mut BattleSide, stacks: &[usize]) {
         if side.commander.is_some_and(|c| !stacks.contains(&c)) {
             side.commander = None;
         }
+        self.promote_commander(world, side, stacks);
+    }
+
+    /// Makes each candidate in turn the commander if there is none or its
+    /// leader ranks strictly higher. The side's country follows the
+    /// commander when the commander has one.
+    fn promote_commander(&self, world: &World, side: &mut BattleSide, candidates: &[usize]) {
         let rank = |u: usize| self.leader(world, u).rank;
-        for &u in stacks {
+        for &u in candidates {
             if side.commander.is_none_or(|c| rank(u) < rank(c)) {
                 side.commander = Some(u);
                 let leader = self.leader(world, u);
@@ -351,6 +409,12 @@ mod tests {
             .experience = 60.0;
         assert_eq!(odds(&combat, &world, &[a], &[d]), Some((false, 4)));
 
+        // Skill counts with the country's multiplier: 5 · 2.
+        lead(&mut world, a, 3, 5, 0);
+        world.countries.get_mut("GER").unwrap().leader_skill = 2.0;
+        assert_eq!(odds(&combat, &world, &[a], &[d]), Some((false, 10)));
+        world.countries.get_mut("GER").unwrap().leader_skill = 1.0;
+
         // Country surprise (`country[32]`, e.g. with cryptography) counts
         // per point above 1.0 in hundredths.
         lead(&mut world, a, 3, 0, 0);
@@ -409,11 +473,151 @@ mod tests {
         let fighters = combat.fighters(&world, &[a], &[d], &b, true);
         assert!((fighters[0].defence_mult - 1.25).abs() < 1e-6); // skill only
 
+        // However certain, it is not rolled again after the first hour.
+        for hours in [1, 5, 9, 10] {
+            let mut b = Battle::new(1, vec![a], 0);
+            b.hours = hours;
+            combat.begin_hour(&world, &mut b, &[a], &[d], &mut rng);
+            assert!(!b.side(false).surprised, "hour {hours}");
+        }
+
         // Switched off, nobody is surprised.
         combat.surprise = false;
         let mut battle = Battle::new(1, vec![a], 0);
         combat.round(&mut world, &mut battle, &mut rng);
         assert!(!battle.sides.iter().any(|s| s.surprised));
+    }
+
+    /// The hour's rolls go by the commanders as stacks joined and left, and
+    /// the hourly update comes after them (§3.1 steps 2–4).
+    #[test]
+    fn rolls_come_before_the_hourly_commander_update() {
+        let mut world = world();
+        let mut combat = combat(map(terrain::PLAINS, AdjKind::Normal));
+        combat.surprise = false;
+        let a1 = stack(&mut world, "GER", 2, &["infantry"]);
+        let a2 = stack(&mut world, "GER", 3, &["infantry"]);
+        let d = stack(&mut world, "FRA", 1, &["infantry"]);
+        // A1 (rank 2) is certain to see an event come: skill 10 · 10;
+        // A2 (rank 3) has no skill.
+        lead(&mut world, a1, 2, 10, 0);
+        lead(&mut world, a2, 3, 0, 0);
+        world.countries.get_mut("GER").unwrap().leader_skill = 10.0;
+        let mut battle = Battle::new(1, vec![a1, a2], 0);
+        let mut rng = Rng::new(1);
+        // Rolls each `begin_hour` makes: A1's are the one in 1000 for
+        // whether an event comes and four in 100 for its events (none is
+        // drawn with this seed), plus one for the defenders' built-in
+        // commander; a commander without skill rolls once.
+        let hour = |battle: &mut Battle, world: &World, stacks: &[usize], rng: &mut Rng| {
+            let mut counted = rng.clone();
+            combat.begin_hour(world, battle, stacks, &[d], rng);
+            assert_eq!(battle.event, None);
+            (0..100)
+                .position(|_| counted.next_u64() == rng.clone().next_u64())
+                .unwrap()
+        };
+        assert_eq!(hour(&mut battle, &world, &[a1, a2], &mut rng), 6);
+        assert_eq!(battle.side(true).commander, Some(a1));
+        // A2 is promoted over A1 between hours: A1 still rolls for this
+        // hour, and A2 takes over after.
+        world.leaders.get_mut(&(1000 + a2 as i64)).unwrap().rank = 1;
+        assert_eq!(hour(&mut battle, &world, &[a1, a2], &mut rng), 6);
+        assert_eq!(battle.side(true).commander, Some(a2));
+        assert_eq!(hour(&mut battle, &world, &[a1, a2], &mut rng), 2);
+        // A newcomer of higher rank takes over as it joins, before the
+        // rolls; one of equal rank does not.
+        let a3 = stack(&mut world, "GER", 3, &["infantry"]);
+        lead(&mut world, a3, 1, 10, 0);
+        assert_eq!(hour(&mut battle, &world, &[a1, a2, a3], &mut rng), 2);
+        assert_eq!(battle.side(true).commander, Some(a2));
+        let a4 = stack(&mut world, "GER", 3, &["infantry"]);
+        lead(&mut world, a4, 0, 10, 0);
+        assert_eq!(hour(&mut battle, &world, &[a1, a2, a3, a4], &mut rng), 6);
+        assert_eq!(battle.side(true).commander, Some(a4));
+        // When the commander's stack leaves, the best of the rest takes
+        // over at once: A2 and A3 tie, and A2 joined first.
+        assert_eq!(hour(&mut battle, &world, &[a1, a2, a3], &mut rng), 2);
+        assert_eq!(battle.side(true).commander, Some(a2));
+    }
+
+    #[test]
+    fn attackers_roll_their_event_before_the_defenders() {
+        let mut world = world();
+        let mut combat = combat(map(terrain::PLAINS, AdjKind::Normal));
+        combat.surprise = false;
+        let a = stack(&mut world, "GER", 2, &["infantry"]);
+        let d = stack(&mut world, "FRA", 1, &["infantry"]);
+        // Both commanders are certain to see an event come and have every
+        // event trait (weight 6 each).
+        let all = CombatEvent::ALL
+            .iter()
+            .fold(0, |mask, e| mask | e.trait_mask());
+        lead(&mut world, a, 1, 10, all);
+        lead(&mut world, d, 1, 10, all);
+        for tag in ["GER", "FRA"] {
+            world.countries.get_mut(tag).unwrap().leader_skill = 10.0;
+        }
+        let alone = |attacking: bool, seed: u64| {
+            let mut b = battle(&combat, &world, &[a], &[d]);
+            let stacks = if attacking { [a] } else { [d] };
+            combat.roll_event(&world, &mut b, &stacks, attacking, &mut Rng::new(seed));
+            b.event.map(|e| e.kind)
+        };
+        // A seed under which either side alone would draw an event: the
+        // attackers roll first, and theirs is the one in force.
+        let seed = (0..1000)
+            .find(|&s| alone(true, s).is_some() && alone(false, s).is_some())
+            .unwrap();
+        let mut b = Battle::new(1, vec![a], 0);
+        combat.begin_hour(&world, &mut b, &[a], &[d], &mut Rng::new(seed));
+        assert_eq!(b.event.map(|e| e.kind), alone(true, seed));
+    }
+
+    #[test]
+    fn hq_influence_and_speed_raise_the_event_weights() {
+        let mut world = world();
+        let combat = combat(map(terrain::PLAINS, AdjKind::Normal));
+        let slow = stack(&mut world, "GER", 2, &["infantry"]);
+        let fast = stack(&mut world, "GER", 3, &["armor"]);
+        let d = stack(&mut world, "FRA", 1, &["infantry"]);
+        // Events certain to come (skill 10 · 10); without traits each of
+        // the four attackers' events weighs 1.
+        lead(&mut world, slow, 1, 10, 0);
+        lead(&mut world, fast, 1, 10, 0);
+        world.countries.get_mut("GER").unwrap().leader_skill = 10.0;
+        let mut rng = Rng::new(13);
+        let mut counts = |world: &World, stack: usize| {
+            let mut counts = [0u32; 7];
+            for _ in 0..20_000 {
+                let mut b = battle(&combat, world, &[stack], &[d]);
+                combat.roll_event(world, &mut b, &[stack], true, &mut rng);
+                if let Some(e) = b.event {
+                    counts[e.kind as usize] += 1;
+                }
+            }
+            counts
+        };
+        let total = |counts: [u32; 7]| counts.iter().sum::<u32>();
+        // About 3.9 % of the hours bring an event; next to a real German
+        // HQ the weights triple, to about 11.5 %.
+        assert!((650..=950).contains(&total(counts(&world, slow))));
+        let hq = stack(&mut world, "GER", 2, &["hq"]);
+        lead(&mut world, hq, 1, 0, 0);
+        assert!((2000..=2600).contains(&total(counts(&world, slow))));
+        world.units[hq].unit.location = None;
+
+        // With Encircler and Blitzer those two weigh 6; the armour's 9 km/h
+        // (12 · 0.75) is 6 above `combat[230]`, which adds the full 40 %:
+        // 8.4, of which 8 counts.
+        let traits = traits::ENCIRCLER | traits::BLITZER;
+        lead(&mut world, slow, 1, 10, traits);
+        lead(&mut world, fast, 1, 10, traits);
+        let (slow, fast) = (counts(&world, slow), counts(&world, fast));
+        for e in [CombatEvent::Encirclement, CombatEvent::Breakthrough] {
+            let (s, f) = (slow[e as usize] as f32, fast[e as usize] as f32);
+            assert!(f > 1.15 * s && f < 1.6 * s, "{e:?}: {s} vs {f}");
+        }
     }
 
     #[test]

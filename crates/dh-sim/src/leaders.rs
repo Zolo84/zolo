@@ -53,6 +53,12 @@ pub struct LeaderState {
 impl LeaderState {
     /// A CSV leader put into play in `year` (§2.3.3): promoted by date from
     /// rank 3, skill clamped to 0..=10 and experience raised to that level.
+    ///
+    /// The game sets the skill first and then stores the CSV experience as
+    /// it is (at least 0), so a value below the level's threshold is raised
+    /// only by the first read of the skill (`0x509D60`). Raising it at once
+    /// differs only for experience gained before any such read, which
+    /// [`LeaderState::gain_experience`] adds to without raising it first.
     pub fn new(data: &dh_data::Leader, year: i32) -> Self {
         let mut leader = LeaderState {
             id: Some(data.id),
@@ -548,6 +554,28 @@ mod tests {
         assert_eq!(world.stack_leader(0).id, None);
         assert_eq!(world.units[0].unit.leader, None);
         assert!(world.leaders[&1].unit.is_none() && world.leaders[&1].country.is_empty());
+    }
+
+    #[test]
+    fn new_year_promotes_by_date() {
+        let mut world = World::empty(GameDate::new(1936, 1, 1));
+        // Rank 2 from 1930, rank 1 from 1937; B retires in 1937.
+        let header = HEADER.replace(";x", ";Retirement Year;x");
+        let mut data = Leaders::default();
+        let table = CsvTable::parse(
+            format!(
+                "{header}A;1;GER;1930;1930;1937;1990;3;5;0;3;0;5;0;L1;1930;1960;1990;x\n\
+                 B;2;GER;1930;1930;1937;1990;3;5;0;3;0;5;0;L2;1930;1960;1937;x\n"
+            )
+            .as_bytes(),
+        );
+        data.add_table("test.csv", &table, &mut Vec::new());
+        world.add_leaders(&data);
+        assert_eq!((world.leaders[&1].rank, world.leaders[&2].rank), (2, 2));
+        world.date = GameDate::new(1937, 1, 1);
+        world.leaders_new_year(true);
+        // A retired leader is no longer promoted.
+        assert_eq!((world.leaders[&1].rank, world.leaders[&2].rank), (1, 2));
     }
 
     #[test]

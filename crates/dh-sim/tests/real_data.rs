@@ -389,10 +389,11 @@ fn scenario_dissent_dig_in_and_difficulty() {
 }
 
 /// The Strasbourg battle of `strasbourg_attack_breaks_off_like_the_spec_example`
-/// with leaders loaded and the command limit on, as in the game
-/// (land-combat.md §6, §7 question 16). Neither stack has a leader, so each
-/// has limit 1: two of the three attacking divisions and three of the four
-/// defending ones fight at a quarter. Prints the outcome.
+/// with leaders loaded and the command limit on, as in the game: the
+/// variant with command limits of land-combat.md §6. Neither stack has a
+/// leader, so each has limit 1: two of the three attacking divisions and
+/// three of the four defending ones fight at a quarter. Prints the outcome
+/// the spec quotes.
 #[test]
 fn strasbourg_attack_with_command_limits() {
     use dh_sim::{Combat, Engage};
@@ -463,7 +464,7 @@ fn strasbourg_attack_with_command_limits() {
 }
 
 /// Technologies the 1936 countries start with (land-combat.md §3.7, §4.4):
-/// Basic Construction Engineering (5080) lets most of them dig in, and
+/// Basic Construction Engineering (5080) lets 59 of the 78 dig in, and
 /// Japan's cryptography (5350) raises its land surprise to 1.15. Only
 /// stacks of countries at war dig in: China's grow from 01:00 on the first
 /// day (its scenario level of 20 is already the maximum), Germany's only
@@ -483,12 +484,28 @@ fn scenario_techs_and_dig_in() {
     for tag in ["GER", "FRA", "ITA", "JAP", "CHI", "CHC"] {
         assert!(country(&world, tag).allow_dig_in, "{tag}");
     }
-    let allowed = world.countries.values().filter(|c| c.allow_dig_in).count();
-    eprintln!(
-        "{allowed} of {} countries may dig in",
-        world.countries.len()
+    let unable: Vec<&str> = world
+        .countries
+        .values()
+        .filter(|c| !c.allow_dig_in)
+        .map(|c| c.tag.as_str())
+        .collect();
+    assert_eq!(world.countries.len(), 78);
+    assert_eq!(
+        unable,
+        [
+            "AFG", "BHU", "CGX", "CSX", "CXB", "CYN", "ETH", "HAI", "IRQ", "LIB", "MON", "NEP",
+            "OMN", "PER", "SAU", "SIK", "TAN", "TIB", "YEM"
+        ]
     );
-    assert!(allowed < world.countries.len());
+    // Only Japan starts with a land surprise technology.
+    let surprising: Vec<&str> = world
+        .countries
+        .values()
+        .filter(|c| c.land_surprise != 1.0)
+        .map(|c| c.tag.as_str())
+        .collect();
+    assert_eq!(surprising, ["JAP"]);
 
     let find = |world: &World, owner: &str, dug: bool| {
         world
@@ -607,4 +624,30 @@ fn strasbourg_attack_under_von_rundstedt() {
     // About 1 surprise and 15 events expected over all runs.
     assert!(surprised <= 6);
     assert!((1..=40).contains(&events.values().sum::<u32>()));
+}
+
+/// Military access of the 1936 scenario (land-movement.md §1.4): the
+/// country whose block has `relation = { tag = X access = yes }` may enter
+/// X's territory, e.g. Britain Iraq's and the Soviet Union Mongolia's, not
+/// the other way round.
+#[test]
+fn scenario_military_access() {
+    let Some((_, scenario)) = load() else {
+        return;
+    };
+    let (world, _) = World::from_scenario(&scenario);
+    let pairs: Vec<String> = world
+        .access
+        .iter()
+        .map(|(a, b)| format!("{a}>{b}"))
+        .collect();
+    assert_eq!(
+        pairs,
+        [
+            "CHI>CSX", "CHI>CXB", "CSX>CHI", "CSX>CXB", "CXB>CHI", "CXB>CSX", "ENG>BHU", "ENG>IRQ",
+            "ENG>NEP", "ENG>OMN", "ENG>YEM", "JAP>MAN", "MAN>JAP", "POR>SAF", "SOV>MON", "SOV>TAN",
+            "USA>CUB", "USA>LIB", "USA>PHI"
+        ]
+    );
+    assert!(world.has_access("ENG", "IRQ") && !world.has_access("IRQ", "ENG"));
 }

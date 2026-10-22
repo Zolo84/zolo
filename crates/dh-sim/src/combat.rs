@@ -9,22 +9,23 @@
 //! average organisation drops below 5 leaves the battle — a defender retreats
 //! to the best neighbouring province, an attacker breaks off.
 //!
-//! Before the multipliers each hour the sides elect their commanders, the
-//! first hour rolls surprise (a fifth off the caught side for nine hours)
-//! and any hour may bring a combat event that changes the damage both sides
-//! take for that hour and the next eight ([`events`]).
+//! Before the hour's multipliers, the first hour rolls surprise (a fifth
+//! off the caught side for nine hours), any hour may bring a combat event
+//! that changes the damage both sides take for that hour and the next eight,
+//! and the sides bring their commanders up to date ([`events`]).
 //!
 //! Implemented modifiers (spec §4, in the game's order): river crossing
-//! (with the Engineer trait), crossing from a strait, a defender also
+//! (with the Engineer trait), crossing from a strait or landing from the sea
+//! (at the starting amphibious-assault efficiency), a defender also
 //! attacking elsewhere, doctrine traits, combined arms, surprise,
-//! experience, supply efficiency, terrain (with terrain traits and the
-//! hard-unit city penalty), weather (clear only), night, leader skill with
-//! the PanzerLeader and Commando traits, command limits by direction,
-//! envelopment, encirclement, dig-in, land forts (with FortressBuster),
-//! dissent and difficulty. Not yet: paratroopers and invasion size, shore
-//! bombardment, country bonuses by type, supply and fuel shortage, army
-//! detection, mission efficiency. Misc values are the shipped `db/misc.txt`
-//! ones.
+//! experience, supply efficiency (with Logistics Wizard and HQ influence),
+//! terrain (with terrain traits and the hard-unit city penalty), weather
+//! (clear only), night, leader skill with the PanzerLeader and Commando
+//! traits, command limits by direction, envelopment, encirclement, dig-in,
+//! land forts (with FortressBuster), dissent and difficulty. Not yet:
+//! paratroopers and invasion size, shore bombardment, country bonuses by
+//! type, supply and fuel shortage, army detection, mission efficiency. Misc
+//! values are the shipped `db/misc.txt` ones.
 
 pub mod events;
 
@@ -71,6 +72,8 @@ pub mod params {
     pub const DESTROYED_BELOW: f32 = 0.1;
     pub const MIN_ORG_TO_FIRE: f32 = 0.5;
     pub const LEADER_EXPERIENCE: f32 = 1.3; // [6]
+    /// Supply efficiency a Logistics Wizard adds while it is below 1.
+    pub const LOGISTICS_WIZARD_ESE: f32 = 0.1; // [161]
     /// Command limits by leader rank 0..=3; every lower rank counts as 3.
     pub const LAND_COMMAND_LIMIT: [u32; 4] = [12, 9, 3, 1]; // [39..42]
     pub const AIR_COMMAND_LIMIT: [u32; 4] = [24, 16, 8, 4]; // [43..46]
@@ -96,11 +99,17 @@ pub mod params {
     ];
 
     // `country` section: every country starts with these.
+    pub const HQ_ESE: f32 = 0.01; // country[14]
     pub const EVENT_HQ_CHANCE: f32 = 1.0; // country[15]
     pub const EVENT_CHANCE: f32 = 0.01; // country[16], each event
     pub const LAND_SURPRISE: f32 = 1.0; // country[32]
     pub const DIG_IN_MAX: f32 = 20.0; // country[44]
     pub const DIG_IN_DAILY: f32 = 1.0; // country[45]
+
+    // `mission` section: every country starts with this efficiency of
+    // amphibious assaults (`task_efficiency` technologies raise it; not
+    // applied yet).
+    pub const AMPHIBIOUS_ASSAULT: f32 = 0.5; // mission[73]
 }
 
 /// Terrain suffix of the `ATT_*`/`DEF_*` rows, by terrain index 0..=7.
@@ -361,11 +370,10 @@ impl Combat {
         let diplomacy = &world.diplomacy;
         let in_alliance = diplomacy.alliance_of(k).is_some();
         let alliance = diplomacy.alliance_of(owner);
-        // Access is the byte of the k → c relation record, which a scenario
-        // sets with `access = yes` in k's relation with c.
+        // Access is the byte of k's relation record about c, which a
+        // scenario sets with `access = yes` in k's relation with c.
         let friendly = |c: &String| {
-            world.access.contains(&(k.to_owned(), c.clone()))
-                || (in_alliance && diplomacy.alliance_of(c) == alliance)
+            world.has_access(k, c) || (in_alliance && diplomacy.alliance_of(c) == alliance)
         };
         self.ctx
             .regular_neighbours(p)
@@ -405,23 +413,34 @@ impl Combat {
         for &u in units {
             let unit = &world.units[u];
             let k = unit.controller();
+            // The battle province's link to where the stack stands (rows 1
+            // and 3).
             let link = unit
                 .unit
                 .location
-                .and_then(|from| ctx.adjacency.link(from, battle.province));
+                .and_then(|from| ctx.adjacency.link(battle.province, from));
+            // Row 3 also covers a stack with no province or on water (a
+            // landing from the sea).
+            let from_sea = unit
+                .unit
+                .location
+                .filter(|&p| p != 0)
+                .is_none_or(|p| ctx.province(p).is_some_and(|i| i.is_water()));
+            let ashore = from_sea || link.is_some_and(|l| l.kind == AdjKind::Sea);
             let enemy_held = world
                 .controller
                 .get(&battle.province)
                 .is_some_and(|c| world.at_war(k, c));
+            let leader = self.leader(world, u);
             // Supply efficiency of the stack where it stands (row 10 of the
             // modifier table). Out-of-supply stacks are left neutral for now.
             let ese = match unit.unit.location {
                 Some(p) if self.supply && world.in_supply(ctx, k, p) => {
-                    world.supply_efficiency(ctx, p)
+                    let hq = self.under_hq_influence(world, u);
+                    world.stack_supply_efficiency(ctx, u, &leader, hq)
                 }
                 _ => 1.0,
             };
-            let leader = self.leader(world, u);
             // Every leader bonus but Engineer needs the stack within its
             // leader's own limit (§2.3.5).
             let within = unit.unit.divisions.len() <= leader.command_limit() as usize;
@@ -478,8 +497,11 @@ impl Combat {
                     };
                     a *= 1.0 + (m("ATT_RIVER") + engineer).min(0.0);
                 }
-                if attacking && link.is_some_and(|l| l.kind == AdjKind::Sea) {
-                    a *= 1.0 - (-m("ATT_SHORE")).clamp(0.0, 0.99);
+                if attacking && ashore {
+                    // The command country's amphibious-assault efficiency;
+                    // every country has the starting one so far.
+                    let s = -m("ATT_SHORE") * (2.0 - params::AMPHIBIOUS_ASSAULT);
+                    a *= 1.0 - s.clamp(0.0, 0.99);
                 }
                 if two_battles {
                     a *= 1.0 + params::MULTIPLE_COMBATS;
@@ -731,21 +753,9 @@ impl Combat {
         if defenders.is_empty() {
             return Some(true);
         }
-        // Spec §3.1 steps 2–4: commanders (as stacks join and every hour),
-        // surprise in the first hour, combat events for the attackers and
-        // then the defenders, the multipliers, and the hour count.
-        self.elect_commander(world, battle.side_mut(true), &attackers);
-        self.elect_commander(world, battle.side_mut(false), &defenders);
-        if battle.hours == 0 && self.surprise {
-            self.roll_surprise(world, battle, &attackers, &defenders, rng);
-        }
-        if battle.event.is_some_and(|e| world.hour > e.until) {
-            battle.event = None;
-        }
-        if self.events {
-            self.roll_event(world, battle, &attackers, true, rng);
-            self.roll_event(world, battle, &defenders, false, rng);
-        }
+        // Spec §3.1 steps 2–4: surprise, combat events and commanders, then
+        // the multipliers and the hour count.
+        self.begin_hour(world, battle, &attackers, &defenders, rng);
         let mut att = self.fighters(world, &attackers, &defenders, battle, true);
         let mut def = self.fighters(world, &defenders, &attackers, battle, false);
         battle.hours += 1;
@@ -783,8 +793,13 @@ impl Combat {
             for &u in &defenders {
                 match self.retreat_target(world, u, battle.province) {
                     Some(p) if !world.units[u].unit.divisions.is_empty() => {
-                        world.units[u].unit.location = Some(p);
-                        world.units[u].route.clear();
+                        // In the game the stack marches off on a retreat
+                        // route, whose first hour of movement zeroes its
+                        // dig-in (§4.4); here it arrives at once.
+                        let unit = &mut world.units[u];
+                        unit.unit.location = Some(p);
+                        unit.route.clear();
+                        unit.dig_in = 0.0;
                     }
                     _ => {
                         world.units[u].unit.divisions.clear(); // nowhere to go: destroyed
@@ -849,15 +864,17 @@ mod tests {
     use dh_map::{Adjacency, Link};
 
     /// `modifiers.csv` columns INF … MIL; ATT_RIVER is −50 % but −10 % for
-    /// marines, DEF_FOREST +10 %, everything else 0.
+    /// marines, ATT_SHORE −50 % but −20 % for marines and −75 % for
+    /// garrisons (as shipped), DEF_FOREST +10 %, everything else 0.
     const MODIFIERS: &str = "MODIFIER;INF;CAV;MOT;MECH;LARM;ARM;PARA;MAR;MTN;GARR;HQ;MIL\n\
         ATT_RIVER;-50;-50;-50;-50;-50;-50;-50;-10;-50;-50;-50;-50\n\
+        ATT_SHORE;-50;-50;-50;-50;-50;-50;-50;-20;-50;-75;-50;-50\n\
         DEF_FOREST;10;10;10;10;10;10;10;10;10;10;10;10\n";
 
     /// Battle province 1 (terrain `battle_terrain`) borders the land
     /// provinces 2, 3 and 4 (2 across a link of kind `from_2`) and the sea 5;
     /// province 6 is an island in the seas 5, 7 and 8. The other land
-    /// provinces only border 1.
+    /// provinces only border 1. Only armour has a speed (12 km/h).
     pub(super) fn map(battle_terrain: u8, from_2: AdjKind) -> Arc<MoveContext> {
         let link = |to, kind| Link {
             to,
@@ -875,13 +892,16 @@ mod tests {
         let (land, sea) = (province(terrain::PLAINS), province(terrain::OCEAN));
         let mut units = UnitDb::default();
         for kind in ["infantry", "armor", "marine", "garrison", "hq"] {
-            let stats = [
+            let mut stats = vec![
                 ("softattack", 3.0),
                 ("defensiveness", 5.0),
                 ("toughness", 5.0),
                 ("softness", 100.0),
                 ("defaultorganisation", 30.0),
             ];
+            if kind == "armor" {
+                stats.push(("maxspeed", 12.0));
+            }
             units.divisions.insert(
                 kind.into(),
                 DivisionClass {
@@ -1010,7 +1030,8 @@ mod tests {
 
     /// The example of spec §4.1: from 2, S1 (rank 2, 3 divisions) and S2 (no
     /// leader, 2); from 3, S3 (rank 1, 6) next to a German HQ; defending,
-    /// D1 (rank 3, 2) and D2 (no leader, 1).
+    /// D1 (rank 3, 2) and D2 (no leader, 1). Then S3 grows past its own
+    /// limit, and the leaders are switched off.
     #[test]
     fn command_limit_is_counted_by_direction() {
         let mut world = world();
@@ -1028,7 +1049,8 @@ mod tests {
         let (att, def) = ([s1, s2, s3], [d1, d2]);
 
         // From 2 the best limit is S1's 3: both S2 divisions are over it.
-        // From 3 the HQ doubles S3's 9. The defenders add up 1 + 1.
+        // From 3 the HQ doubles S3's 9. The defenders add up 1 + 1, which
+        // D1's two divisions use up: only D2's is over.
         let mut expected = vec![1.0; 11];
         expected[3..5].fill(0.25);
         assert_close(&mults(&combat, &world, 1, &att, &def, true), &expected);
@@ -1041,17 +1063,35 @@ mod tests {
         world.units[hq].unit.location = Some(4);
         assert_close(&mults(&combat, &world, 1, &att, &def, true), &expected);
 
+        // With 12 divisions S3 is over its own 9 but within the doubled 18
+        // next to the HQ; away from it, its last three are over.
+        let division = world.units[s3].unit.divisions[0].clone();
+        world.units[s3].unit.divisions.resize(12, division);
+        let mut expected = vec![1.0; 17];
+        expected[3..5].fill(0.25);
+        let away = mults(&combat, &world, 1, &att, &def, true);
+        world.units[hq].unit.location = Some(3);
+        assert_close(&mults(&combat, &world, 1, &att, &def, true), &expected);
+        expected[14..].fill(0.25);
+        assert_close(&away, &expected);
+        world.units[s3].unit.divisions.truncate(6);
+
         // A French HQ next to the battle doubles the defenders' sum to 4.
         let fra_hq = stack(&mut world, "FRA", 4, &["hq"]);
         lead(&mut world, fra_hq, 1, 0, 0);
         assert_close(&mults(&combat, &world, 1, &def, &att, false), &[1.0; 3]);
 
-        // Built-in leaders only: every stack has limit 1 in its direction.
+        // Built-in leaders only: every stack has limit 1 in its direction,
+        // and neither side has an HQ to double it.
         combat.leaders = false;
         let mut expected = vec![0.25; 11];
         expected[0] = 1.0;
         expected[5] = 1.0;
         assert_close(&mults(&combat, &world, 1, &att, &def, true), &expected);
+        assert_close(
+            &mults(&combat, &world, 1, &def, &att, false),
+            &[1.0, 1.0, 0.25],
+        );
         combat.command_limit = false;
         assert_close(&mults(&combat, &world, 1, &att, &def, true), &[1.0; 11]);
     }
@@ -1125,6 +1165,145 @@ mod tests {
             &mults(&combat, &world, 1, &[tanks], &[marines], true),
             &[1.0, 0.25],
         );
+
+        // An armour and infantry pair qualifies for combined arms only
+        // within its leader's limit: never without a leader (limit 1).
+        combat.leaders = true;
+        combat.command_limit = false;
+        let pair = stack(&mut world, "GER", 3, &["armor", "infantry"]);
+        assert_close(
+            &mults(&combat, &world, 1, &[pair], &[marines], true),
+            &[1.0, 1.0],
+        );
+        lead(&mut world, pair, 3, 0, 0);
+        assert_close(
+            &mults(&combat, &world, 1, &[pair], &[marines], true),
+            &[1.0, 1.0],
+        );
+        lead(&mut world, pair, 2, 0, 0);
+        assert_close(
+            &mults(&combat, &world, 1, &[pair], &[marines], true),
+            &[1.05, 1.05],
+        );
+    }
+
+    #[test]
+    fn combined_arms_wants_a_third_to_two_thirds_armour() {
+        const ARM: usize = 5;
+        const INF: usize = 0;
+        let mix = |armour: usize, others: usize| {
+            let mut classes = vec![ARM; armour];
+            classes.resize(armour + others, INF);
+            combined_arms(&classes)
+        };
+        // Spec §4, row 6: 1/3, 2/5, 1/2, 3/5 and 2/3 qualify; 1/5, 1/4,
+        // 3/4, all armour, none and an empty stack do not.
+        for (armour, others) in [(1, 2), (2, 3), (1, 1), (3, 2), (2, 1), (4, 2)] {
+            assert!(mix(armour, others), "{armour} of {}", armour + others);
+        }
+        for (armour, others) in [(1, 4), (1, 3), (3, 1), (2, 0), (0, 3), (0, 0)] {
+            assert!(!mix(armour, others), "{armour} of {}", armour + others);
+        }
+        // MECH and L ARM count as armour; a garrison or militia rules the
+        // bonus out.
+        assert!(combined_arms(&[3, 4, INF, INF, INF]));
+        assert!(!combined_arms(&[ARM, INF, GARRISON_CLASS]));
+        assert!(!combined_arms(&[ARM, INF, MILITIA_CLASS]));
+    }
+
+    #[test]
+    fn crossing_from_a_strait_or_landing_from_the_sea() {
+        let mut world = world();
+        let (mut strait, mut normal) = (
+            combat(map(terrain::PLAINS, AdjKind::Sea)),
+            combat(map(terrain::PLAINS, AdjKind::Normal)),
+        );
+        strait.command_limit = false;
+        normal.command_limit = false;
+        let s = stack(&mut world, "GER", 2, &["infantry", "marine", "garrison"]);
+        let d = stack(&mut world, "FRA", 1, &["infantry"]);
+        // At the starting amphibious efficiency of 0.5 the shore penalty
+        // counts one and a half times: infantry 0.5 · 1.5 = 0.75 off,
+        // marines 0.3, garrisons 1.125, held at 0.99.
+        assert_close(
+            &mults(&strait, &world, 1, &[s], &[d], true),
+            &[0.25, 0.7, 0.01],
+        );
+        // Defenders do not cross.
+        assert_close(&mults(&strait, &world, 1, &[d], &[s], false), &[1.0]);
+        // Over a normal link nothing applies, but from a sea province it
+        // does.
+        assert_close(&mults(&normal, &world, 1, &[s], &[d], true), &[1.0; 3]);
+        world.units[s].unit.location = Some(5);
+        assert_close(
+            &mults(&normal, &world, 1, &[s], &[d], true),
+            &[0.25, 0.7, 0.01],
+        );
+    }
+
+    #[test]
+    fn supply_efficiency_with_logistics_wizard_and_hq() {
+        // Province 2 gets infrastructure `infra`: ESE (infra + 1) · 0.5.
+        let with_infra = |infra: f32| {
+            let mut ctx = Arc::try_unwrap(map(terrain::PLAINS, AdjKind::Normal))
+                .ok()
+                .unwrap();
+            if let Some(p) = ctx.provinces[2].as_mut() {
+                p.infra = infra;
+            }
+            let mut combat = combat(Arc::new(ctx));
+            combat.supply = true;
+            combat.command_limit = false;
+            combat
+        };
+        let mut world = world();
+        let a = stack(&mut world, "GER", 2, &["infantry"]);
+        let d = stack(&mut world, "FRA", 1, &["infantry"]);
+        let attack = |combat: &Combat, world: &World| mults(combat, world, 1, &[a], &[d], true);
+        let (low, high) = (with_infra(0.6), with_infra(0.9));
+        // Row 10: 1 + (ESE − 1) · 0.5 with ESE 0.8 and 0.95.
+        assert_close(&attack(&low, &world), &[0.9]);
+        assert_close(&attack(&high, &world), &[0.975]);
+        // A Logistics Wizard within his limit adds 0.1 below 1, up to 1.
+        lead(&mut world, a, 3, 0, traits::LOGISTICS_WIZARD);
+        assert_close(&attack(&low, &world), &[0.95]);
+        assert_close(&attack(&high, &world), &[1.0]);
+        // HQ influence adds 0.01 past that cap.
+        let hq = stack(&mut world, "GER", 2, &["hq"]);
+        lead(&mut world, hq, 1, 0, 0);
+        assert_close(&attack(&low, &world), &[0.955]);
+        assert_close(&attack(&high, &world), &[1.005]);
+        // Over his limit the wizard does not help; the HQ still does.
+        let second = world.units[a].unit.divisions[0].clone();
+        world.units[a].unit.divisions.push(second);
+        assert_close(&attack(&low, &world), &[0.905, 0.905]);
+        // With leaders off neither applies; with supply off ESE is 1.
+        let mut low = low;
+        low.leaders = false;
+        assert_close(&attack(&low, &world), &[0.9, 0.9]);
+        low.supply = false;
+        assert_close(&attack(&low, &world), &[1.0, 1.0]);
+    }
+
+    #[test]
+    fn a_beaten_defender_retreats_without_its_dig_in() {
+        let mut world = world();
+        let mut combat = combat(map(terrain::PLAINS, AdjKind::Normal));
+        combat.surprise = false;
+        combat.events = false;
+        let a = stack(&mut world, "GER", 2, &["infantry"; 3]);
+        let d = stack(&mut world, "FRA", 1, &["infantry"]);
+        world.units[a].route.push_back(1);
+        world.units[d].dig_in = 20.0;
+        // Worn out: organisation 1, under the 5 of `combat[228]`.
+        world.units[d].unit.divisions[0].organisation = Some(1.0);
+        let mut battle = Battle::new(1, vec![a], 0);
+        let mut rng = Rng::new(1);
+        assert_eq!(combat.round(&mut world, &mut battle, &mut rng), Some(true));
+        // To its own province 4, the best neighbour.
+        assert_eq!(world.units[d].unit.location, Some(4));
+        assert!(world.units[d].route.is_empty());
+        assert_eq!(world.units[d].dig_in, 0.0);
     }
 
     #[test]
@@ -1192,8 +1371,12 @@ mod tests {
         assert_close(&[defend(&world, &from)], &[0.8]);
         let twin = stack(&mut world, "GER", 2, &["infantry"]);
         assert_close(&[defend(&world, &[from[0], twin, from[1]])], &[1.0]);
-        // The attackers never get it.
-        assert_close(&mults(&combat, &world, 1, &from, &[d], true), &[1.0; 4]);
+        // The attackers never get it (the one in the sea province 5 lands at
+        // a quarter, row 3).
+        assert_close(
+            &mults(&combat, &world, 1, &from, &[d], true),
+            &[1.0, 1.0, 1.0, 0.25],
+        );
 
         // Encircled once no land neighbour is French or friendly; the sea
         // does not count.

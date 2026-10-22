@@ -251,4 +251,47 @@ mod tests {
         assert_eq!(lines, [4, 5, 6, 7]);
         assert_eq!(leaders.of_country("GER").count(), 2);
     }
+
+    #[test]
+    fn leaders_txt_names_the_files_to_read() {
+        use std::fs;
+        let dir = std::env::temp_dir().join(format!("dh-data-leaders-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("db/leaders")).unwrap();
+        let header = "Name;ID;Country;Rank 3 Year;Rank 2 Year;Rank 1 Year;Rank 0 Year;Ideal Rank;Max Skill;Traits;Skill;Experience;Loyalty;Type;Picture;Start Year;End Year;x\n";
+        let row = |id: u32| {
+            format!("L{id};{id};GER;1930;1990;1990;1990;3;5;0;2;0;5;0;L{id};1930;1960;x\n")
+        };
+        fs::write(
+            dir.join("db/leaders/german.csv"),
+            format!("{header}{}", row(1)),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("db/leaders/other.csv"),
+            format!("{header}{}", row(2)),
+        )
+        .unwrap();
+        let vfs = Vfs::new(&dir);
+        let load = || {
+            let mut warnings = Vec::new();
+            let leaders = Leaders::load(&vfs, &mut warnings).unwrap();
+            let ids: Vec<i64> = leaders.by_id.keys().copied().collect();
+            let warnings: Vec<(String, u32)> =
+                warnings.into_iter().map(|w| (w.file, w.line)).collect();
+            (ids, warnings)
+        };
+
+        // Without the list every CSV of the directory is read.
+        assert_eq!(load(), (vec![1, 2], vec![]));
+        // With it only the files it names, skipping comments and empty
+        // lines; a missing file is reported at its line of the list.
+        fs::write(
+            dir.join("db/leaders.txt"),
+            "# vanilla\n\ngerman.csv\nmissing.csv\n",
+        )
+        .unwrap();
+        assert_eq!(load(), (vec![1], vec![(LEADERS_LIST.to_owned(), 4)]));
+        fs::remove_dir_all(dir).unwrap();
+    }
 }

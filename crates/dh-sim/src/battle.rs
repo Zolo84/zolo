@@ -55,6 +55,9 @@ pub struct BattleSide {
     pub country: Option<String>,
     /// Caught by surprise in the first hour (`+0x4F`, §3.7).
     pub surprised: bool,
+    /// The side's stacks as of the last hour, in the order they joined
+    /// (`+0x50`): a stack missing here has just joined.
+    pub stacks: Vec<usize>,
 }
 
 /// The seven combat events (§3.6), in the game's order.

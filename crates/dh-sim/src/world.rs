@@ -50,7 +50,10 @@ pub struct World {
     /// Hours simulated since the scenario start.
     pub hour: u64,
     pub diplomacy: Diplomacy,
-    /// `(grantor, grantee)`: the grantee may move through the grantor's territory.
+    /// Military access as `(holder, territory)` pairs: stacks of the holder
+    /// may enter the provinces the other country controls. A scenario's
+    /// `relation = { tag = B access = yes }` in A's block gives `(A, B)`
+    /// (land-movement.md §1.4). Query it with [`World::has_access`].
     pub access: BTreeSet<(String, String)>,
     pub battles: Vec<crate::Battle>,
     /// Leaders by ID, once loaded with [`World::load_leaders`].
@@ -215,18 +218,24 @@ impl World {
         self.diplomacy.at_war(a, b)
     }
 
+    /// Whether `us` has military access to the territory of `territory`
+    /// (`0x585E80` on `us`'s relation record about `territory`).
+    pub fn has_access(&self, us: &str, territory: &str) -> bool {
+        self.access.contains(&(us.to_owned(), territory.to_owned()))
+    }
+
     /// Whether a stack of country `us`, standing in `from`, may enter province
     /// `p` (`docs/spec/land-movement.md` §7.2): own, allied or ownerless
-    /// territory, countries granting military access, countries at war with
-    /// us, and provinces nobody controls; a neutral country's territory only
-    /// when the stack is already inside it.
+    /// territory, countries we have military access to, countries at war
+    /// with us, and provinces nobody controls; a neutral country's territory
+    /// only when the stack is already inside it.
     pub fn can_enter(&self, us: &str, from: Option<u32>, p: u32) -> bool {
         let Some(controller) = self.controller.get(&p) else {
             return true;
         };
         !self.owner.contains_key(&p)
             || self.diplomacy.allied(us, controller)
-            || self.access.contains(&(controller.clone(), us.to_owned()))
+            || self.has_access(us, controller)
             || self.at_war(us, controller)
             || from.and_then(|f| self.controller.get(&f)) == Some(controller)
     }
@@ -240,5 +249,27 @@ impl World {
             .iter()
             .filter(move |(_, t)| t.as_str() == tag)
             .map(|(p, _)| *p)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Iraq holds province 1, Britain 2; they are at peace.
+    #[test]
+    fn military_access_lets_its_holder_in() {
+        let mut world = World::empty(GameDate::new(1936, 1, 1));
+        for (p, tag) in [(1, "IRQ"), (2, "ENG")] {
+            world.owner.insert(p, tag.into());
+            world.controller.insert(p, tag.into());
+        }
+        assert!(!world.can_enter("ENG", Some(2), 1));
+        // `relation = { tag = IRQ access = yes }` in Britain's block: British
+        // troops may enter Iraq, not the other way round.
+        world.access.insert(("ENG".into(), "IRQ".into()));
+        assert!(world.has_access("ENG", "IRQ") && !world.has_access("IRQ", "ENG"));
+        assert!(world.can_enter("ENG", Some(2), 1));
+        assert!(!world.can_enter("IRQ", Some(1), 2));
     }
 }
