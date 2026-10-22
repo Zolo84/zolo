@@ -205,6 +205,17 @@ Name;ID;Country;Rank 3 Year;Rank 2 Year;Rank 1 Year;Rank 0 Year;Ideal Rank;Max S
   `Models/Leaders.cs:969`).
 * `Branch` зберігається як `значення_у_файлі + 1` (`Models/Leaders.cs:749`, `Models/Leaders.cs:975`).
 
+Як ці колонки читає **сама гра** (DH 1.05.1, розбір `Darkest Hour.exe`; деталі й адреси — land-combat.md §2.3):
+
+* `Rank 3 Year` … `Rank 0 Year` — роки отримання рангів 3 … 0; `Ideal Rank` гра читає й **ігнорує**.
+* `Skill` обмежується 0..10, досвід піднімається щонайменше до порога поточного рівня навички; пороги рівнів
+  (0, 10, 20, 40, 80, 120, 180, 250, 330, 430, 600) зашиті в exe, а не в `misc.txt`.
+* `Type`: 0 армія, 1 флот, 2 авіація; від роду залежить, який набір лімітів командування береться.
+* `Country` — країна генерала; ключ сценарію `leader = N` у блоці `landunit` перезаписує її країною блоку.
+* `Start Year` / `End Year` визначають доступність при розподілі по країнах; `Retirement Year` (за
+  `EnableRetirementYearLeaders`) щорічно знімає генерала з посади (land-combat.md §2.3.2).
+* ID — глобальний ключ реєстру гри; у ванільних 180 CSV (16 757 записів) дублікатів немає.
+
 ### 3.4 Ранги
 
 Перелік `LeaderRank` (`Models/Leader.cs:452-459`) і відповідність числу у файлі:
@@ -220,7 +231,13 @@ Name;ID;Country;Rank 3 Year;Rank 2 Year;Rank 1 Year;Rank 0 Year;Ideal Rank;Max S
 Назви рангів беруться з ресурсів редактора `Rank0..Rank3` (`Models/Leaders.cs:169`,
 `Properties/Resources.resx:216-227`), а не з файлів гри. Для флоту й авіації ті самі числа означають
 відповідні звання родів військ **(припущення)**. Ліміти командування кожного рангу задаються в
-`misc.txt` (`LandLeaderCommandLimitRank0..3` тощо, §5.8.4).
+`misc.txt` (`LandLeaderCommandLimitRank0..3` тощо, §5.8.4; у нумерації ванільного DH 1.05.1 — `combat[39..42]`
+суходіл 12/9/3/1, `[43..46]` авіація, `[47..50]` флот, `[51]` множник штабу).
+
+У грі ранг зберігається в об'єкті генерала, а не обчислюється щоразу: при завантаженні CSV і далі щороку (лише
+для країн AI) генерал отримує найвищий ранг r, для якого `Rank r Year` ≤ поточного року (лише підвищення);
+людина підвищує вручну. Генерал без рангу (вбудований «генерал» стека без командувача, випадковий генерал) має
+внутрішній ранг 25 і ліміт як ранг 3. Див. land-combat.md §2.3.3, §2.3.5.
 
 ### 3.5 Риси (Traits) — бітова маска
 
@@ -270,7 +287,11 @@ Name;ID;Country;Rank 3 Year;Rank 2 Year;Rank 1 Year;Rank 0 Year;Ideal Rank;Max S
   англійським назвам `LeaderTraitsId` (`Ranger`, `Disciplined`, …) — історична, відтворювати як є.
 * Біти 18..23 — риси місцевості, 24..30 — риси бойових подій DH; це узгоджується з параметрами
   `ChanceGetTerrainTrait` / `ChanceGetEventTrait` і бойовими подіями `CounterAttack…Breakthrough` у
-  `misc.txt` **(припущення)**.
+  `misc.txt`. Відповідність бітів подіям (24 контратака … 30 прорив) і рельєфам підтверджено в exe ✅; дію
+  кожної риси в бою (доктрини, Engineer, FortressBuster, Panzer/Commando, WinterSpecialist, Trickster/Spotter у
+  раптовості, OldGuard у досвіді, Logistics Wizard в ESE) описано в land-combat.md §2.3.6.
+* Дані гри ✅: у ванільних CSV сухопутні генерали мають лише біти 0..9, флот — 9..13, авіація — 9 і 12..17;
+  біти 18..30 у CSV не трапляються (набуваються під час гри).
 * Біт 31 не визначено; значення ≥ 2³¹ розбирається як `uint` без помилки і зберігається як є.
 
 ### 3.6 Перевірки при збереженні
@@ -914,6 +935,13 @@ minister = {
 
 Значень у DH1.02 / 1.03 / 1.04: **130 / 199 / 262**. Порядок — `Misc.SectionItems[3]` (`Models/Misc.cs:636-1012`).
 
+> Увага: ванільний `misc.txt` DH 1.05.1 має в цій секції **263** числа, і їхні порядкові номери (`combat[N]` у
+> land-combat.md, land-movement.md, supply.md) не збігаються з колонкою H4: напр. у 1.05.1 є `combat[37]`/`[38]`
+> (окопування проти авіації/в обороні), тож `LandLeaderCommandLimitRank0` = H4 37 = `combat[39]`,
+> `HqCommandLimitFactor` = H4 49 = `combat[51]`, `ChanceGetTerrainTrait` = H4 79 = `combat[81]`,
+> `LogisticsWizardEseBonus` = H4 159 = `combat[161]`, а далі зсув змінюється (`combat[162]` — бонус ESE
+> наступального постачання, `CombatEventDuration` = `combat[233]`).
+
 | H4 | H3 | H2 | Ключ (`MiscItemId`) | Маска | Тип | Діапазон | Зміст | Misc.cs SI·IT·TY |
 |---|---|---|---|---|---|---|---|---|
 | 1 | 1 | 1 | `LandXpGainFactor` | `11111111` | NonNegDbl |  | множник набуття досвіду — сухопутні війська | 636·1527·2395 |
@@ -1284,6 +1312,11 @@ minister = {
 #### 5.8.6 `country = { ... }`
 
 Значень у DH1.02 / 1.03 / 1.04: **38 / 38 / 38**. Порядок — `Misc.SectionItems[5]` (`Models/Misc.cs:1111-1148`).
+
+> Увага: ванільний `misc.txt` DH 1.05.1 має в цій секції **45** чисел. До 23-го (загальна ефективність
+> виробництва) номери збігаються; далі 1.05.1 має ще п'ять ефективностей виробництва (нафта, метал, енергія,
+> рідкісні матеріали, гроші), тож шанси раптовості — `country[31..33]` (H4 26..28), а в кінці додано `country[44]` / `[45]` —
+> максимальне окопування / приріст за добу. Як гра використовує ці значення в бою — land-combat.md §1.2.
 
 | H4 | H3 | H2 | Ключ (`MiscItemId`) | Маска | Тип | Діапазон | Зміст | Misc.cs SI·IT·TY |
 |---|---|---|---|---|---|---|---|---|
@@ -1764,7 +1797,8 @@ minister = {
   `BonusSimilarTerrainTrait`, `BonusEventTrait`, `BonusLeaderSkillPointLand/Air/Naval` (H3+),
   `ChanceLeaderDying`, `Land/Air/NavalLeaderCommandLimitRank0..3`, `HqCommandLimitFactor`,
   `LogisticsWizardEseBonus`, `MovementBonus(Similar)TerrainTrait`, `FleetPositioningLeaderSkill` (H3+),
-  `EnableRetirementYearLeaders` (H3+);
+  `EnableRetirementYearLeaders` (H3+); як гра їх використовує — land-combat.md §2.3 (генерали), §3.6 (риси подій),
+  §4 (бонуси), supply.md §2 (Logistics Wizard, штаб);
 * міністри: `UseMinisterPersonalityReplacing`, `MinisterBonuses`, `AllowChangeHosHog`,
   `UseNewMinisterFilesFormat`, `EnableRetirementYearMinisters` (H3+).
   (`MinisterChangeDelay`, `LeaderChangeDelay` тощо — лише AoD.)
@@ -1818,9 +1852,12 @@ minister = {
 7. Чи обов'язковий у грі рядок заголовка CSV командувачів (редактор завжди пропускає рядок 1) і рядок
    `;Replacements` у CSV міністрів; чи читає гра маркер `x` як обов'язковий.
 8. Діапазони `Skill`, `MaxSkill`, `Experience`, `Loyalty` командувачів у грі (UI редактора явних меж не
-   задає; ймовірно стандартні 0..100 елемента WinForms **(припущення)**).
+   задає; ймовірно стандартні 0..100 елемента WinForms **(припущення)**). Частково з'ясовано з exe: навичка
+   0..10, досвід — пороги рівнів до 600 (land-combat.md §2.3.4).
 9. Значення року `1990` (запасне для `Rank N Year`) — чи це «ніколи» в логіці гри; поведінка
-   `Retirement Year`.
+   `Retirement Year`. Частково з'ясовано з exe: ранг r присвоюється, коли `Rank r Year` ≤ поточного року,
+   тож 1990 на практиці означає «ніколи»; конструктор гри типово ставить 3000 для рангів 0..2; відставка —
+   land-combat.md §2.3.2.
 10. Чи підтримує гра кілька країн в одному CSV командувачів і підтеки у `db\leaders.txt`.
 11. Чи глобальна унікальність ID командувачів/міністрів вимагається грою, чи лише в межах країни.
 12. Як гра поводиться з `EnableRetirementYearMinisters = 1` при `UseNewMinisterFilesFormat = 0`.

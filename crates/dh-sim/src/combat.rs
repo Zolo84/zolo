@@ -9,16 +9,33 @@
 //! average organisation drops below 5 leaves the battle — a defender retreats
 //! to the best neighbouring province, an attacker breaks off.
 //!
-//! Implemented modifiers: river crossing, crossing from a strait, terrain,
-//! weather (clear only), night, experience, the hard-unit city penalty and
-//! land forts. Not yet: leaders, command limits, dig-in, combat events,
-//! surprise, supply, encirclement and flanking, country bonuses, difficulty.
-//! Misc values are the shipped `db/misc.txt` ones.
+//! Before the multipliers each hour the sides elect their commanders, the
+//! first hour rolls surprise (a fifth off the caught side for nine hours)
+//! and any hour may bring a combat event that changes the damage both sides
+//! take for that hour and the next eight ([`events`]).
+//!
+//! Implemented modifiers (spec §4, in the game's order): river crossing
+//! (with the Engineer trait), crossing from a strait, a defender also
+//! attacking elsewhere, doctrine traits, combined arms, surprise,
+//! experience, supply efficiency, terrain (with terrain traits and the
+//! hard-unit city penalty), weather (clear only), night, leader skill with
+//! the PanzerLeader and Commando traits, command limits by direction,
+//! envelopment, encirclement, dig-in, land forts (with FortressBuster),
+//! dissent and difficulty. Not yet: paratroopers and invasion size, shore
+//! bombardment, country bonuses by type, supply and fuel shortage, army
+//! detection, mission efficiency. Misc values are the shipped `db/misc.txt`
+//! ones.
 
+pub mod events;
+
+use crate::leaders::LeaderState;
 use crate::movement::{terrain, MoveContext};
-use crate::{Battle, Rng, System, World};
-use dh_data::{Branch, DivisionStats};
+use crate::{Battle, CombatEvent, Rng, System, World};
+use dh_data::leaders::traits;
+use dh_data::{Branch, Difficulty, DivisionStats};
 use dh_map::AdjKind;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 /// `combat` section values of the shipped `db/misc.txt` (positions in the spec).
@@ -35,19 +52,144 @@ pub mod params {
     pub const EVADE_WITHOUT_DEFENCES: f32 = 60.0; // [77] × 100
     pub const GROUND_DEFENCE_EFFICIENCY: f32 = 0.8; // country section, 3rd value
     pub const EXPERIENCE: f32 = 0.5; // [63]
+    pub const MULTIPLE_COMBATS: f32 = -0.5; // [14]
+    pub const COMBINED_ARMS_ATTACK: f32 = 0.05; // [15]
+    pub const COMBINED_ARMS_DEFENCE: f32 = 0.15; // [16]
+    pub const SURPRISE: f32 = -0.2; // [17]
+    pub const OVER_COMMAND_LIMIT: f32 = -0.75; // [18]
+    pub const ENVELOPMENT: f32 = -0.1; // [21], per direction above two
+    pub const ENCIRCLED: f32 = -0.1; // [22]
     pub const FORT_PER_LEVEL: f32 = -0.07; // [23]
     pub const HARD_IN_CITY: f32 = -0.5; // [25]
+    pub const DISSENT: f32 = -0.005; // [26]
+    pub const DIG_IN: f32 = 0.01; // [38]
+    pub const OWN_TERRAIN_TRAIT: f32 = 0.1; // [83]
+    pub const SIMILAR_TERRAIN_TRAIT: f32 = 0.05; // [84]
+    pub const EVENT_TRAIT: f32 = 5.0; // [85] × 100
+    pub const LEADER_SKILL: f32 = 0.05; // [86]
     pub const RETREAT_ORG: f32 = 5.0; // [228]
     pub const DESTROYED_BELOW: f32 = 0.1;
     pub const MIN_ORG_TO_FIRE: f32 = 0.5;
+    pub const LEADER_EXPERIENCE: f32 = 1.3; // [6]
+    /// Command limits by leader rank 0..=3; every lower rank counts as 3.
+    pub const LAND_COMMAND_LIMIT: [u32; 4] = [12, 9, 3, 1]; // [39..42]
+    pub const AIR_COMMAND_LIMIT: [u32; 4] = [24, 16, 8, 4]; // [43..46]
+    pub const NAVAL_COMMAND_LIMIT: [u32; 4] = [30, 18, 12, 6]; // [47..50]
+    pub const HQ_COMMAND_FACTOR: u32 = 2; // [51]
+    /// Encirclement and breakthrough grow likelier when the side's stacks
+    /// average more than this speed (km/h), by the bonus per km/h above it,
+    /// up to the given range.
+    pub const EVENT_SPEED_MIN: f32 = 3.0; // [230]
+    pub const EVENT_SPEED_RANGE: f32 = 4.0; // [231]
+    pub const EVENT_SPEED_BONUS: f32 = 0.1; // [232]
+    pub const EVENT_HOURS: u64 = 8; // [233]
+    /// Damage taken during each combat event, by event: ORG and STR taken
+    /// by attackers, then ORG and STR taken by defenders.
+    pub const EVENT_DAMAGE: [[f32; 4]; 7] = [
+        [1.5, 1.0, 1.0, 1.25],  // [234..237] counterattack
+        [1.0, 1.25, 1.5, 1.0],  // [238..241] assault
+        [0.9, 1.0, 1.0, 1.75],  // [242..245] encirclement
+        [0.8, 0.8, 1.2, 1.2],   // [246..249] ambush
+        [1.0, 1.0, 1.0, 0.5],   // [250..253] delay
+        [0.75, 0.5, 0.25, 0.5], // [254..257] tactical withdrawal
+        [1.0, 0.8, 1.5, 1.0],   // [258..261] breakthrough
+    ];
+
+    // `country` section: every country starts with these.
+    pub const EVENT_HQ_CHANCE: f32 = 1.0; // country[15]
+    pub const EVENT_CHANCE: f32 = 0.01; // country[16], each event
+    pub const LAND_SURPRISE: f32 = 1.0; // country[32]
+    pub const DIG_IN_MAX: f32 = 20.0; // country[44]
+    pub const DIG_IN_DAILY: f32 = 1.0; // country[45]
 }
 
 /// Terrain suffix of the `ATT_*`/`DEF_*` rows, by terrain index 0..=7.
 const TERRAIN_ROW: [&str; 8] = [
     "PLAIN", "FOREST", "MOUNTAIN", "DESERT", "SWAMP", "HILL", "JUNGLE", "URBAN",
 ];
-/// Division class of HQs (`modifiers.csv` column, `#ID` 10).
+/// Division classes (`modifiers.csv` columns, `#ID`) the rules single out.
 const HQ_CLASS: usize = 10;
+const GARRISON_CLASS: usize = 9;
+const MILITIA_CLASS: usize = 11;
+/// MECH, L ARM, ARM: combined arms (row 6) and PanzerLeader.
+const ARMOUR_CLASSES: [usize; 3] = [3, 4, 5];
+/// PARA, MAR, MTN: Commando.
+const COMMANDO_CLASSES: [usize; 3] = [6, 7, 8];
+
+/// Trait bonuses the exe hard-codes (spec §2.3.6).
+const DOCTRINE: f32 = 1.1;
+const ENGINEER_RIVER: f32 = 0.2;
+const FORTRESS_BUSTER: f32 = 0.75;
+const SPECIALIST: f32 = 1.1;
+const COMMANDO_OTHERS: f32 = 0.95;
+/// Terrain traits by terrain 0..=7 (row 11): the terrain's own trait and a
+/// similar one.
+const TERRAIN_TRAITS: [(u32, u32); 8] = [
+    (0, 0),
+    (traits::RANGER, traits::JUNGLE_RAT),
+    (traits::MOUNTAINEER, traits::HILLS_FIGHTER),
+    (traits::DESERT_FOX, 0),
+    (traits::JUNGLE_RAT, traits::RANGER),
+    (traits::HILLS_FIGHTER, traits::MOUNTAINEER),
+    (traits::JUNGLE_RAT, traits::RANGER),
+    (traits::URBAN_WARFARE, 0),
+];
+
+/// Multipliers of the ORG and STR damage a division takes during a combat
+/// event (`0x4C1830`, `0x4C1740`), by the side it is on.
+fn event_damage(event: Option<CombatEvent>, target_attacking: bool) -> (f32, f32) {
+    let Some(e) = event else {
+        return (1.0, 1.0);
+    };
+    let [att_org, att_str, def_org, def_str] = params::EVENT_DAMAGE[e as usize];
+    if target_attacking {
+        (att_org, att_str)
+    } else {
+        (def_org, def_str)
+    }
+}
+
+/// Division class of a division type (its `#ID`), `usize::MAX` if unknown.
+fn class_of(kind: &str) -> usize {
+    dh_data::unitdb::DIVISION_TYPES
+        .iter()
+        .position(|t| *t == kind)
+        .unwrap_or(usize::MAX)
+}
+
+/// Row 6 (`0x5093F0`): the stack mixes armour with other troops — MECH,
+/// L ARM and ARM make up strictly between 0.332 and 0.667 of its divisions —
+/// and has no garrison or militia. The leader condition is the caller's.
+fn combined_arms(classes: &[usize]) -> bool {
+    if classes.is_empty()
+        || classes
+            .iter()
+            .any(|&c| c == GARRISON_CLASS || c == MILITIA_CLASS)
+    {
+        return false;
+    }
+    let armour = classes
+        .iter()
+        .filter(|c| ARMOUR_CLASSES.contains(c))
+        .count();
+    let share = armour as f32 / classes.len() as f32;
+    share > 0.332 && share < 0.667
+}
+
+/// Row 11 bonus of a leader's terrain traits: `combat[83]` for the battle
+/// terrain's own trait, else `combat[84]` for a similar one.
+fn terrain_trait_bonus(leader_traits: u32, terrain: u8) -> f32 {
+    let Some(&(own, similar)) = TERRAIN_TRAITS.get(terrain as usize) else {
+        return 0.0;
+    };
+    if leader_traits & own != 0 {
+        params::OWN_TERRAIN_TRAIT
+    } else if leader_traits & similar != 0 {
+        params::SIMILAR_TERRAIN_TRAIT
+    } else {
+        0.0
+    }
+}
 
 /// One division taking part in the current hour.
 struct Fighter {
@@ -103,13 +245,26 @@ pub fn is_night(date: dh_data::GameDate, pos: (i64, i64)) -> bool {
 pub struct Combat {
     ctx: Arc<MoveContext>,
     /// Land fort level by province.
-    pub forts: std::collections::BTreeMap<u32, f32>,
+    pub forts: BTreeMap<u32, f32>,
     /// Ended battles, newest last: (province, attacker won).
     pub results: Vec<(u32, bool)>,
     /// Apply the night modifiers (on in the game; switchable for comparisons).
     pub night: bool,
     /// Apply the supply-efficiency modifier (on in the game).
     pub supply: bool,
+    /// Stacks fight under their own leaders (on in the game). Off, every
+    /// stack has its built-in leader: rank 25, skill 0, no traits, limit 1.
+    pub leaders: bool,
+    /// Apply the command-limit penalty of row 16 (on in the game).
+    pub command_limit: bool,
+    /// Roll surprise in the first hour (on in the game).
+    pub surprise: bool,
+    /// Roll combat events (on in the game).
+    pub events: bool,
+    /// `db/difficulty.csv`; empty means no difficulty modifier.
+    pub difficulty: Difficulty,
+    /// Difficulty level 0..=4 (`NORMAL` in a new game).
+    pub difficulty_level: usize,
 }
 
 impl Combat {
@@ -126,13 +281,107 @@ impl Combat {
             results: Vec::new(),
             night: true,
             supply: true,
+            leaders: true,
+            command_limit: true,
+            surprise: true,
+            events: true,
+            difficulty: Difficulty::default(),
+            difficulty_level: dh_data::difficulty::NORMAL,
         }
     }
 
+    /// The leader a stack fights under (§2.3.2): its own or the built-in
+    /// one; only the built-in one with [`Combat::leaders`] off.
+    fn leader<'w>(&self, world: &'w World, unit: usize) -> Cow<'w, LeaderState> {
+        if self.leaders {
+            return world.stack_leader(unit);
+        }
+        let u = &world.units[unit];
+        Cow::Owned(LeaderState::built_in(&u.owner, u.unit.branch))
+    }
+
+    /// HQ influence (§2.3.5); with [`Combat::leaders`] off no stack has a
+    /// leader senior enough to make a headquarters.
+    fn under_hq_influence(&self, world: &World, unit: usize) -> bool {
+        self.leaders && world.under_hq_influence(&self.ctx, unit)
+    }
+
+    /// Command limit of each direction for this hour (§4.1), keyed by the
+    /// province the stacks stand in. Attackers get the best stack's limit in
+    /// each direction, doubled for a stack under HQ influence; defenders add
+    /// theirs up, and the sum is doubled when any of them is under HQ
+    /// influence.
+    fn direction_limits(
+        &self,
+        world: &World,
+        units: &[usize],
+        province: u32,
+        attacking: bool,
+    ) -> BTreeMap<u32, i64> {
+        let factor = i64::from(params::HQ_COMMAND_FACTOR);
+        let mut limits = BTreeMap::new();
+        let mut hq = false;
+        for &u in units {
+            let mut limit = i64::from(self.leader(world, u).command_limit());
+            let influenced = self.under_hq_influence(world, u);
+            let direction = limits
+                .entry(world.units[u].unit.location.unwrap_or(0))
+                .or_insert(0);
+            if attacking {
+                if influenced {
+                    limit *= factor;
+                }
+                *direction = (*direction).max(limit);
+            } else {
+                hq |= influenced;
+                *direction += limit;
+            }
+        }
+        if hq {
+            if let Some(l) = limits.get_mut(&province) {
+                *l *= factor;
+            }
+        }
+        limits
+    }
+
+    /// Row 19 (§4.3): a defender under command country `k`, whose divisions
+    /// belong to `owner`, is encircled in `p` when no regular land neighbour
+    /// shares the province's controller (its region is `p` alone) and none
+    /// of the neighbouring controllers is friendly. A controller `c` is
+    /// friendly when `k` has military access to it, or when `k` is in an
+    /// alliance and `c` is in `owner`'s. Islands are never encircled.
+    fn encircled(&self, world: &World, p: u32, k: &str, owner: &str) -> bool {
+        let Some(controller) = world.controller.get(&p) else {
+            return false;
+        };
+        if self.ctx.is_island(p) {
+            return false;
+        }
+        let diplomacy = &world.diplomacy;
+        let in_alliance = diplomacy.alliance_of(k).is_some();
+        let alliance = diplomacy.alliance_of(owner);
+        // Access is the byte of the k → c relation record, which a scenario
+        // sets with `access = yes` in k's relation with c.
+        let friendly = |c: &String| {
+            world.access.contains(&(k.to_owned(), c.clone()))
+                || (in_alliance && diplomacy.alliance_of(c) == alliance)
+        };
+        self.ctx
+            .regular_neighbours(p)
+            .filter(|l| self.ctx.province(l.to).is_some_and(|i| !i.is_water()))
+            .filter_map(|l| world.controller.get(&l.to))
+            .all(|c| c != controller && !friendly(c))
+    }
+
+    /// Fighters of one side with their multipliers for this hour (spec §4):
+    /// `units` are the side's stacks in the order they joined, `enemies` the
+    /// other side's.
     fn fighters(
         &self,
         world: &World,
         units: &[usize],
+        enemies: &[usize],
         battle: &Battle,
         attacking: bool,
     ) -> Vec<Fighter> {
@@ -140,9 +389,22 @@ impl Combat {
         let province = ctx.province(battle.province);
         let terrain = province.map_or(terrain::PLAINS, |p| p.terrain);
         let night = self.night && province.is_some_and(|p| is_night(world.date, p.army_pos));
+        // Row 18: the defenders count the provinces the attackers stand in
+        // (not on an island).
+        let directions = if attacking || ctx.is_island(battle.province) {
+            0
+        } else {
+            enemies
+                .iter()
+                .map(|&e| world.units[e].unit.location)
+                .collect::<BTreeSet<_>>()
+                .len()
+        };
+        let mut limits = self.direction_limits(world, units, battle.province, attacking);
         let mut out = Vec::new();
         for &u in units {
             let unit = &world.units[u];
+            let k = unit.controller();
             let link = unit
                 .unit
                 .location
@@ -150,57 +412,156 @@ impl Combat {
             let enemy_held = world
                 .controller
                 .get(&battle.province)
-                .is_some_and(|c| world.at_war(unit.controller(), c));
+                .is_some_and(|c| world.at_war(k, c));
             // Supply efficiency of the stack where it stands (row 10 of the
             // modifier table). Out-of-supply stacks are left neutral for now.
             let ese = match unit.unit.location {
-                Some(p) if self.supply && world.in_supply(ctx, unit.controller(), p) => {
+                Some(p) if self.supply && world.in_supply(ctx, k, p) => {
                     world.supply_efficiency(ctx, p)
                 }
                 _ => 1.0,
             };
+            let leader = self.leader(world, u);
+            // Every leader bonus but Engineer needs the stack within its
+            // leader's own limit (§2.3.5).
+            let within = unit.unit.divisions.len() <= leader.command_limit() as usize;
+            let skill = world.leader_skill(&leader);
+            let classes: Vec<usize> = unit
+                .unit
+                .divisions
+                .iter()
+                .map(|d| class_of(&d.kind))
+                .collect();
+            // Row 4: a defender that is attacking another province as well.
+            let two_battles = !attacking
+                && unit
+                    .route
+                    .front()
+                    .and_then(|&q| world.battle_at(q))
+                    .is_some_and(|b| b.attackers.contains(&u));
+            let combined = within && combined_arms(&classes);
+            let terrain_trait = if within {
+                terrain_trait_bonus(leader.traits, terrain)
+            } else {
+                0.0
+            };
+            let surprised = battle.side(attacking).surprised;
+            let encircled = !attacking && self.encircled(world, battle.province, k, &unit.owner);
+            let dissent = world.countries.get(k).map_or(0.0, |c| c.dissent) * params::DISSENT;
+            // Human players are not modelled: every country takes the AI row.
+            let difficulty = self.difficulty.modifier(
+                "COMBAT",
+                self.difficulty_level,
+                false,
+                world.diplomacy.faction_of(k),
+            );
+            let src = unit.unit.location.unwrap_or(0);
             for (i, d) in unit.unit.divisions.iter().enumerate() {
+                // Row 16 counts every division, in stack and then division order.
+                let over_limit = self.command_limit && {
+                    let left = limits.entry(src).or_insert(0);
+                    *left -= 1;
+                    *left < 0
+                };
                 let Some(stats) = ctx.units.division_stats(d) else {
                     continue;
                 };
-                let class = dh_data::unitdb::DIVISION_TYPES
-                    .iter()
-                    .position(|t| *t == d.kind)
-                    .unwrap_or(usize::MAX);
+                let class = classes[i];
                 let m = |name: &str| ctx.modifiers.named(name, class);
                 let (mut a, mut w) = (1.0f32, 1.0f32);
                 let side = if attacking { "ATT" } else { "DEF" };
                 if attacking && link.is_some_and(|l| l.kind == AdjKind::River) {
-                    a *= 1.0 + m("ATT_RIVER").min(0.0);
+                    let engineer = if leader.has_trait(traits::ENGINEER) {
+                        ENGINEER_RIVER
+                    } else {
+                        0.0
+                    };
+                    a *= 1.0 + (m("ATT_RIVER") + engineer).min(0.0);
                 }
                 if attacking && link.is_some_and(|l| l.kind == AdjKind::Sea) {
                     a *= 1.0 - (-m("ATT_SHORE")).clamp(0.0, 0.99);
+                }
+                if two_battles {
+                    a *= 1.0 + params::MULTIPLE_COMBATS;
+                }
+                let doctrine = if attacking {
+                    traits::OFFENSIVE_DOCTRINE
+                } else {
+                    traits::DEFENSIVE_DOCTRINE
+                };
+                if within && leader.has_trait(doctrine) {
+                    a *= DOCTRINE;
+                }
+                if combined {
+                    a *= 1.0
+                        + if attacking {
+                            params::COMBINED_ARMS_ATTACK
+                        } else {
+                            params::COMBINED_ARMS_DEFENCE
+                        };
+                }
+                if surprised {
+                    a *= 1.0 + params::SURPRISE;
                 }
                 let experience = d.experience.unwrap_or(0.0) as f32;
                 if experience > 0.0 {
                     a *= 1.0 + experience * 0.01 * params::EXPERIENCE;
                 }
+                if ese != 1.0 {
+                    a *= 1.0 + (ese - 1.0) * 0.5;
+                }
                 if let Some(t) = TERRAIN_ROW.get(terrain as usize) {
-                    let mut tm = m(&format!("{side}_{t}"));
+                    let mut tm = m(&format!("{side}_{t}")) + terrain_trait;
                     if attacking && terrain == terrain::URBAN && stats.get("softness") < 50.0 {
                         tm += params::HARD_IN_CITY;
                     }
                     a *= 1.0 + tm;
                 }
-                if ese != 1.0 {
-                    a *= 1.0 + (ese - 1.0) * 0.5;
-                }
+                // Weather is always clear for now, so WinterSpecialist (frost,
+                // snow, blizzard) never applies.
                 w *= 1.0 + m(&format!("{side}_CLEAR"));
                 if night {
                     w *= 1.0 + m(&format!("{side}_NIGHT"));
                 }
+                if within {
+                    a *= 1.0 + skill * params::LEADER_SKILL;
+                    if leader.has_trait(traits::PANZER_LEADER) && ARMOUR_CLASSES.contains(&class) {
+                        a *= SPECIALIST;
+                    }
+                    if leader.has_trait(traits::COMMANDO) {
+                        a *= if COMMANDO_CLASSES.contains(&class) {
+                            SPECIALIST
+                        } else {
+                            COMMANDO_OTHERS
+                        };
+                    }
+                }
+                if over_limit {
+                    a *= 1.0 + params::OVER_COMMAND_LIMIT;
+                }
+                if directions > 2 {
+                    a *= 1.0 + (directions - 2) as f32 * params::ENVELOPMENT;
+                }
+                if encircled {
+                    a *= 1.0 + params::ENCIRCLED;
+                }
+                if !attacking && unit.dig_in > 0.0 {
+                    a *= 1.0 + unit.dig_in * params::DIG_IN;
+                }
                 if attacking && enemy_held {
                     let level = self.forts.get(&battle.province).copied().unwrap_or(0.0);
                     if level > 0.0 {
-                        let f = level * params::FORT_PER_LEVEL * (1.0 - m("ATT_FORT"));
+                        let mut f = level * params::FORT_PER_LEVEL * (1.0 - m("ATT_FORT"));
+                        if within && leader.has_trait(traits::FORTRESS_BUSTER) {
+                            f *= FORTRESS_BUSTER;
+                        }
                         a *= 1.0 + f.clamp(-0.99, 0.0);
                     }
                 }
+                if dissent != 0.0 {
+                    a *= 1.0 + dissent;
+                }
+                a *= 1.0 + difficulty;
                 out.push(Fighter {
                     unit: u,
                     division: i,
@@ -219,8 +580,16 @@ impl Combat {
         out
     }
 
-    /// One side fires at the other (spec §3.3–3.4); damage only accumulates.
-    fn fire(shooters: &[Fighter], targets: &mut [Fighter], targets_defending: bool, rng: &mut Rng) {
+    /// One side fires at the other (spec §3.3–3.4) during `event`; damage
+    /// only accumulates.
+    fn fire(
+        shooters: &[Fighter],
+        targets: &mut [Fighter],
+        targets_defending: bool,
+        event: Option<CombatEvent>,
+        rng: &mut Rng,
+    ) {
+        let (org_taken, str_taken) = event_damage(event, !targets_defending);
         let alive: Vec<usize> = (0..targets.len())
             .filter(|&i| targets[i].remaining_str() > 0.0)
             .collect();
@@ -277,9 +646,12 @@ impl Combat {
                 };
                 let mut org = params::ORG_MIN + rng.below(org_range) as f32;
                 let mut str = params::STR_MIN + rng.below(str_range) as f32;
+                str *= str_taken;
+                org *= org_taken;
                 org *= firepower;
                 str *= firepower;
-                if target.class == HQ_CLASS {
+                // Headquarters lose strength only to a breakthrough (`combat[262]`).
+                if target.class == HQ_CLASS && event != Some(CombatEvent::Breakthrough) {
                     str = 0.0;
                 }
                 str *= params::STR_DAMAGE;
@@ -344,7 +716,7 @@ impl Combat {
         best.map(|(_, p)| p)
     }
 
-    fn round(&mut self, world: &mut World, battle: &Battle, rng: &mut Rng) -> Option<bool> {
+    fn round(&mut self, world: &mut World, battle: &mut Battle, rng: &mut Rng) -> Option<bool> {
         let attackers: Vec<usize> = battle
             .attackers
             .iter()
@@ -359,10 +731,32 @@ impl Combat {
         if defenders.is_empty() {
             return Some(true);
         }
-        let mut att = self.fighters(world, &attackers, battle, true);
-        let mut def = self.fighters(world, &defenders, battle, false);
-        Self::fire(&att, &mut def, true, rng);
-        Self::fire(&def, &mut att, false, rng);
+        // Spec §3.1 steps 2–4: commanders (as stacks join and every hour),
+        // surprise in the first hour, combat events for the attackers and
+        // then the defenders, the multipliers, and the hour count.
+        self.elect_commander(world, battle.side_mut(true), &attackers);
+        self.elect_commander(world, battle.side_mut(false), &defenders);
+        if battle.hours == 0 && self.surprise {
+            self.roll_surprise(world, battle, &attackers, &defenders, rng);
+        }
+        if battle.event.is_some_and(|e| world.hour > e.until) {
+            battle.event = None;
+        }
+        if self.events {
+            self.roll_event(world, battle, &attackers, true, rng);
+            self.roll_event(world, battle, &defenders, false, rng);
+        }
+        let mut att = self.fighters(world, &attackers, &defenders, battle, true);
+        let mut def = self.fighters(world, &defenders, &attackers, battle, false);
+        battle.hours += 1;
+        if battle.hours > events::SURPRISE_HOURS {
+            for side in &mut battle.sides {
+                side.surprised = false;
+            }
+        }
+        let event = battle.event.map(|e| e.kind);
+        Self::fire(&att, &mut def, true, event, rng);
+        Self::fire(&def, &mut att, false, event, rng);
 
         // Apply damage to both sides at once and drop destroyed divisions.
         for f in att.iter_mut().chain(def.iter_mut()) {
@@ -419,10 +813,18 @@ impl System for Combat {
 
     fn on_hour(&mut self, world: &mut World, rng: &mut Rng) {
         let battles = world.battles.clone();
-        for battle in battles {
-            if let Some(attacker_won) = self.round(world, &battle, rng) {
-                self.results.push((battle.province, attacker_won));
-                world.battles.retain(|b| b.province != battle.province);
+        for mut battle in battles {
+            let p = battle.province;
+            match self.round(world, &mut battle, rng) {
+                Some(attacker_won) => {
+                    self.results.push((p, attacker_won));
+                    world.battles.retain(|b| b.province != p);
+                }
+                None => {
+                    if let Some(b) = world.battles.iter_mut().find(|b| b.province == p) {
+                        *b = battle;
+                    }
+                }
             }
         }
         // Units without divisions are gone.
@@ -440,7 +842,483 @@ impl System for Combat {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dh_data::GameDate;
+    use crate::movement::{ProvinceInfo, UnitModifiers};
+    use crate::{Country, UnitState};
+    use dh_data::unitdb::{DivisionClass, Model};
+    use dh_data::{GameDate, Unit, UnitDb};
+    use dh_map::{Adjacency, Link};
+
+    /// `modifiers.csv` columns INF … MIL; ATT_RIVER is −50 % but −10 % for
+    /// marines, DEF_FOREST +10 %, everything else 0.
+    const MODIFIERS: &str = "MODIFIER;INF;CAV;MOT;MECH;LARM;ARM;PARA;MAR;MTN;GARR;HQ;MIL\n\
+        ATT_RIVER;-50;-50;-50;-50;-50;-50;-50;-10;-50;-50;-50;-50\n\
+        DEF_FOREST;10;10;10;10;10;10;10;10;10;10;10;10\n";
+
+    /// Battle province 1 (terrain `battle_terrain`) borders the land
+    /// provinces 2, 3 and 4 (2 across a link of kind `from_2`) and the sea 5;
+    /// province 6 is an island in the seas 5, 7 and 8. The other land
+    /// provinces only border 1.
+    pub(super) fn map(battle_terrain: u8, from_2: AdjKind) -> Arc<MoveContext> {
+        let link = |to, kind| Link {
+            to,
+            kind,
+            through: None,
+        };
+        let normal = |to| link(to, AdjKind::Normal);
+        let province = |terrain| {
+            Some(ProvinceInfo {
+                terrain,
+                infra: 1.0,
+                army_pos: (0, 0),
+            })
+        };
+        let (land, sea) = (province(terrain::PLAINS), province(terrain::OCEAN));
+        let mut units = UnitDb::default();
+        for kind in ["infantry", "armor", "marine", "garrison", "hq"] {
+            let stats = [
+                ("softattack", 3.0),
+                ("defensiveness", 5.0),
+                ("toughness", 5.0),
+                ("softness", 100.0),
+                ("defaultorganisation", 30.0),
+            ];
+            units.divisions.insert(
+                kind.into(),
+                DivisionClass {
+                    name: kind.into(),
+                    branch: Branch::Land,
+                    models: vec![Model {
+                        stats: stats.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
+                    }],
+                    allowed_brigades: Vec::new(),
+                    max_brigades: 1,
+                },
+            );
+        }
+        Arc::new(MoveContext {
+            adjacency: Adjacency::from_lists(vec![
+                vec![],
+                vec![link(2, from_2), normal(3), normal(4), normal(5)],
+                vec![link(1, from_2)],
+                vec![normal(1)],
+                vec![normal(1)],
+                vec![normal(1), normal(6)],
+                vec![normal(5), normal(7), normal(8)],
+                vec![normal(6)],
+                vec![normal(6)],
+            ]),
+            provinces: vec![
+                None,
+                province(battle_terrain),
+                land,
+                land,
+                land,
+                sea,
+                land,
+                sea,
+                sea,
+            ],
+            terrain_move: [1.0; 12],
+            modifiers: UnitModifiers::parse(MODIFIERS.as_bytes()),
+            units,
+        })
+    }
+
+    pub(super) fn combat(ctx: Arc<MoveContext>) -> Combat {
+        Combat {
+            ctx,
+            forts: BTreeMap::new(),
+            results: Vec::new(),
+            night: false,
+            supply: false,
+            leaders: true,
+            command_limit: true,
+            surprise: true,
+            events: true,
+            difficulty: Difficulty::default(),
+            difficulty_level: dh_data::difficulty::NORMAL,
+        }
+    }
+
+    /// France holds 1, 4 and the island 6, Germany 2 and 3; they are at war.
+    pub(super) fn world() -> World {
+        let mut world = World::empty(GameDate::new(1936, 6, 1));
+        for tag in ["GER", "FRA", "ITA"] {
+            world.countries.insert(tag.into(), Country::new(tag));
+        }
+        for (p, tag) in [(1, "FRA"), (2, "GER"), (3, "GER"), (4, "FRA"), (6, "FRA")] {
+            world.controller.insert(p, tag.into());
+        }
+        world.declare_war("GER", "FRA");
+        world
+    }
+
+    /// Adds a stack of `owner` in `location` with divisions of these types;
+    /// returns its index.
+    pub(super) fn stack(world: &mut World, owner: &str, location: u32, kinds: &[&str]) -> usize {
+        let divisions: String = kinds
+            .iter()
+            .map(|k| format!("division = {{ type = {k} }} "))
+            .collect();
+        let doc = dh_text::script::parse_str(&format!(
+            "landunit = {{ location = {location} {divisions}}}"
+        ));
+        let unit = Unit::all_in(&doc.root).remove(0);
+        world.units.push(UnitState::new(owner, unit));
+        world.units.len() - 1
+    }
+
+    /// Gives a stack a leader of this rank, whole skill level and traits.
+    pub(super) fn lead(world: &mut World, unit: usize, rank: u8, skill: i32, traits: u32) {
+        let id = 1000 + unit as i64;
+        let mut leader = LeaderState::built_in(&world.units[unit].owner, Branch::Land);
+        leader.id = Some(id);
+        leader.rank = rank;
+        leader.max_skill = 10;
+        leader.set_skill(skill);
+        leader.traits = traits;
+        leader.unit = Some(unit);
+        world.leaders.insert(id, leader);
+        world.units[unit].unit.leader = Some(id);
+    }
+
+    /// The multiplier `A` of each division of `units` fighting for province
+    /// `p` (clear weather in daylight, so `A·W` is the same).
+    fn mults(
+        combat: &Combat,
+        world: &World,
+        p: u32,
+        units: &[usize],
+        enemies: &[usize],
+        attacking: bool,
+    ) -> Vec<f32> {
+        let attackers = if attacking { units } else { enemies };
+        let battle = Battle::new(p, attackers.to_vec(), 0);
+        let fighters = combat.fighters(world, units, enemies, &battle, attacking);
+        for f in &fighters {
+            assert_eq!(f.attack_mult, f.defence_mult);
+        }
+        fighters.iter().map(|f| f.defence_mult).collect()
+    }
+
+    fn assert_close(actual: &[f32], expected: &[f32]) {
+        assert_eq!(actual.len(), expected.len(), "{actual:?} vs {expected:?}");
+        for (a, e) in actual.iter().zip(expected) {
+            assert!((a - e).abs() < 1e-5, "{actual:?} vs {expected:?}");
+        }
+    }
+
+    /// The example of spec §4.1: from 2, S1 (rank 2, 3 divisions) and S2 (no
+    /// leader, 2); from 3, S3 (rank 1, 6) next to a German HQ; defending,
+    /// D1 (rank 3, 2) and D2 (no leader, 1).
+    #[test]
+    fn command_limit_is_counted_by_direction() {
+        let mut world = world();
+        let s1 = stack(&mut world, "GER", 2, &["infantry"; 3]);
+        let s2 = stack(&mut world, "GER", 2, &["infantry"; 2]);
+        let s3 = stack(&mut world, "GER", 3, &["infantry"; 6]);
+        let hq = stack(&mut world, "GER", 3, &["hq"]);
+        let d1 = stack(&mut world, "FRA", 1, &["infantry"; 2]);
+        let d2 = stack(&mut world, "FRA", 1, &["infantry"]);
+        lead(&mut world, s1, 2, 0, 0);
+        lead(&mut world, s3, 1, 0, 0);
+        lead(&mut world, hq, 0, 0, 0);
+        lead(&mut world, d1, 3, 0, 0);
+        let mut combat = combat(map(terrain::PLAINS, AdjKind::Normal));
+        let (att, def) = ([s1, s2, s3], [d1, d2]);
+
+        // From 2 the best limit is S1's 3: both S2 divisions are over it.
+        // From 3 the HQ doubles S3's 9. The defenders add up 1 + 1.
+        let mut expected = vec![1.0; 11];
+        expected[3..5].fill(0.25);
+        assert_close(&mults(&combat, &world, 1, &att, &def, true), &expected);
+        assert_close(
+            &mults(&combat, &world, 1, &def, &att, false),
+            &[1.0, 1.0, 0.25],
+        );
+        // Without the HQ, S3's own limit of 9 still covers its 6 divisions;
+        // S1 and S2 never were near it.
+        world.units[hq].unit.location = Some(4);
+        assert_close(&mults(&combat, &world, 1, &att, &def, true), &expected);
+
+        // A French HQ next to the battle doubles the defenders' sum to 4.
+        let fra_hq = stack(&mut world, "FRA", 4, &["hq"]);
+        lead(&mut world, fra_hq, 1, 0, 0);
+        assert_close(&mults(&combat, &world, 1, &def, &att, false), &[1.0; 3]);
+
+        // Built-in leaders only: every stack has limit 1 in its direction.
+        combat.leaders = false;
+        let mut expected = vec![0.25; 11];
+        expected[0] = 1.0;
+        expected[5] = 1.0;
+        assert_close(&mults(&combat, &world, 1, &att, &def, true), &expected);
+        combat.command_limit = false;
+        assert_close(&mults(&combat, &world, 1, &att, &def, true), &[1.0; 11]);
+    }
+
+    #[test]
+    fn leader_bonuses_need_the_stack_within_its_limit() {
+        let mut world = world();
+        let ctx = map(terrain::PLAINS, AdjKind::Normal);
+        let mut combat = combat(ctx);
+        let tanks = stack(&mut world, "GER", 2, &["armor", "infantry"]);
+        let marines = stack(&mut world, "FRA", 1, &["marine", "infantry"]);
+        lead(
+            &mut world,
+            tanks,
+            1,
+            2,
+            traits::OFFENSIVE_DOCTRINE | traits::DEFENSIVE_DOCTRINE | traits::PANZER_LEADER,
+        );
+        lead(
+            &mut world,
+            marines,
+            1,
+            0,
+            traits::OFFENSIVE_DOCTRINE | traits::DEFENSIVE_DOCTRINE | traits::COMMANDO,
+        );
+        // Attacker: doctrine 1.1, combined arms (1 of 2 armoured) +5 %,
+        // skill 2 · 5 %, PanzerLeader 1.1 on the armour only.
+        let infantry = 1.1 * 1.05 * 1.1;
+        assert_close(
+            &mults(&combat, &world, 1, &[tanks], &[marines], true),
+            &[infantry * 1.1, infantry],
+        );
+        // Defender: doctrine 1.1, no armour, skill 0, Commando 1.1 on
+        // marines and 0.95 on the others.
+        assert_close(
+            &mults(&combat, &world, 1, &[marines], &[tanks], false),
+            &[1.1 * 1.1, 1.1 * 0.95],
+        );
+        // The same mix defending gets the defensive combined-arms bonus.
+        assert_close(
+            &mults(&combat, &world, 1, &[tanks], &[marines], false)[1..],
+            &[1.1 * 1.15 * 1.1],
+        );
+
+        // Rank 2 allows 3 divisions: with a fourth no bonus applies, and the
+        // fourth division is over the limit of its direction.
+        world.leaders.get_mut(&(1000 + tanks as i64)).unwrap().rank = 2;
+        world.units[tanks].unit.divisions = Unit::all_in(
+            &dh_text::script::parse_str(
+                "landunit = { division = { type = armor } division = { type = infantry } \
+                 division = { type = infantry } division = { type = infantry } }",
+            )
+            .root,
+        )
+        .remove(0)
+        .divisions;
+        assert_close(
+            &mults(&combat, &world, 1, &[tanks], &[marines], true),
+            &[1.0, 1.0, 1.0, 0.25],
+        );
+        // Garrisons and militia rule out combined arms.
+        world.units[tanks].unit.divisions.truncate(2);
+        world.units[tanks].unit.divisions[1].kind = "garrison".into();
+        assert_close(
+            &mults(&combat, &world, 1, &[tanks], &[marines], true),
+            &[1.1 * 1.1 * 1.1, 1.1 * 1.1],
+        );
+        // With leaders off the same stack has only its built-in leader.
+        combat.leaders = false;
+        assert_close(
+            &mults(&combat, &world, 1, &[tanks], &[marines], true),
+            &[1.0, 0.25],
+        );
+    }
+
+    #[test]
+    fn engineer_eases_river_crossings_whatever_the_limit() {
+        let mut world = world();
+        let mut combat = combat(map(terrain::PLAINS, AdjKind::River));
+        combat.command_limit = false;
+        let s = stack(&mut world, "GER", 2, &["infantry", "marine"]);
+        let d = stack(&mut world, "FRA", 1, &["infantry"]);
+        assert_close(&mults(&combat, &world, 1, &[s], &[d], true), &[0.5, 0.9]);
+        // Rank 3 with two divisions: over the limit, yet Engineer counts.
+        lead(&mut world, s, 3, 5, traits::ENGINEER);
+        assert_close(&mults(&combat, &world, 1, &[s], &[d], true), &[0.7, 1.0]);
+        // Defenders do not cross.
+        assert_close(&mults(&combat, &world, 1, &[d], &[s], false), &[1.0]);
+    }
+
+    #[test]
+    fn terrain_traits_add_to_the_terrain_modifier() {
+        let mut world = world();
+        let mut combat = combat(map(1, AdjKind::Normal)); // forest
+        combat.command_limit = false;
+        let a = stack(&mut world, "GER", 2, &["infantry"]);
+        let d = stack(&mut world, "FRA", 1, &["infantry"]);
+        let defend = |world: &World| mults(&combat, world, 1, &[d], &[a], false);
+        assert_close(&defend(&world), &[1.1]);
+        lead(&mut world, d, 3, 0, traits::RANGER);
+        assert_close(&defend(&world), &[1.2]);
+        lead(&mut world, d, 3, 0, traits::JUNGLE_RAT);
+        assert_close(&defend(&world), &[1.15]);
+        lead(&mut world, d, 3, 0, traits::JUNGLE_RAT | traits::RANGER);
+        assert_close(&defend(&world), &[1.2]);
+        lead(
+            &mut world,
+            d,
+            3,
+            0,
+            traits::DESERT_FOX | traits::HILLS_FIGHTER,
+        );
+        assert_close(&defend(&world), &[1.1]);
+        // A second division puts a rank-3 leader over his limit.
+        lead(&mut world, d, 3, 0, traits::RANGER);
+        let second = world.units[d].unit.divisions[0].clone();
+        world.units[d].unit.divisions.push(second);
+        assert_close(&defend(&world), &[1.1, 1.1]);
+    }
+
+    #[test]
+    fn envelopment_and_encirclement() {
+        let mut world = world();
+        let combat = combat(map(terrain::PLAINS, AdjKind::Normal));
+        let d = stack(&mut world, "FRA", 1, &["infantry"]);
+        let from: Vec<usize> = [2, 3, 4, 5]
+            .iter()
+            .map(|&p| stack(&mut world, "GER", p, &["infantry"]))
+            .collect();
+        let defend = |world: &World, attackers: &[usize]| {
+            mults(&combat, world, 1, &[d], attackers, false)[0]
+        };
+        // Two directions are free, each further one costs 10 %; several
+        // stacks in one province are one direction. (Province 4 is French,
+        // so the defender is not encircled.)
+        assert_close(&[defend(&world, &from[..2])], &[1.0]);
+        assert_close(&[defend(&world, &from[..3])], &[0.9]);
+        assert_close(&[defend(&world, &from)], &[0.8]);
+        let twin = stack(&mut world, "GER", 2, &["infantry"]);
+        assert_close(&[defend(&world, &[from[0], twin, from[1]])], &[1.0]);
+        // The attackers never get it.
+        assert_close(&mults(&combat, &world, 1, &from, &[d], true), &[1.0; 4]);
+
+        // Encircled once no land neighbour is French or friendly; the sea
+        // does not count.
+        let a = &from[..1];
+        assert_close(&[defend(&world, a)], &[1.0]);
+        world.controller.insert(4, "GER".into());
+        assert_close(&[defend(&world, a)], &[0.9]);
+        world.controller.insert(4, "ITA".into());
+        assert_close(&[defend(&world, a)], &[0.9]);
+        // Military access of France to Italy makes Italy friendly …
+        world.access.insert(("FRA".into(), "ITA".into()));
+        assert_close(&[defend(&world, a)], &[1.0]);
+        world.access.clear();
+        // … and so does an alliance of both.
+        world
+            .diplomacy
+            .alliances
+            .push(dh_data::diplomacy::Alliance {
+                faction: dh_data::diplomacy::Faction::Allies,
+                id: None,
+                name: None,
+                members: vec!["FRA".into(), "ITA".into()],
+                defensive: false,
+            });
+        assert_close(&[defend(&world, a)], &[1.0]);
+        world.diplomacy.alliances.clear();
+        // A neighbour nobody controls is ignored.
+        world.controller.remove(&4);
+        assert_close(&[defend(&world, a)], &[0.9]);
+
+        // On the island 6 neither applies, though the stacks come from three
+        // sea provinces and no neighbour is French.
+        let islanders = stack(&mut world, "FRA", 6, &["infantry"]);
+        let landing: Vec<usize> = [5, 7, 8]
+            .iter()
+            .map(|&p| stack(&mut world, "GER", p, &["infantry"]))
+            .collect();
+        assert!(combat.ctx.is_island(6));
+        assert!(!combat.ctx.is_island(1) && !combat.ctx.is_island(5));
+        assert_close(
+            &mults(&combat, &world, 6, &[islanders], &landing, false),
+            &[1.0],
+        );
+    }
+
+    #[test]
+    fn second_battle_dig_in_forts_dissent_and_difficulty() {
+        let mut world = world();
+        let mut combat = combat(map(terrain::PLAINS, AdjKind::Normal));
+        combat.command_limit = false;
+        let a = stack(&mut world, "GER", 2, &["infantry"]);
+        let d = stack(&mut world, "FRA", 1, &["infantry"]);
+        let defend = |combat: &Combat, world: &World| mults(combat, world, 1, &[d], &[a], false)[0];
+        let attack = |combat: &Combat, world: &World| mults(combat, world, 1, &[a], &[d], true)[0];
+
+        // A defender that is attacking province 2 at the same time.
+        world.units[d].route.push_back(2);
+        world.battles.push(Battle::new(2, vec![d], 0));
+        assert_close(&[defend(&combat, &world)], &[0.5]);
+        world.units[d].route.clear();
+        assert_close(&[defend(&combat, &world)], &[1.0]);
+
+        // Dig-in helps defenders only, without a cap.
+        world.units[d].dig_in = 50.0;
+        world.units[a].dig_in = 50.0;
+        assert_close(
+            &[defend(&combat, &world), attack(&combat, &world)],
+            &[1.5, 1.0],
+        );
+        world.units[d].dig_in = 0.0;
+
+        // Forts: 5 levels · −7 %; FortressBuster within the limit takes a
+        // quarter off.
+        combat.forts.insert(1, 5.0);
+        assert_close(&[attack(&combat, &world)], &[0.65]);
+        lead(&mut world, a, 3, 0, traits::FORTRESS_BUSTER);
+        assert_close(&[attack(&combat, &world)], &[1.0 - 0.35 * 0.75]);
+        let second = world.units[a].unit.divisions[0].clone();
+        world.units[a].unit.divisions.push(second);
+        assert_close(&[attack(&combat, &world)], &[0.65]);
+        combat.forts.clear();
+
+        // Dissent of the command country: 20 · −0.5 %.
+        world.countries.get_mut("FRA").unwrap().dissent = 20.0;
+        assert_close(
+            &[defend(&combat, &world), attack(&combat, &world)],
+            &[0.9, 1.0],
+        );
+        world.countries.get_mut("FRA").unwrap().dissent = 0.0;
+
+        // Difficulty: the AI row plus the alliance row.
+        combat.difficulty = Difficulty::parse(
+            b"CATEGORY;VERYEASY;EASY;NORMAL;HARD;VERYHARD;BLANK;X\n\
+              AI;;;;;;;X\nCOMBAT;-20;-10;0;10;20;;X\n\
+              ALLIES;;;;;;;X\nCOMBAT;0;0;0;0;5;;X\n",
+        );
+        assert_close(
+            &[defend(&combat, &world), attack(&combat, &world)],
+            &[1.0, 1.0],
+        );
+        combat.difficulty_level = 4;
+        world
+            .diplomacy
+            .alliances
+            .push(dh_data::diplomacy::Alliance {
+                faction: dh_data::diplomacy::Faction::Allies,
+                id: None,
+                name: None,
+                members: vec!["FRA".into()],
+                defensive: false,
+            });
+        assert_close(
+            &[defend(&combat, &world), attack(&combat, &world)],
+            &[1.25, 1.2],
+        );
+    }
+
+    #[test]
+    fn scenario_dig_in_is_kept_unclamped() {
+        let doc = dh_text::script::parse_str(
+            "landunit = { location = 1 dig_in = 75.000 division = { type = infantry } }",
+        );
+        let unit = UnitState::new("CHI", Unit::all_in(&doc.root).remove(0));
+        assert_eq!(unit.dig_in, 75.0);
+    }
 
     #[test]
     fn night_follows_the_sun() {

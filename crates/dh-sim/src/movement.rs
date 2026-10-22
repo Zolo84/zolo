@@ -175,6 +175,26 @@ impl MoveContext {
         self.provinces.get(id as usize)?.as_ref()
     }
 
+    /// The neighbours most of the game's code looks at (map-adjacency.md
+    /// §4.2): the links before the first one into a river province, which on
+    /// the shipped maps are all of them.
+    pub fn regular_neighbours(&self, p: u32) -> impl Iterator<Item = &Link> + '_ {
+        self.adjacency.neighbours(p).iter().take_while(|l| {
+            self.province(l.to)
+                .is_none_or(|i| i.terrain != terrain::RIVER)
+        })
+    }
+
+    /// An island (`0x4E4910`, land-combat.md §4.3): a land province whose
+    /// regular neighbours are all water, whatever the kind of link.
+    /// Envelopment and encirclement do not apply there.
+    pub fn is_island(&self, p: u32) -> bool {
+        self.province(p).is_some_and(|i| !i.is_water())
+            && self
+                .regular_neighbours(p)
+                .all(|l| self.province(l.to).is_some_and(ProvinceInfo::is_water))
+    }
+
     /// Distance in the game's 100-km unit (pixel model, `DistanceCalculationModel = 0`).
     pub fn distance(&self, a: u32, b: u32) -> Option<f32> {
         Some(dh_map::distance::pixel_distance(

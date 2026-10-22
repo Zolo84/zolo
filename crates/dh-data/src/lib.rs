@@ -4,19 +4,25 @@
 //! the original engine tolerates broken mod files.
 
 pub mod date;
+pub mod difficulty;
 pub mod diplomacy;
+pub mod leaders;
 pub mod localisation;
 pub mod province;
 pub mod scenario;
+pub mod tech;
 pub mod unitdb;
 pub mod units;
 
 pub use date::GameDate;
 pub use dh_vfs::Vfs;
+pub use difficulty::Difficulty;
 pub use diplomacy::{Diplomacy, Relation, War};
+pub use leaders::{Leader, Leaders};
 pub use localisation::Localisation;
 pub use province::{Province, Provinces};
 pub use scenario::{CountrySetup, ProvinceSetup, Scenario, ScenarioInfo};
+pub use tech::Techs;
 pub use unitdb::{DivisionStats, UnitDb};
 pub use units::{Branch, Brigade, Division, TypeId, Unit};
 

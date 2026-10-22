@@ -16,6 +16,91 @@ pub struct Battle {
     pub attackers: Vec<usize>,
     /// Simulation hour the battle started.
     pub started: u64,
+    /// Hours fought so far (`+0x64`, land-combat.md §3.1).
+    pub hours: u32,
+    /// The attacking side, then the defending one.
+    pub sides: [BattleSide; 2],
+    /// The combat event in force for both sides (`+0x5E`, §3.6).
+    pub event: Option<ActiveEvent>,
+}
+
+impl Battle {
+    pub fn new(province: u32, attackers: Vec<usize>, started: u64) -> Self {
+        Battle {
+            province,
+            attackers,
+            started,
+            hours: 0,
+            sides: Default::default(),
+            event: None,
+        }
+    }
+
+    pub fn side(&self, attacking: bool) -> &BattleSide {
+        &self.sides[usize::from(!attacking)]
+    }
+
+    pub fn side_mut(&mut self, attacking: bool) -> &mut BattleSide {
+        &mut self.sides[usize::from(!attacking)]
+    }
+}
+
+/// What a battle keeps about each side (§2.1, §2.4, §3.7).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BattleSide {
+    /// The stack whose leader commands the side (`+0x46`, §2.4).
+    pub commander: Option<usize>,
+    /// The commander's country (`+0x4A`): kept when a commander without
+    /// one takes over.
+    pub country: Option<String>,
+    /// Caught by surprise in the first hour (`+0x4F`, §3.7).
+    pub surprised: bool,
+}
+
+/// The seven combat events (§3.6), in the game's order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CombatEvent {
+    CounterAttack,
+    Assault,
+    Encirclement,
+    Ambush,
+    Delay,
+    TacticalWithdrawal,
+    Breakthrough,
+}
+
+impl CombatEvent {
+    pub const ALL: [CombatEvent; 7] = [
+        CombatEvent::CounterAttack,
+        CombatEvent::Assault,
+        CombatEvent::Encirclement,
+        CombatEvent::Ambush,
+        CombatEvent::Delay,
+        CombatEvent::TacticalWithdrawal,
+        CombatEvent::Breakthrough,
+    ];
+
+    /// Whether the defenders draw it rather than the attackers (`0x4C1190`).
+    pub fn defensive(self) -> bool {
+        matches!(
+            self,
+            CombatEvent::CounterAttack | CombatEvent::Delay | CombatEvent::TacticalWithdrawal
+        )
+    }
+
+    /// The commander's trait that makes it likelier (bits 24..=30, in the
+    /// same order).
+    pub fn trait_mask(self) -> u32 {
+        dh_data::leaders::traits::COUNTER_ATTACKER << self as u32
+    }
+}
+
+/// A combat event and the last hour it is in force (§3.6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActiveEvent {
+    pub kind: CombatEvent,
+    /// Simulation hour; the event ends once the clock is past it.
+    pub until: u64,
 }
 
 impl World {
@@ -35,6 +120,20 @@ impl World {
 
     pub fn battle_at(&self, province: u32) -> Option<&Battle> {
         self.battles.iter().find(|b| b.province == province)
+    }
+
+    /// Whether a stack takes part in a battle: attacking a province it is
+    /// still heading for, or standing in a battle province with an attacker
+    /// at war with it.
+    pub fn in_battle(&self, unit: usize) -> bool {
+        let u = &self.units[unit];
+        self.battles.iter().any(|b| {
+            (b.attackers.contains(&unit) && u.route.front() == Some(&b.province))
+                || (u.unit.location == Some(b.province)
+                    && b.attackers
+                        .iter()
+                        .any(|&a| self.at_war(self.units[a].controller(), u.controller())))
+        })
     }
 }
 
@@ -64,11 +163,7 @@ impl System for Engage {
             match world.battles.iter_mut().find(|b| b.province == next) {
                 Some(b) if b.attackers.contains(&i) => {}
                 Some(b) => b.attackers.push(i),
-                None => world.battles.push(Battle {
-                    province: next,
-                    attackers: vec![i],
-                    started: hour,
-                }),
+                None => world.battles.push(Battle::new(next, vec![i], hour)),
             }
         }
         // A battle ends when its province is empty of anyone the attackers fight,

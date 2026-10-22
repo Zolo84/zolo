@@ -1,6 +1,7 @@
 //! Checks against a real Darkest Hour install; skipped unless `DH_GAME_DIR` is set.
 
-use dh_data::{Branch, Scenario, UnitDb, Vfs};
+use dh_data::leaders::traits;
+use dh_data::{Branch, Leaders, Scenario, UnitDb, Vfs};
 
 fn vfs() -> Option<Vfs> {
     let dir = std::path::PathBuf::from(std::env::var_os("DH_GAME_DIR")?);
@@ -64,4 +65,75 @@ fn every_1936_division_resolves_and_moves_sensibly() {
         speeds.iter().take(12).collect::<Vec<_>>()
     );
     assert!(total > 1600);
+}
+
+#[test]
+fn leader_files_load_completely() {
+    let Some(vfs) = vfs() else { return };
+    let mut warnings = Vec::new();
+    let leaders = Leaders::load(&vfs, &mut warnings).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    // docs/spec/leaders-ministers-misc.md §3.3: 180 files, 16 757 records, no duplicate IDs.
+    assert_eq!(leaders.len(), 16757);
+    let rundstedt = leaders.get(335).unwrap();
+    assert_eq!(
+        (rundstedt.name.as_str(), rundstedt.country.as_str()),
+        ("von Rundstedt", "GER")
+    );
+    assert_eq!(rundstedt.rank_years, [1940, 1930, 1930, 1930]);
+    assert_eq!((rundstedt.skill, rundstedt.max_skill), (5, 8));
+    assert!(rundstedt.has_trait(traits::OFFENSIVE_DOCTRINE));
+    assert!(rundstedt.has_trait(traits::DEFENSIVE_DOCTRINE));
+    assert_eq!(rundstedt.branch, Some(Branch::Land));
+    assert_eq!((rundstedt.start_year, rundstedt.end_year), (1930, 1960));
+    assert_eq!(rundstedt.retirement_year, None);
+    let long_yun = leaders.get(501006).unwrap();
+    assert_eq!(
+        (
+            long_yun.country.as_str(),
+            long_yun.rank_years[1],
+            long_yun.ideal_rank
+        ),
+        ("CYN", 1930, Some(1))
+    );
+    // Vanilla land leaders only carry trait bits 0..9 (§3.5).
+    assert!(leaders
+        .by_id
+        .values()
+        .filter(|l| l.branch == Some(Branch::Land))
+        .all(|l| l.traits < 1 << 10));
+}
+
+/// The nine technology files load; `allow_dig_in` comes only with Basic
+/// Construction Engineering (5080), and the seven cryptography
+/// applications each add 15 to land surprise (land-combat.md §3.7, §4.4).
+#[test]
+fn tech_effects_load() {
+    let Some(vfs) = vfs() else { return };
+    let mut warnings = Vec::new();
+    let techs = dh_data::Techs::load(&vfs, &mut warnings);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let with = |kind: &str, which: Option<&str>| -> Vec<i64> {
+        techs
+            .effects
+            .iter()
+            .filter(|(_, commands)| {
+                commands
+                    .iter()
+                    .any(|c| c.kind == kind && c.which.as_deref() == which)
+            })
+            .map(|(&id, _)| id)
+            .collect()
+    };
+    assert_eq!(with("allow_dig_in", None), [5080]);
+    let surprise = with("surprise", Some("land"));
+    assert_eq!(surprise, [5350, 5360, 5370, 5380, 5390, 5400, 13060]);
+    for id in surprise {
+        let land = techs
+            .commands(id)
+            .iter()
+            .find(|c| c.kind == "surprise" && c.which.as_deref() == Some("land"))
+            .unwrap();
+        assert_eq!(land.value, Some(15.0));
+    }
 }

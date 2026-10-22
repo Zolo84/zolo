@@ -199,12 +199,28 @@ impl Diplomacy {
         a != b && self.wars.iter().any(|w| w.opposes(a, b))
     }
 
+    /// Whether a country is at war with anyone.
+    pub fn in_war(&self, tag: &str) -> bool {
+        self.wars
+            .iter()
+            .any(|w| w.attackers.iter().chain(&w.defenders).any(|m| m == tag))
+    }
+
     pub fn allied(&self, a: &str, b: &str) -> bool {
         a == b
             || self
                 .alliances
                 .iter()
                 .any(|al| al.members.iter().any(|m| m == a) && al.members.iter().any(|m| m == b))
+    }
+
+    /// The alliance a country belongs to, as an index into `alliances`: the
+    /// first one listing it (assumed; the game keeps a single alliance per
+    /// country).
+    pub fn alliance_of(&self, tag: &str) -> Option<usize> {
+        self.alliances
+            .iter()
+            .position(|a| a.members.iter().any(|m| m == tag))
     }
 
     pub fn faction_of(&self, tag: &str) -> Option<Faction> {
@@ -241,7 +257,11 @@ mod tests {
         assert!(d.allied("ENG", "CAN") && d.allied("JAP", "MAN") && !d.allied("GER", "ENG"));
         assert_eq!(d.faction_of("FRA"), Some(Faction::Allies));
         assert_eq!(d.faction_of("JAP"), None);
+        assert_eq!(d.alliance_of("CAN"), d.alliance_of("FRA"));
+        assert_eq!(d.alliance_of("JAP"), Some(2));
+        assert_eq!(d.alliance_of("ETH"), None);
         assert!(d.at_war("ETH", "ITA") && !d.at_war("ITA", "ITA") && !d.at_war("GER", "ENG"));
+        assert!(d.in_war("ETH") && d.in_war("ITA") && !d.in_war("GER"));
         assert_eq!(d.treaties.len(), 1, "a treaty needs two countries");
         assert_eq!(
             d.treaties[0].countries,
