@@ -33,6 +33,8 @@ USAGE:
                                                       march a land unit and print its hourly progress
   dh-tool sim       <game-dir> <scenario.eug> [--days N] [--mod <dir>]
                                                       load a scenario and run the headless simulation
+
+--mod <dir> layers a mod over the game files; --mod selected uses the mod settings.cfg selects.
 ";
 
 struct Args {
@@ -82,6 +84,10 @@ impl Args {
         let dir = PathBuf::from(self.pos(1, "game-dir")?);
         if !dir.is_dir() {
             return Err(format!("not a directory: {}", dir.display()));
+        }
+        // `--mod selected` layers the mod `settings.cfg` selects, as the game does.
+        if self.options.get("mod").map(String::as_str) == Some("selected") {
+            return Ok(dh_data::open_install(dir));
         }
         let mut vfs = Vfs::new(dir);
         if let Some(m) = self.options.get("mod") {
@@ -195,7 +201,7 @@ fn scan(args: &Args) -> Result<(), String> {
     print_warnings(&warnings, 30);
 
     let mut warnings = Vec::new();
-    match Provinces::load(&vfs, &mut warnings) {
+    match Provinces::load_active(&vfs, &mut warnings) {
         Ok(p) => println!(
             "provinces: {} rows in {}",
             p.len(),
@@ -322,7 +328,7 @@ fn load_adjacency(vfs: &Vfs, provinces: &Provinces) -> Result<dh_map::Adjacency,
 fn adj(args: &Args) -> Result<(), String> {
     let vfs = args.vfs()?;
     let mut warnings = Vec::new();
-    let provinces = Provinces::load(&vfs, &mut warnings).map_err(|e| e.to_string())?;
+    let provinces = Provinces::load_active(&vfs, &mut warnings).map_err(|e| e.to_string())?;
     let loc = Localisation::load(&vfs, Language::English);
     let name = |p: u32| {
         provinces
@@ -351,7 +357,7 @@ fn adj(args: &Args) -> Result<(), String> {
 fn route(args: &Args) -> Result<(), String> {
     let vfs = args.vfs()?;
     let mut warnings = Vec::new();
-    let provinces = Provinces::load(&vfs, &mut warnings).map_err(|e| e.to_string())?;
+    let provinces = Provinces::load_active(&vfs, &mut warnings).map_err(|e| e.to_string())?;
     let loc = Localisation::load(&vfs, Language::English);
     let adj = load_adjacency(&vfs, &provinces)?;
     let id = |i: usize| -> Result<u32, String> {
@@ -424,7 +430,7 @@ fn march(args: &Args) -> Result<(), String> {
     let mut warnings = Vec::new();
     let scenario = Scenario::load(&vfs, path, &mut warnings).map_err(|e| format!("{path}: {e}"))?;
     let ctx = std::sync::Arc::new(dh_sim::movement::MoveContext::load(&vfs)?);
-    let provinces = Provinces::load(&vfs, &mut warnings).map_err(|e| e.to_string())?;
+    let provinces = Provinces::load_active(&vfs, &mut warnings).map_err(|e| e.to_string())?;
     let loc = Localisation::load(&vfs, Language::English);
     let pname = |p: u32| {
         provinces
@@ -434,6 +440,11 @@ fn march(args: &Args) -> Result<(), String> {
     };
 
     let (mut world, _) = World::from_scenario(&scenario);
+    world
+        .load_misc(&vfs)
+        .map_err(|e| format!("db/misc.txt: {e}"))?;
+    world.load_leaders(&vfs)?;
+    world.load_techs(&vfs);
     if let Some(enemy) = args.options.get("war") {
         let owner = world
             .units

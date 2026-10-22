@@ -24,8 +24,25 @@ pub struct Provinces {
 
 impl Provinces {
     pub fn load(vfs: &Vfs, warnings: &mut Vec<Warning>) -> std::io::Result<Self> {
+        Self::load_file(vfs, PROVINCE_CSV, warnings)
+    }
+
+    /// The table of the map `misc.txt` selects: `db/province.csv` for the
+    /// default map, else the map folder's own `Province.csv`.
+    pub fn load_active(vfs: &Vfs, warnings: &mut Vec<Warning>) -> std::io::Result<Self> {
+        let dir = crate::Misc::load(vfs).unwrap_or_default().map_dir();
+        if dir == "map" {
+            Self::load(vfs, warnings)
+        } else {
+            Self::load_file(vfs, &format!("{dir}/Province.csv"), warnings)
+        }
+    }
+
+    /// The table of a map's own folder (`map/map_N/Province.csv`), which
+    /// replaces `db/province.csv` when that map is active.
+    pub fn load_file(vfs: &Vfs, path: &str, warnings: &mut Vec<Warning>) -> std::io::Result<Self> {
         Ok(Self::from_table(
-            &CsvTable::parse_with_header(&vfs.read(PROVINCE_CSV)?),
+            &CsvTable::parse_with_header(&vfs.read(path)?),
             warnings,
         ))
     }

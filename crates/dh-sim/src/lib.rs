@@ -11,6 +11,7 @@ pub mod dig_in;
 pub mod leaders;
 pub mod march;
 pub mod movement;
+pub mod params;
 pub mod rng;
 pub mod supply;
 pub mod world;
@@ -19,6 +20,7 @@ pub use battle::{ActiveEvent, Battle, BattleSide, CombatEvent, Engage};
 pub use combat::Combat;
 pub use dig_in::DigIn;
 pub use leaders::LeaderState;
+pub use params::Params;
 pub use rng::Rng;
 pub use world::{Country, UnitState, World};
 

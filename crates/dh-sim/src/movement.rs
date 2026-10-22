@@ -6,7 +6,8 @@
 //! multiplier and difficulty (1.0), leader traits, missions, fuel, and
 //! embarking.
 
-use dh_data::{Division, Provinces, UnitDb, Vfs};
+use dh_data::{Division, Misc, Provinces, UnitDb, Vfs};
+use dh_map::distance::AirDist;
 use dh_map::{AdjKind, Adjacency, Link, Path};
 
 /// Terrain indices as used by the engine (`map/Terrain types.csv`).
@@ -108,12 +109,35 @@ pub struct MoveContext {
     pub terrain_move: [f64; 12],
     pub modifiers: UnitModifiers,
     pub units: UnitDb,
+    /// Real distances when `misc.txt` selects them (`map[3]` = 1) and the
+    /// table loads; otherwise the pixel model.
+    pub airdist: Option<AirDist>,
+}
+
+/// `airdist.tbl` of a map folder, rebuilt from `distances.csv` when the
+/// table is missing or unreadable, as the game does; `None` when neither
+/// works, which makes the game fall back to the pixel model.
+fn load_airdist(vfs: &Vfs, dir: &str) -> Option<AirDist> {
+    if let Some(table) = vfs
+        .read(&format!("{dir}/airdist.tbl"))
+        .ok()
+        .and_then(|b| AirDist::parse(&b).ok())
+    {
+        return Some(table);
+    }
+    let csv = vfs.read(&format!("{dir}/distances.csv")).ok()?;
+    let coords = dh_map::distance::read_distances_csv(&csv).ok()?;
+    Some(AirDist::from_coords(&coords))
 }
 
 impl MoveContext {
+    /// Loads the map `misc.txt` selects (map-distances.md §2): its folder,
+    /// and for a numbered map also its own `Province.csv`.
     pub fn load(vfs: &Vfs) -> Result<Self, String> {
         let mut warnings = Vec::new();
-        let table = Provinces::load(vfs, &mut warnings).map_err(|e| e.to_string())?;
+        let misc = Misc::load(vfs).unwrap_or_default();
+        let dir = misc.map_dir();
+        let table = Provinces::load_active(vfs, &mut warnings).map_err(|e| e.to_string())?;
         let max_id = table.by_id.keys().copied().max().unwrap_or(0) as usize;
         let mut provinces = vec![None; max_id + 1];
         for (id, p) in &table.by_id {
@@ -133,7 +157,7 @@ impl MoveContext {
 
         let mut terrain_move = [1.0; 12];
         let csv = dh_text::CsvTable::parse_with_header(
-            &vfs.read("map/terrain types.csv")
+            &vfs.read(&format!("{dir}/terrain types.csv"))
                 .map_err(|e| e.to_string())?,
         );
         for (_, row) in &csv.rows {
@@ -147,10 +171,12 @@ impl MoveContext {
             }
         }
 
-        let bytes = vfs.read("map/adjacent.tbl").map_err(|e| e.to_string())?;
+        let bytes = vfs
+            .read(&format!("{dir}/adjacent.tbl"))
+            .map_err(|e| e.to_string())?;
         let n = Adjacency::infer_count(&bytes).ok_or("cannot size adjacent.tbl")?;
         let mut adjacency = Adjacency::parse(&bytes, n).map_err(|e| e.to_string())?;
-        if let Ok(defs) = vfs.read("map/adj-defs.csv") {
+        if let Ok(defs) = vfs.read(&format!("{dir}/adj-defs.csv")) {
             adjacency.apply_defs(&defs, |p| {
                 table
                     .get(p)
@@ -168,6 +194,10 @@ impl MoveContext {
                     .map_err(|e| e.to_string())?,
             ),
             units: UnitDb::load(vfs, &mut warnings).map_err(|e| e.to_string())?,
+            airdist: misc
+                .real_distances()
+                .then(|| load_airdist(vfs, &dir))
+                .flatten(),
         })
     }
 
@@ -195,8 +225,12 @@ impl MoveContext {
                 .all(|l| self.province(l.to).is_some_and(ProvinceInfo::is_water))
     }
 
-    /// Distance in the game's 100-km unit (pixel model, `DistanceCalculationModel = 0`).
+    /// Distance in the game's 100-km unit: from `airdist.tbl` when loaded,
+    /// else the pixel model (`DistanceCalculationModel = 0`).
     pub fn distance(&self, a: u32, b: u32) -> Option<f32> {
+        if let Some(table) = &self.airdist {
+            return table.distance(a, b);
+        }
         Some(dh_map::distance::pixel_distance(
             self.province(a)?.army_pos,
             self.province(b)?.army_pos,

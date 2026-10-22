@@ -31,6 +31,7 @@ pub mod events;
 
 use crate::leaders::LeaderState;
 use crate::movement::{terrain, MoveContext};
+use crate::params::{self, Params};
 use crate::{Battle, CombatEvent, Rng, System, World};
 use dh_data::leaders::traits;
 use dh_data::{Branch, Difficulty, DivisionStats};
@@ -38,79 +39,6 @@ use dh_map::AdjKind;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
-
-/// `combat` section values of the shipped `db/misc.txt` (positions in the spec).
-pub mod params {
-    pub const ORG_MIN: f32 = 1.0; // [90]
-    pub const ORG_RANGE: u32 = 2; // [91]
-    pub const ORG_RANGE_HARD_ON_SOFT: u32 = 4; // [92]
-    pub const STR_MIN: f32 = 1.0; // [93]
-    pub const STR_RANGE: u32 = 2; // [94]
-    pub const STR_RANGE_HARD_ON_SOFT: u32 = 1; // [95]
-    pub const ORG_DAMAGE: f32 = 0.6; // [121]
-    pub const STR_DAMAGE: f32 = 0.1; // [125]
-    pub const EVADE_WITH_DEFENCES: f32 = 100.0; // [73] × 100
-    pub const EVADE_WITHOUT_DEFENCES: f32 = 60.0; // [77] × 100
-    pub const GROUND_DEFENCE_EFFICIENCY: f32 = 0.8; // country section, 3rd value
-    pub const EXPERIENCE: f32 = 0.5; // [63]
-    pub const MULTIPLE_COMBATS: f32 = -0.5; // [14]
-    pub const COMBINED_ARMS_ATTACK: f32 = 0.05; // [15]
-    pub const COMBINED_ARMS_DEFENCE: f32 = 0.15; // [16]
-    pub const SURPRISE: f32 = -0.2; // [17]
-    pub const OVER_COMMAND_LIMIT: f32 = -0.75; // [18]
-    pub const ENVELOPMENT: f32 = -0.1; // [21], per direction above two
-    pub const ENCIRCLED: f32 = -0.1; // [22]
-    pub const FORT_PER_LEVEL: f32 = -0.07; // [23]
-    pub const HARD_IN_CITY: f32 = -0.5; // [25]
-    pub const DISSENT: f32 = -0.005; // [26]
-    pub const DIG_IN: f32 = 0.01; // [38]
-    pub const OWN_TERRAIN_TRAIT: f32 = 0.1; // [83]
-    pub const SIMILAR_TERRAIN_TRAIT: f32 = 0.05; // [84]
-    pub const EVENT_TRAIT: f32 = 5.0; // [85] × 100
-    pub const LEADER_SKILL: f32 = 0.05; // [86]
-    pub const RETREAT_ORG: f32 = 5.0; // [228]
-    pub const DESTROYED_BELOW: f32 = 0.1;
-    pub const MIN_ORG_TO_FIRE: f32 = 0.5;
-    pub const LEADER_EXPERIENCE: f32 = 1.3; // [6]
-    /// Supply efficiency a Logistics Wizard adds while it is below 1.
-    pub const LOGISTICS_WIZARD_ESE: f32 = 0.1; // [161]
-    /// Command limits by leader rank 0..=3; every lower rank counts as 3.
-    pub const LAND_COMMAND_LIMIT: [u32; 4] = [12, 9, 3, 1]; // [39..42]
-    pub const AIR_COMMAND_LIMIT: [u32; 4] = [24, 16, 8, 4]; // [43..46]
-    pub const NAVAL_COMMAND_LIMIT: [u32; 4] = [30, 18, 12, 6]; // [47..50]
-    pub const HQ_COMMAND_FACTOR: u32 = 2; // [51]
-    /// Encirclement and breakthrough grow likelier when the side's stacks
-    /// average more than this speed (km/h), by the bonus per km/h above it,
-    /// up to the given range.
-    pub const EVENT_SPEED_MIN: f32 = 3.0; // [230]
-    pub const EVENT_SPEED_RANGE: f32 = 4.0; // [231]
-    pub const EVENT_SPEED_BONUS: f32 = 0.1; // [232]
-    pub const EVENT_HOURS: u64 = 8; // [233]
-    /// Damage taken during each combat event, by event: ORG and STR taken
-    /// by attackers, then ORG and STR taken by defenders.
-    pub const EVENT_DAMAGE: [[f32; 4]; 7] = [
-        [1.5, 1.0, 1.0, 1.25],  // [234..237] counterattack
-        [1.0, 1.25, 1.5, 1.0],  // [238..241] assault
-        [0.9, 1.0, 1.0, 1.75],  // [242..245] encirclement
-        [0.8, 0.8, 1.2, 1.2],   // [246..249] ambush
-        [1.0, 1.0, 1.0, 0.5],   // [250..253] delay
-        [0.75, 0.5, 0.25, 0.5], // [254..257] tactical withdrawal
-        [1.0, 0.8, 1.5, 1.0],   // [258..261] breakthrough
-    ];
-
-    // `country` section: every country starts with these.
-    pub const HQ_ESE: f32 = 0.01; // country[14]
-    pub const EVENT_HQ_CHANCE: f32 = 1.0; // country[15]
-    pub const EVENT_CHANCE: f32 = 0.01; // country[16], each event
-    pub const LAND_SURPRISE: f32 = 1.0; // country[32]
-    pub const DIG_IN_MAX: f32 = 20.0; // country[44]
-    pub const DIG_IN_DAILY: f32 = 1.0; // country[45]
-
-    // `mission` section: every country starts with this efficiency of
-    // amphibious assaults (`task_efficiency` technologies raise it; not
-    // applied yet).
-    pub const AMPHIBIOUS_ASSAULT: f32 = 0.5; // mission[73]
-}
 
 /// Terrain suffix of the `ATT_*`/`DEF_*` rows, by terrain index 0..=7.
 const TERRAIN_ROW: [&str; 8] = [
@@ -146,11 +74,11 @@ const TERRAIN_TRAITS: [(u32, u32); 8] = [
 
 /// Multipliers of the ORG and STR damage a division takes during a combat
 /// event (`0x4C1830`, `0x4C1740`), by the side it is on.
-fn event_damage(event: Option<CombatEvent>, target_attacking: bool) -> (f32, f32) {
+fn event_damage(p: &Params, event: Option<CombatEvent>, target_attacking: bool) -> (f32, f32) {
     let Some(e) = event else {
         return (1.0, 1.0);
     };
-    let [att_org, att_str, def_org, def_str] = params::EVENT_DAMAGE[e as usize];
+    let [att_org, att_str, def_org, def_str] = p.event_damage[e as usize];
     if target_attacking {
         (att_org, att_str)
     } else {
@@ -187,14 +115,14 @@ fn combined_arms(classes: &[usize]) -> bool {
 
 /// Row 11 bonus of a leader's terrain traits: `combat[83]` for the battle
 /// terrain's own trait, else `combat[84]` for a similar one.
-fn terrain_trait_bonus(leader_traits: u32, terrain: u8) -> f32 {
+fn terrain_trait_bonus(p: &Params, leader_traits: u32, terrain: u8) -> f32 {
     let Some(&(own, similar)) = TERRAIN_TRAITS.get(terrain as usize) else {
         return 0.0;
     };
     if leader_traits & own != 0 {
-        params::OWN_TERRAIN_TRAIT
+        p.own_terrain_trait
     } else if leader_traits & similar != 0 {
-        params::SIMILAR_TERRAIN_TRAIT
+        p.similar_terrain_trait
     } else {
         0.0
     }
@@ -327,11 +255,12 @@ impl Combat {
         province: u32,
         attacking: bool,
     ) -> BTreeMap<u32, i64> {
-        let factor = i64::from(params::HQ_COMMAND_FACTOR);
+        let p = &world.params;
+        let factor = i64::from(p.hq_command_factor);
         let mut limits = BTreeMap::new();
         let mut hq = false;
         for &u in units {
-            let mut limit = i64::from(self.leader(world, u).command_limit());
+            let mut limit = i64::from(self.leader(world, u).command_limit(&world.params));
             let influenced = self.under_hq_influence(world, u);
             let direction = limits
                 .entry(world.units[u].unit.location.unwrap_or(0))
@@ -393,6 +322,7 @@ impl Combat {
         battle: &Battle,
         attacking: bool,
     ) -> Vec<Fighter> {
+        let p = &world.params;
         let ctx = &self.ctx;
         let province = ctx.province(battle.province);
         let terrain = province.map_or(terrain::PLAINS, |p| p.terrain);
@@ -443,7 +373,7 @@ impl Combat {
             };
             // Every leader bonus but Engineer needs the stack within its
             // leader's own limit (§2.3.5).
-            let within = unit.unit.divisions.len() <= leader.command_limit() as usize;
+            let within = unit.unit.divisions.len() <= leader.command_limit(&world.params) as usize;
             let skill = world.leader_skill(&leader);
             let classes: Vec<usize> = unit
                 .unit
@@ -460,13 +390,13 @@ impl Combat {
                     .is_some_and(|b| b.attackers.contains(&u));
             let combined = within && combined_arms(&classes);
             let terrain_trait = if within {
-                terrain_trait_bonus(leader.traits, terrain)
+                terrain_trait_bonus(&world.params, leader.traits, terrain)
             } else {
                 0.0
             };
             let surprised = battle.side(attacking).surprised;
             let encircled = !attacking && self.encircled(world, battle.province, k, &unit.owner);
-            let dissent = world.countries.get(k).map_or(0.0, |c| c.dissent) * params::DISSENT;
+            let dissent = world.countries.get(k).map_or(0.0, |c| c.dissent) * p.dissent;
             // Human players are not modelled: every country takes the AI row.
             let difficulty = self.difficulty.modifier(
                 "COMBAT",
@@ -500,11 +430,11 @@ impl Combat {
                 if attacking && ashore {
                     // The command country's amphibious-assault efficiency;
                     // every country has the starting one so far.
-                    let s = -m("ATT_SHORE") * (2.0 - params::AMPHIBIOUS_ASSAULT);
+                    let s = -m("ATT_SHORE") * (2.0 - p.amphibious_assault);
                     a *= 1.0 - s.clamp(0.0, 0.99);
                 }
                 if two_battles {
-                    a *= 1.0 + params::MULTIPLE_COMBATS;
+                    a *= 1.0 + p.multiple_combats;
                 }
                 let doctrine = if attacking {
                     traits::OFFENSIVE_DOCTRINE
@@ -517,17 +447,17 @@ impl Combat {
                 if combined {
                     a *= 1.0
                         + if attacking {
-                            params::COMBINED_ARMS_ATTACK
+                            p.combined_arms_attack
                         } else {
-                            params::COMBINED_ARMS_DEFENCE
+                            p.combined_arms_defence
                         };
                 }
                 if surprised {
-                    a *= 1.0 + params::SURPRISE;
+                    a *= 1.0 + p.surprise;
                 }
                 let experience = d.experience.unwrap_or(0.0) as f32;
                 if experience > 0.0 {
-                    a *= 1.0 + experience * 0.01 * params::EXPERIENCE;
+                    a *= 1.0 + experience * 0.01 * p.experience;
                 }
                 if ese != 1.0 {
                     a *= 1.0 + (ese - 1.0) * 0.5;
@@ -535,7 +465,7 @@ impl Combat {
                 if let Some(t) = TERRAIN_ROW.get(terrain as usize) {
                     let mut tm = m(&format!("{side}_{t}")) + terrain_trait;
                     if attacking && terrain == terrain::URBAN && stats.get("softness") < 50.0 {
-                        tm += params::HARD_IN_CITY;
+                        tm += p.hard_in_city;
                     }
                     a *= 1.0 + tm;
                 }
@@ -546,7 +476,7 @@ impl Combat {
                     w *= 1.0 + m(&format!("{side}_NIGHT"));
                 }
                 if within {
-                    a *= 1.0 + skill * params::LEADER_SKILL;
+                    a *= 1.0 + skill * p.leader_skill;
                     if leader.has_trait(traits::PANZER_LEADER) && ARMOUR_CLASSES.contains(&class) {
                         a *= SPECIALIST;
                     }
@@ -559,21 +489,21 @@ impl Combat {
                     }
                 }
                 if over_limit {
-                    a *= 1.0 + params::OVER_COMMAND_LIMIT;
+                    a *= 1.0 + p.over_command_limit;
                 }
                 if directions > 2 {
-                    a *= 1.0 + (directions - 2) as f32 * params::ENVELOPMENT;
+                    a *= 1.0 + (directions - 2) as f32 * p.envelopment;
                 }
                 if encircled {
-                    a *= 1.0 + params::ENCIRCLED;
+                    a *= 1.0 + p.encircled;
                 }
                 if !attacking && unit.dig_in > 0.0 {
-                    a *= 1.0 + unit.dig_in * params::DIG_IN;
+                    a *= 1.0 + unit.dig_in * p.dig_in;
                 }
                 if attacking && enemy_held {
                     let level = self.forts.get(&battle.province).copied().unwrap_or(0.0);
                     if level > 0.0 {
-                        let mut f = level * params::FORT_PER_LEVEL * (1.0 - m("ATT_FORT"));
+                        let mut f = level * p.fort_per_level * (1.0 - m("ATT_FORT"));
                         if within && leader.has_trait(traits::FORTRESS_BUSTER) {
                             f *= FORTRESS_BUSTER;
                         }
@@ -605,13 +535,14 @@ impl Combat {
     /// One side fires at the other (spec §3.3–3.4) during `event`; damage
     /// only accumulates.
     fn fire(
+        p: &Params,
         shooters: &[Fighter],
         targets: &mut [Fighter],
         targets_defending: bool,
         event: Option<CombatEvent>,
         rng: &mut Rng,
     ) {
-        let (org_taken, str_taken) = event_damage(event, !targets_defending);
+        let (org_taken, str_taken) = event_damage(p, event, !targets_defending);
         let alive: Vec<usize> = (0..targets.len())
             .filter(|&i| targets[i].remaining_str() > 0.0)
             .collect();
@@ -651,23 +582,20 @@ impl Combat {
                 let defences = stochastic(defence, rng);
                 let evade = if defences > target.defences_used {
                     target.defences_used += 1;
-                    params::GROUND_DEFENCE_EFFICIENCY * params::EVADE_WITH_DEFENCES
+                    p.ground_defence_efficiency * p.evade_with_defences
                 } else {
-                    params::GROUND_DEFENCE_EFFICIENCY * params::EVADE_WITHOUT_DEFENCES
+                    p.ground_defence_efficiency * p.evade_without_defences
                 };
                 if rng.below(100) < (evade.min(99.0)) as u32 {
                     continue;
                 }
                 let (org_range, str_range) = if hard_on_soft {
-                    (
-                        params::ORG_RANGE_HARD_ON_SOFT,
-                        params::STR_RANGE_HARD_ON_SOFT,
-                    )
+                    (p.org_range_hard_on_soft, p.str_range_hard_on_soft)
                 } else {
-                    (params::ORG_RANGE, params::STR_RANGE)
+                    (p.org_range, p.str_range)
                 };
-                let mut org = params::ORG_MIN + rng.below(org_range) as f32;
-                let mut str = params::STR_MIN + rng.below(str_range) as f32;
+                let mut org = p.org_min + rng.below(org_range) as f32;
+                let mut str = p.str_min + rng.below(str_range) as f32;
                 str *= str_taken;
                 org *= org_taken;
                 org *= firepower;
@@ -676,8 +604,8 @@ impl Combat {
                 if target.class == HQ_CLASS && event != Some(CombatEvent::Breakthrough) {
                     str = 0.0;
                 }
-                str *= params::STR_DAMAGE;
-                org *= params::ORG_DAMAGE;
+                str *= p.str_damage;
+                org *= p.org_damage;
                 if target.remaining_str() - str < params::DESTROYED_BELOW {
                     str = target.remaining_str();
                     org = target.remaining_org().max(0.0);
@@ -739,6 +667,7 @@ impl Combat {
     }
 
     fn round(&mut self, world: &mut World, battle: &mut Battle, rng: &mut Rng) -> Option<bool> {
+        let params = world.params.clone();
         let attackers: Vec<usize> = battle
             .attackers
             .iter()
@@ -765,8 +694,8 @@ impl Combat {
             }
         }
         let event = battle.event.map(|e| e.kind);
-        Self::fire(&att, &mut def, true, event, rng);
-        Self::fire(&def, &mut att, false, event, rng);
+        Self::fire(&params, &att, &mut def, true, event, rng);
+        Self::fire(&params, &def, &mut att, false, event, rng);
 
         // Apply damage to both sides at once and drop destroyed divisions.
         for f in att.iter_mut().chain(def.iter_mut()) {
@@ -787,7 +716,7 @@ impl Combat {
 
         let beaten = |side: &[Fighter]| {
             side.iter().map(|f| f.strength).sum::<f32>() < 1.0
-                || Self::average_org(side) < params::RETREAT_ORG
+                || Self::average_org(side) < params.retreat_org
         };
         if beaten(&def) {
             for &u in &defenders {
@@ -941,6 +870,7 @@ mod tests {
             terrain_move: [1.0; 12],
             modifiers: UnitModifiers::parse(MODIFIERS.as_bytes()),
             units,
+            airdist: None,
         })
     }
 

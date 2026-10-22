@@ -32,7 +32,7 @@ impl Country {
             dissent: 0.0,
             techs: BTreeSet::new(),
             allow_dig_in: false,
-            land_surprise: crate::combat::params::LAND_SURPRISE,
+            land_surprise: crate::Params::default().land_surprise,
         }
     }
 }
@@ -58,6 +58,8 @@ pub struct World {
     pub battles: Vec<crate::Battle>,
     /// Leaders by ID, once loaded with [`World::load_leaders`].
     pub leaders: BTreeMap<i64, crate::LeaderState>,
+    /// Constants from `db/misc.txt`; set them with [`World::set_params`].
+    pub params: crate::Params,
 }
 
 /// A unit on the map and the country it belongs to.
@@ -123,7 +125,25 @@ impl World {
             access: BTreeSet::new(),
             battles: Vec::new(),
             leaders: BTreeMap::new(),
+            params: crate::Params::default(),
         }
+    }
+
+    /// Replaces the `misc.txt` constants (e.g. with a mod's). Countries keep
+    /// what technologies added to their starting values.
+    pub fn set_params(&mut self, params: crate::Params) {
+        let surprise = params.land_surprise - self.params.land_surprise;
+        for c in self.countries.values_mut() {
+            c.land_surprise += surprise;
+        }
+        self.params = params;
+    }
+
+    /// Loads the constants of `db/misc.txt` as [`World::set_params`] does.
+    pub fn load_misc(&mut self, vfs: &Vfs) -> std::io::Result<()> {
+        let misc = dh_data::Misc::load(vfs)?;
+        self.set_params(crate::Params::from_misc(&misc));
+        Ok(())
     }
 
     /// Builds the initial state; returns human-readable conflicts alongside.

@@ -22,14 +22,25 @@ pub struct Localisation {
 
 impl Localisation {
     /// Loads every CSV under `config/`. Later files override earlier ones,
-    /// matching the alphabetical load order of the engine.
+    /// matching the alphabetical load order of the engine. A numbered map
+    /// (`map[1]` in `misc.txt`) brings its own `province_names.csv`, which
+    /// replaces the one in `config/` (map.md §10).
     pub fn load(vfs: &Vfs, lang: Language) -> Self {
+        let dir = crate::Misc::load(vfs).unwrap_or_default().map_dir();
+        let map_names = format!("{dir}/province_names.csv");
+        let map_names = (dir != "map" && vfs.exists(&map_names)).then_some(map_names);
         let mut loc = Localisation::default();
         for file in vfs.list_files("config") {
-            if file.to_ascii_lowercase().ends_with(".csv") {
-                if let Ok(bytes) = vfs.read(&file) {
-                    loc.add_table(&CsvTable::parse(&bytes), lang);
-                }
+            let lower = file.to_ascii_lowercase();
+            if !lower.ends_with(".csv") {
+                continue;
+            }
+            let file = match &map_names {
+                Some(names) if lower.ends_with("/province_names.csv") => names.clone(),
+                _ => file,
+            };
+            if let Ok(bytes) = vfs.read(&file) {
+                loc.add_table(&CsvTable::parse(&bytes), lang);
             }
         }
         loc

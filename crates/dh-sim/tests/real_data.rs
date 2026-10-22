@@ -273,7 +273,7 @@ fn scenario_1936_leaders_resolve() {
             (leader.id, leader.rank, leader.country.as_str()),
             (None, UNRANKED, "GER")
         );
-        assert_eq!(leader.command_limit(), 1);
+        assert_eq!(leader.command_limit(&world.params), 1);
         assert_eq!(world.leader_skill(&leader), 0.0);
         assert_eq!(world.units[corps].unit.divisions.len(), 3);
         assert!(!world.within_command_limit(corps));
@@ -305,7 +305,7 @@ fn scenario_1936_leaders_resolve() {
         (long_yun.id, long_yun.country.as_str()),
         (Some(501006), "CYN")
     );
-    assert_eq!(long_yun.command_limit(), 9);
+    assert_eq!(long_yun.command_limit(&world.params), 9);
     assert_eq!(world.leader_skill(&long_yun), 1.0);
     assert!(world.within_command_limit(yunnan));
 
@@ -650,4 +650,54 @@ fn scenario_military_access() {
         ]
     );
     assert!(world.has_access("ENG", "IRQ") && !world.has_access("IRQ", "ENG"));
+}
+
+/// The defaults are the shipped `misc.txt` read at the documented positions;
+/// the mod `settings.cfg` selects changes them.
+#[test]
+fn params_come_from_misc_txt() {
+    use dh_data::{open_install, Misc};
+    use dh_sim::Params;
+    let Some(dir) = std::env::var_os("DH_GAME_DIR") else {
+        return;
+    };
+    let vanilla = Params::from_misc(&Misc::load(&Vfs::new(&dir)).unwrap());
+    assert_eq!(vanilla, Params::default());
+
+    let modded = Params::from_misc(&Misc::load(&open_install(&dir)).unwrap());
+    assert_eq!(modded.surprise, -0.4);
+    assert_eq!(modded.land_command_limit, [12, 9, 6, 3]);
+    assert_eq!(modded.ground_defence_efficiency, 1.0);
+    assert_eq!((modded.dig_in_max, modded.dig_in_daily), (30.0, 1.5));
+
+    let (_, scenario) = load().unwrap();
+    let (mut world, _) = World::from_scenario(&scenario);
+    world.load_misc(&open_install(&dir)).unwrap();
+    assert_eq!(world.params, modded);
+}
+
+/// The mod `settings.cfg` selects ("Darkest Hour Full") switches to its own
+/// map (`map[1]` = 1: `map/Map_1`, 2770 provinces) with real distances
+/// (`map[3]` = 1: `airdist.tbl`); the base game keeps the pixel model.
+#[test]
+fn the_selected_mod_brings_its_own_map() {
+    use dh_data::localisation::Language;
+    use dh_data::{open_install, Localisation};
+    let Some(dir) = std::env::var_os("DH_GAME_DIR") else {
+        return;
+    };
+    let vanilla = MoveContext::load(&Vfs::new(&dir)).unwrap();
+    assert!(vanilla.airdist.is_none());
+
+    let vfs = open_install(&dir);
+    let ctx = MoveContext::load(&vfs).unwrap();
+    assert_eq!(ctx.provinces.len(), 2770);
+    let airdist = ctx.airdist.as_ref().expect("airdist.tbl of Map_1");
+    assert_eq!(airdist.max_province(), 2769);
+    let loc = Localisation::load(&vfs, Language::English);
+    assert_eq!(loc.text("PROV107"), "Strasbourg");
+    assert_eq!(loc.text("PROV134"), "Stuttgart");
+    // Stuttgart and Strasbourg are about 120 km apart.
+    let d = ctx.distance(134, 107).unwrap() * 100.0;
+    assert!((90.0..150.0).contains(&d), "{d} km");
 }

@@ -9,9 +9,10 @@
 //! commanders as stacks join and leave, and once more every hour after the
 //! rolls ([`Combat::begin_hour`]).
 
-use super::{params, Combat};
+use super::Combat;
 use crate::battle::{ActiveEvent, BattleSide};
 use crate::leaders::LeaderState;
+use crate::params::Params;
 use crate::{Battle, CombatEvent, Rng, World};
 use dh_data::leaders::traits;
 use std::borrow::Cow;
@@ -31,17 +32,23 @@ const HQ_EVENT_WEIGHT: f32 = 3.0;
 /// `combat[85] · 100` when the commander has the event's trait;
 /// encirclement and breakthrough grow by `combat[232]` per km/h the side's
 /// stacks average above `combat[230]`, up to `combat[231]` km/h.
-pub fn event_weight(kind: CombatEvent, commander_traits: u32, hq: bool, speed: f32) -> f32 {
-    let mut weight = params::EVENT_CHANCE * 100.0;
+pub fn event_weight(
+    p: &Params,
+    kind: CombatEvent,
+    commander_traits: u32,
+    hq: bool,
+    speed: f32,
+) -> f32 {
+    let mut weight = p.event_chance * 100.0;
     if hq {
         weight *= HQ_EVENT_WEIGHT;
     }
     if commander_traits & kind.trait_mask() != 0 {
-        weight += params::EVENT_TRAIT;
+        weight += p.event_trait;
     }
-    let over = speed - params::EVENT_SPEED_MIN;
+    let over = speed - p.event_speed_min;
     if matches!(kind, CombatEvent::Encirclement | CombatEvent::Breakthrough) && over > 0.0 {
-        weight *= 1.0 + over.min(params::EVENT_SPEED_RANGE) * params::EVENT_SPEED_BONUS;
+        weight *= 1.0 + over.min(p.event_speed_range) * p.event_speed_bonus;
     }
     weight
 }
@@ -253,7 +260,7 @@ impl Combat {
     /// commander's skill decides whether an event comes; if one does, the
     /// side's own events are tried in order with one roll in 100 each
     /// against [`event_weight`] (whole part), and the first that passes is
-    /// in force for this hour and the next [`params::EVENT_HOURS`].
+    /// in force for this hour and the next `event_hours`.
     pub(super) fn roll_event(
         &self,
         world: &World,
@@ -262,6 +269,7 @@ impl Combat {
         attacking: bool,
         rng: &mut Rng,
     ) {
+        let p = &world.params;
         let side = battle.side(attacking);
         let known = side
             .country
@@ -278,7 +286,7 @@ impl Combat {
         let hq = stacks.iter().any(|&u| self.under_hq_influence(world, u));
         let mut chance = skill * skill;
         if hq {
-            chance *= params::EVENT_HQ_CHANCE;
+            chance *= p.event_hq_chance;
         }
         let speed = self.average_speed(world, stacks);
         if rng.below(1000) as f32 >= chance {
@@ -288,11 +296,11 @@ impl Combat {
             if kind.defensive() == attacking {
                 continue;
             }
-            let weight = event_weight(kind, commander.traits, hq, speed);
+            let weight = event_weight(&world.params, kind, commander.traits, hq, speed);
             if i64::from(rng.below(100)) < weight as i64 {
                 battle.event = Some(ActiveEvent {
                     kind,
-                    until: world.hour + params::EVENT_HOURS,
+                    until: world.hour + p.event_hours,
                 });
                 return;
             }
@@ -624,17 +632,18 @@ mod tests {
     fn event_weights() {
         use CombatEvent::*;
         let all = traits::ASSAULTER | traits::ENCIRCLER | traits::BLITZER;
-        assert_eq!(event_weight(Assault, 0, false, 0.0), 1.0);
-        assert_eq!(event_weight(Assault, 0, true, 0.0), 3.0);
-        assert_eq!(event_weight(Assault, all, false, 0.0), 6.0);
-        assert_eq!(event_weight(Assault, all, true, 0.0), 8.0);
-        assert_eq!(event_weight(Ambush, all, false, 0.0), 1.0);
+        let p = Params::default();
+        assert_eq!(event_weight(&p, Assault, 0, false, 0.0), 1.0);
+        assert_eq!(event_weight(&p, Assault, 0, true, 0.0), 3.0);
+        assert_eq!(event_weight(&p, Assault, all, false, 0.0), 6.0);
+        assert_eq!(event_weight(&p, Assault, all, true, 0.0), 8.0);
+        assert_eq!(event_weight(&p, Ambush, all, false, 0.0), 1.0);
         // Fast stacks favour encirclement and breakthrough: +10 % per km/h
         // above 3, at most +40 %.
-        assert_eq!(event_weight(Assault, all, false, 5.0), 6.0);
-        assert!((event_weight(Encirclement, all, false, 5.0) - 7.2).abs() < 1e-5);
-        assert!((event_weight(Breakthrough, 0, true, 20.0) - 4.2).abs() < 1e-5);
-        assert_eq!(event_weight(Breakthrough, 0, false, 3.0), 1.0);
+        assert_eq!(event_weight(&p, Assault, all, false, 5.0), 6.0);
+        assert!((event_weight(&p, Encirclement, all, false, 5.0) - 7.2).abs() < 1e-5);
+        assert!((event_weight(&p, Breakthrough, 0, true, 20.0) - 4.2).abs() < 1e-5);
+        assert_eq!(event_weight(&p, Breakthrough, 0, false, 3.0), 1.0);
         assert_eq!(
             CombatEvent::ALL.map(|e| e.defensive()),
             [true, false, false, false, true, true, false]
@@ -725,7 +734,7 @@ mod tests {
         world.hour = 100;
         battle.event = Some(ActiveEvent {
             kind: CombatEvent::Ambush,
-            until: 100 + params::EVENT_HOURS,
+            until: 100 + Params::default().event_hours,
         });
         // Built-in commanders never start another one.
         let mut active = Vec::new();
@@ -752,8 +761,8 @@ mod tests {
             let mut att = combat.fighters(&world, &[a], &[d], &b, true);
             let mut def = combat.fighters(&world, &[d], &[a], &b, false);
             let mut rng = Rng::new(5);
-            Combat::fire(&att, &mut def, true, event, &mut rng);
-            Combat::fire(&def, &mut att, false, event, &mut rng);
+            Combat::fire(&Params::default(), &att, &mut def, true, event, &mut rng);
+            Combat::fire(&Params::default(), &def, &mut att, false, event, &mut rng);
             let sum = |side: &[super::super::Fighter], hq: bool| {
                 side.iter()
                     .filter(|f| (f.class == super::super::HQ_CLASS) == hq)
@@ -766,7 +775,7 @@ mod tests {
         // Headquarters lose no strength but to a breakthrough.
         assert_eq!(base[2].1, 0.0);
         for e in CombatEvent::ALL {
-            let [att_org, att_str, def_org, def_str] = params::EVENT_DAMAGE[e as usize];
+            let [att_org, att_str, def_org, def_str] = Params::default().event_damage[e as usize];
             let got = damage(Some(e));
             let close = |x: f32, y: f32| (x - y).abs() < 1e-4 * y.max(1.0);
             assert!(close(got[0].0, base[0].0 * att_org), "{e:?}");

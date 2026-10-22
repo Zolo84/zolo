@@ -8,7 +8,6 @@
 //! non-empty. The spec's +0.25 date-dependent bonus is not applied (its
 //! condition is unidentified).
 
-use crate::combat::params;
 use crate::movement::MoveContext;
 use crate::{LeaderState, World};
 use dh_data::leaders::traits;
@@ -75,23 +74,23 @@ impl World {
     ) -> f32 {
         let u = &self.units[unit];
         let mut ese = self.supply_efficiency(ctx, u.unit.location.unwrap_or(0));
-        let within = u.unit.divisions.len() <= leader.command_limit() as usize;
+        let within = u.unit.divisions.len() <= leader.command_limit(&self.params) as usize;
         if ese < 1.0 && within && leader.has_trait(traits::LOGISTICS_WIZARD) {
-            ese = (ese + params::LOGISTICS_WIZARD_ESE).min(1.0);
+            ese = (ese + self.params.logistics_wizard_ese).min(1.0);
         }
         if hq {
-            ese += params::HQ_ESE;
+            ese += self.params.hq_ese;
         }
         ese
     }
 
     /// Speed factor from supply for land movement (land-movement.md §3.1):
-    /// `min(ESE, 1)` in supply, `combat[208]` = 0.1 out of supply.
+    /// `min(ESE, 1)` in supply, `combat[208]` out of supply.
     pub fn supply_speed_factor(&self, ctx: &MoveContext, tag: &str, province: u32) -> f32 {
         if self.in_supply(ctx, tag, province) {
             self.supply_efficiency(ctx, province).min(1.0)
         } else {
-            0.1
+            self.params.out_of_supply_speed
         }
     }
 }
@@ -129,6 +128,7 @@ mod tests {
             terrain_move: [1.0; 12],
             modifiers: UnitModifiers::default(),
             units: UnitDb::default(),
+            airdist: None,
         };
         let mut world = World::empty(GameDate::new(1936, 1, 1));
         for tag in ["GER", "AUS"] {

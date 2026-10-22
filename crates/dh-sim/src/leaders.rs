@@ -8,8 +8,8 @@
 //! date the way the AI does. Leaders whose `End Year` has passed are not
 //! taken out of play (the game marks them unavailable, §2.3.3).
 
-use crate::combat::params;
 use crate::movement::MoveContext;
+use crate::params::Params;
 use crate::World;
 use dh_data::leaders::traits;
 use dh_data::{Branch, Leaders, Vfs};
@@ -162,11 +162,11 @@ impl LeaderState {
 
     /// Command limit in divisions (`0x50A330`, §2.3.5), by branch and rank;
     /// any rank below 2 counts as rank 3, so a built-in leader gets 1.
-    pub fn command_limit(&self) -> u32 {
+    pub fn command_limit(&self, p: &Params) -> u32 {
         let by_rank = match self.branch {
-            Branch::Land => params::LAND_COMMAND_LIMIT,
-            Branch::Air => params::AIR_COMMAND_LIMIT,
-            Branch::Naval => params::NAVAL_COMMAND_LIMIT,
+            Branch::Land => p.land_command_limit,
+            Branch::Air => p.air_command_limit,
+            Branch::Naval => p.naval_command_limit,
         };
         by_rank[(self.rank as usize).min(3)]
     }
@@ -174,11 +174,11 @@ impl LeaderState {
     /// Experience from a battle (`0x509E30` and its caller, §2.3.4). `base`
     /// is the battle's own share (for land `0.01 · base₀ · combat[1]`, with
     /// base₀ not yet known). Raises the skill by at most one level.
-    pub fn gain_experience(&mut self, base: f32) {
+    pub fn gain_experience(&mut self, base: f32, p: &Params) {
         if self.id.is_none() {
             return; // built-in leaders never learn
         }
-        let mut x = base * params::LEADER_EXPERIENCE;
+        let mut x = base * p.leader_experience;
         if self.has_trait(traits::OLD_GUARD) {
             x /= 3.0;
         }
@@ -296,7 +296,7 @@ impl World {
 
     /// Command limit of a stack's leader.
     pub fn command_limit(&self, unit: usize) -> u32 {
-        self.stack_leader(unit).command_limit()
+        self.stack_leader(unit).command_limit(&self.params)
     }
 
     /// "Within the command limit" (§2.3.5), the condition of every leader
@@ -448,7 +448,7 @@ mod tests {
             (Branch::Naval, 2),
         ] {
             (l.branch, l.rank) = (branch, rank);
-            limits.push(l.command_limit());
+            limits.push(l.command_limit(&Params::default()));
         }
         assert_eq!(limits, [12, 9, 3, 1, 1, 24, 4, 12]);
     }
@@ -459,17 +459,17 @@ mod tests {
         let mut l = csv_leader(row, 1936);
         assert_eq!((l.rank, l.skill, l.experience), (3, 2, 20.0));
         // 10 · 1.3 · (1 + 0.2 · 3²) = 36.4: past level 3 (40), short of level 4 (80).
-        l.gain_experience(10.0);
+        l.gain_experience(10.0, &Params::default());
         assert!((l.experience - 56.4).abs() < 1e-4);
         assert_eq!(l.skill, 3);
-        l.gain_experience(1000.0);
+        l.gain_experience(1000.0, &Params::default());
         assert_eq!(l.skill, 4);
         // Old guard learns a third as fast; a built-in leader not at all.
         let mut old = csv_leader(&row.replace(";0;2;0;5;", ";512;2;0;5;"), 1936);
-        old.gain_experience(10.0);
+        old.gain_experience(10.0, &Params::default());
         assert!((old.experience - (20.0 + 36.4 / 3.0)).abs() < 1e-4);
         let mut dummy = LeaderState::built_in("GER", Branch::Land);
-        dummy.gain_experience(1000.0);
+        dummy.gain_experience(1000.0, &Params::default());
         assert_eq!((dummy.skill, dummy.experience), (0, 0.0));
     }
 
@@ -509,7 +509,7 @@ mod tests {
         let pang = world.stack_leader(0);
         assert_eq!((pang.id, pang.rank, pang.unit), (Some(7), 1, Some(0)));
         assert_eq!(pang.country, "CHI");
-        assert_eq!(pang.command_limit(), 9);
+        assert_eq!(pang.command_limit(&Params::default()), 9);
         assert!(
             pang.has_trait(traits::LOGISTICS_WIZARD) && pang.has_trait(traits::DEFENSIVE_DOCTRINE)
         );
@@ -520,7 +520,7 @@ mod tests {
                     dummy.id,
                     dummy.rank,
                     dummy.country.as_str(),
-                    dummy.command_limit()
+                    dummy.command_limit(&Params::default())
                 ),
                 (None, UNRANKED, "CHI", 1)
             );
@@ -602,6 +602,7 @@ mod tests {
             terrain_move: [1.0; 12],
             modifiers: UnitModifiers::default(),
             units: UnitDb::default(),
+            airdist: None,
         };
         let mut world = world(
             "GER",

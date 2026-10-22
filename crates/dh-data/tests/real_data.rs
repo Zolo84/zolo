@@ -137,3 +137,27 @@ fn tech_effects_load() {
         assert_eq!(land.value, Some(15.0));
     }
 }
+
+/// `db/misc.txt` of the game and of the mod `settings.cfg` selects.
+#[test]
+fn misc_values_by_position_with_the_selected_mod() {
+    use dh_data::{open_install, Misc, Settings};
+    let Some(vfs) = vfs() else { return };
+    let misc = Misc::load(&vfs).unwrap();
+    assert_eq!(misc.len("combat"), 263);
+    assert_eq!(misc.len("country"), 45);
+    assert_eq!(misc.get("combat", 1), Some(3.0)); // land XP gain factor
+    assert_eq!(misc.get("combat", 17), Some(-0.2)); // surprise
+    assert_eq!(misc.get("country", 44), Some(20.0)); // dig-in maximum
+
+    let settings = Settings::parse(&vfs.read("settings.cfg").unwrap());
+    assert_eq!(
+        settings.mod_dir().as_deref(),
+        Some("Mods/Darkest Hour Full")
+    );
+    let modded = Misc::load(&open_install(&vfs.roots()[0])).unwrap();
+    assert_eq!(modded.len("combat"), 263);
+    assert_eq!(modded.get("combat", 17), Some(-0.4));
+    assert_eq!(modded.get("combat", 41), Some(6.0));
+    assert_eq!(modded.get("country", 44), Some(30.0));
+}

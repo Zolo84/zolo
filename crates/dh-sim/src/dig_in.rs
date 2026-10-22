@@ -8,7 +8,6 @@
 //! Stacks on ships or transport planes are not modelled, so embarking does
 //! not reset the level yet.
 
-use crate::combat::params;
 use crate::{Rng, System, World};
 use dh_data::Branch;
 
@@ -75,7 +74,7 @@ impl System for DigIn {
                 // Growth and maximum are the command country's (§4.4); every
                 // country has the shipped values so far.
                 let u = &mut world.units[i];
-                u.dig_in = (u.dig_in + params::DIG_IN_DAILY).min(params::DIG_IN_MAX);
+                u.dig_in = (u.dig_in + world.params.dig_in_daily).min(world.params.dig_in_max);
             }
         }
     }
