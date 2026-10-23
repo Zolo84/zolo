@@ -242,7 +242,8 @@ fn run_headless(paths: &GamePaths, cli: &Cli) -> Result<()> {
 // Вікно (winit + Wayland/X11 + dh-render)
 // ---------------------------------------------------------------------------
 
-use dh_render::canvas::{RenderSurface, SoftbufferCanvas};
+use dh_render::canvas::RenderSurface;
+use dh_render::wgpu_canvas::WgpuCanvas;
 use dh_render::map_render::{MapRenderer, Viewport};
 use dh_render::text::{self, TextAlign, TextStyle};
 
@@ -258,7 +259,7 @@ struct AppState {
     world: Option<World>,
     game_time: Option<GameTime>,
     window: Option<winit::window::Window>,
-    surface: Option<SoftbufferCanvas<'static>>,
+    surface: Option<WgpuCanvas<'static>>,
     /// Верхній лівий кут камери в блоках 32×32.
     cam_x: u32,
     cam_y: u32,
@@ -475,13 +476,14 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
                 }
             };
             let size = window.inner_size();
+            let display = el.owned_display_handle();
             let surface =
-                SoftbufferCanvas::new(&window, size.width.max(1), size.height.max(1))
-                    .expect("softbuffer");
-            // SoftbufferCanvas позичає &Window — протягом життя App вікно живе,
+                WgpuCanvas::new(&window, Box::new(display), size.width.max(1), size.height.max(1))
+                    .expect("wgpu");
+            // WgpuCanvas позичає &Window — протягом життя App вікно живе,
             // тож продовження життя через transmute є безпечним (App тримає Window).
             self.0.surface =
-                Some(unsafe { std::mem::transmute::<SoftbufferCanvas<'_>, SoftbufferCanvas<'static>>(surface) });
+                Some(unsafe { std::mem::transmute::<WgpuCanvas<'_>, WgpuCanvas<'static>>(surface) });
             self.0.window = Some(window);
             self.0.last_frame = Instant::now();
             log::info!("вікно створено (бекенд: Wayland або X11 за середовищем)");

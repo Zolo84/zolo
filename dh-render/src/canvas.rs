@@ -1,17 +1,12 @@
 //! Канвас рендера: ARGB8888-буфер із кліпінгом, примітиви (піксель, прямокутник,
-//! біт-маска для шрифтів), softbuffer-обгортка поверхні та рендер тексту.
+//! біт-маска для шрифтів), трейт поверхні та рендер тексту.
 //!
 //! Канвас не залежить від вікна/графіки — це чистий CPU-буфер `Vec<u32>` у форматі
 //! ARGB8888 (`0xAARRGGBB`); усі малювальні методи відсікають геометрію за межами
-//! буфера (кліпінг). `SoftbufferCanvas` — обгортка над `winit::window::Window`
-//! + `softbuffer::Surface`, що копіює буфер канваса в поверхню при `present()`.
+//! буфера (кліпінг). GPU-поверхня тепер у [`crate::wgpu_canvas::WgpuCanvas`]
+//! (wgpu/Vulkan) — вона тримає [`Canvas`] і копіює його в текстуру при `present()`.
 
-use std::num::NonZeroU32;
-use std::ops::{Deref, DerefMut};
-
-use anyhow::anyhow;
 use dh_format::fonts::{render_text, BitmapFont};
-use winit::window::Window;
 
 /// ARGB8888 колір: `0xAARRGGBB`.
 ///
@@ -190,107 +185,9 @@ fn clip_rect(x: i32, y: i32, w: u32, h: u32, cw: u32, ch: u32) -> (u32, u32, u32
 
 /// Поверхня рендера: щось, куди можна показати кадр.
 pub trait RenderSurface {
-    /// Показує поточний кадр (для softbuffer — копіює канвас у поверхню й
-    /// викликає swap). Може повернути помилку (втрачена поверхня, I/O тощо).
+    /// Показує поточний кадр (копіює канвас у поверхню й викликає swap).
+    /// Може повернути помилку (втрачена поверхня, I/O тощо).
     fn present(&mut self) -> anyhow::Result<()>;
-}
-
-/// Обгортка `softbuffer::Surface` поверх `winit::window::Window`.
-///
-/// Тримає власний [`Canvas`] (рендер іде в нього), а `present()` копіює буфер
-/// в поверхню. Розмір канваса задається при створенні; якщо вікно іншого
-/// розміру — буфер малюється у верхньому лівому куті вікна.
-pub struct SoftbufferCanvas<'a> {
-    canvas: Canvas,
-    /// Контекст дисплея (X11/Wayland...); тримається живим увесь час життя
-    /// поверхні й потрібен для створення нових поверхонь у тому ж дисплеї.
-    ///
-    /// Параметри `&Window`: `winit::window::Window` не `Clone`, але
-    /// raw-window-handle реалізує `HasDisplayHandle/HasWindowHandle` для
-    /// посилань, тож поверхня просто позичає вікно (воно живе весь час
-    /// роботи застосунку). `SoftBufferError` не `Send + Sync`, тому помилки
-    /// перетворюються через `anyhow!` (рядок), а не через `anyhow::Context`.
-    context: softbuffer::Context<&'a Window>,
-    surface: softbuffer::Surface<&'a Window, &'a Window>,
-}
-
-impl<'a> SoftbufferCanvas<'a> {
-    /// Створює поверхню `width × height` для вікна `window`.
-    pub fn new(window: &'a Window, width: u32, height: u32) -> anyhow::Result<Self> {
-        let context = softbuffer::Context::new(window)
-            .map_err(|e| anyhow!("softbuffer: не вдалося створити контекст: {e}"))?;
-        let mut surface = softbuffer::Surface::new(&context, window)
-            .map_err(|e| anyhow!("softbuffer: не вдалося створити поверхню: {e}"))?;
-        Self::resize_surface(&mut surface, width, height)?;
-        Ok(SoftbufferCanvas {
-            canvas: Canvas::new(width, height),
-            context,
-            surface,
-        })
-    }
-
-    /// Змінює розмір канваса й поверхні (напр. при ресайзі вікна).
-    pub fn resize(&mut self, width: u32, height: u32) -> anyhow::Result<()> {
-        Self::resize_surface(&mut self.surface, width, height)?;
-        self.canvas = Canvas::new(width, height);
-        Ok(())
-    }
-
-    /// Доступ до контексту дисплея (напр. для додаткових поверхонь).
-    pub fn context(&self) -> &softbuffer::Context<&'a Window> {
-        &self.context
-    }
-
-    /// Доступ до softbuffer-поверхні.
-    pub fn surface(&self) -> &softbuffer::Surface<&'a Window, &'a Window> {
-        &self.surface
-    }
-
-    fn resize_surface(
-        surface: &mut softbuffer::Surface<&'a Window, &'a Window>,
-        width: u32,
-        height: u32,
-    ) -> anyhow::Result<()> {
-        let w = NonZeroU32::new(width).ok_or_else(|| anyhow!("ширина поверхні має бути > 0"))?;
-        let h = NonZeroU32::new(height).ok_or_else(|| anyhow!("висота поверхні має бути > 0"))?;
-        surface
-            .resize(w, h)
-            .map_err(|e| anyhow!("softbuffer: не вдалося змінити розмір поверхні: {e}"))?;
-        Ok(())
-    }
-}
-
-impl Deref for SoftbufferCanvas<'_> {
-    type Target = Canvas;
-
-    fn deref(&self) -> &Canvas {
-        &self.canvas
-    }
-}
-
-impl DerefMut for SoftbufferCanvas<'_> {
-    fn deref_mut(&mut self) -> &mut Canvas {
-        &mut self.canvas
-    }
-}
-
-impl RenderSurface for SoftbufferCanvas<'_> {
-    fn present(&mut self) -> anyhow::Result<()> {
-        let mut buffer = self
-            .surface
-            .buffer_mut()
-            .map_err(|e| anyhow!("softbuffer: не вдалося отримати буфер: {e}"))?;
-        debug_assert_eq!(
-            buffer.len(),
-            (self.canvas.width as usize) * (self.canvas.height as usize),
-            "розмір канваса не збігається з розміром поверхні"
-        );
-        buffer.copy_from_slice(&self.canvas.buf);
-        buffer
-            .present()
-            .map_err(|e| anyhow!("softbuffer: не вдалося показати кадр: {e}"))?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]

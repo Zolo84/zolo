@@ -7,7 +7,9 @@ edition = "2021"
 dh-core = { workspace = true }
 dh-format = { workspace = true }
 anyhow = { workspace = true }
-softbuffer = { workspace = true }
 winit = { workspace = true }
 log = { workspace = true }
 image = { workspace = true }
+wgpu = "30.0.1"
+pollster = "1.0.1"
+wgpu-types = "=30.0.1"

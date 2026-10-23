@@ -19,9 +19,7 @@ dh-render = { path = "dh-render" }
 anyhow = "1"
 bzip2 = "0.5"
 byteorder = "1"
-chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
-flate2 = "1"
 image = { version = "0.25", default-features = false, features = ["bmp", "png"] }
 log = "0.4"
 simplelog = "0.12"
