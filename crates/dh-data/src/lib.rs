@@ -15,6 +15,7 @@ pub mod settings;
 pub mod tech;
 pub mod unitdb;
 pub mod units;
+pub mod weather;
 
 pub use date::GameDate;
 pub use dh_vfs::Vfs;
@@ -29,6 +30,7 @@ pub use settings::{open_install, Settings};
 pub use tech::Techs;
 pub use unitdb::{DivisionStats, UnitDb};
 pub use units::{Branch, Brigade, Division, TypeId, Unit};
+pub use weather::{Climate, Weather, WeatherSetup};
 
 use std::fmt;
 

@@ -161,3 +161,32 @@ fn misc_values_by_position_with_the_selected_mod() {
     assert_eq!(modded.get("combat", 41), Some(6.0));
     assert_eq!(modded.get("country", 44), Some(30.0));
 }
+
+/// `ardennes.eug` is the shipped scenario with weather: one front over the
+/// Ardennes and 49 provinces under snow.
+#[test]
+fn ardennes_scenario_weather() {
+    use dh_data::{Weather, WeatherSetup};
+    let Some(vfs) = vfs() else { return };
+    let mut warnings = Vec::new();
+    let s = Scenario::load(&vfs, "scenarios/ardennes.eug", &mut warnings).unwrap();
+    let WeatherSetup {
+        is_static,
+        patterns,
+    } = &s.weather;
+    assert!(!is_static);
+    assert_eq!(patterns.len(), 1);
+    assert_eq!(patterns[0].centre, Some(71));
+    assert_eq!(patterns[0].provinces.len(), 49);
+    assert_eq!(patterns[0].heading, "northwest");
+    let snowing = s
+        .provinces
+        .iter()
+        .filter(|p| p.weather == Some(Weather::Snowing))
+        .count();
+    assert_eq!(snowing, 49);
+    assert!(s
+        .provinces
+        .iter()
+        .all(|p| p.weather != Some(Weather::Clear)));
+}

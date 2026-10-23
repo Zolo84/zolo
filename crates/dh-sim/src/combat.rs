@@ -816,6 +816,7 @@ mod tests {
                 terrain,
                 infra: 1.0,
                 army_pos: (0, 0),
+                climate: Default::default(),
             })
         };
         let (land, sea) = (province(terrain::PLAINS), province(terrain::OCEAN));

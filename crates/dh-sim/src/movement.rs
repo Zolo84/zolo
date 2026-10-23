@@ -44,6 +44,7 @@ pub struct ProvinceInfo {
     pub infra: f32,
     /// Army position in level-1 map pixels.
     pub army_pos: (i64, i64),
+    pub climate: dh_data::Climate,
 }
 
 impl ProvinceInfo {
@@ -152,6 +153,7 @@ impl MoveContext {
                 terrain,
                 infra: num("infrastructure").unwrap_or(0) as f32 / 100.0,
                 army_pos: (num("army xpos").unwrap_or(0), num("army ypos").unwrap_or(0)),
+                climate: dh_data::Climate::from_name(f("climate").unwrap_or("")),
             });
         }
 

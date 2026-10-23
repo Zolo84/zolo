@@ -81,6 +81,8 @@ pub struct ProvinceSetup {
     /// Current land fort level.
     pub land_fort: f64,
     pub coastal_fort: f64,
+    /// Current weather, when the block sets it.
+    pub weather: Option<crate::Weather>,
 }
 
 impl ProvinceSetup {
@@ -98,6 +100,7 @@ impl ProvinceSetup {
             id: u32::try_from(b.get_i64("id")?).ok()?,
             land_fort: size("landfort"),
             coastal_fort: size("coastalfort"),
+            weather: b.get_str("weather").and_then(crate::Weather::from_name),
         })
     }
 }
@@ -110,6 +113,8 @@ pub struct Scenario {
     pub countries: Vec<CountrySetup>,
     pub diplomacy: Diplomacy,
     pub provinces: Vec<ProvinceSetup>,
+    /// The `weather` block (`globaldata.weather`, or a top-level one).
+    pub weather: crate::WeatherSetup,
 }
 
 impl Scenario {
@@ -132,8 +137,15 @@ impl Scenario {
             .get_all("country")
             .filter_map(|v| CountrySetup::from_block(v.as_block()?))
             .collect();
+        let weather = root
+            .get_block("globaldata")
+            .and_then(|g| g.get_block("weather"))
+            .or_else(|| root.get_block("weather"))
+            .map(crate::WeatherSetup::from_block)
+            .unwrap_or_default();
         Ok(Scenario {
             info: ScenarioInfo::from_root(path, &root),
+            weather,
             diplomacy: Diplomacy::from_globaldata(root.get_block("globaldata")),
             provinces: root
                 .get_all("province")
