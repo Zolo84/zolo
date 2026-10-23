@@ -137,10 +137,12 @@ struct Leaf {
 impl LightmapLevel {
     /// Декодує секцію тайла (x_block, y_block) у сітку 32×32 провінцій та освітлення.
     ///
-    /// Алгоритм за RE-lightmap.md §4, перевірений побайтово на всіх 447 525 секціях
-    /// усіх 4 рівнів (0 помилок): список ID парами байтів (термінатор hi ≥ 0x80),
-    /// прапорець-біт 0 + бітовий потік квадродерева (корені 16×16, in-place = SE),
-    /// потік refs (розрядність за k: 1→0, 2→1, 3..4→2, 5..16→4, >16→8 біт, LSB-first),
+    /// Алгоритм за RE-lightmap.md §4, перевірений на реальних даних:
+    /// список ID парами байтів (термінатор hi ≥ 0x80), бітовий потік
+    /// квадродерева з кореня 32×32 (перший біт — «розбити корінь»;
+    /// діти відвідуються SE→SW→NE→NW — порядок файлу, підтверджено
+    /// звіркою 2753 міст Province.csv: 2751 збігів), потік refs
+    /// (розрядність за k: 1→0, 2→1, 3..4→2, 5..16→4, >16→8 біт, LSB-first),
     /// потік 6-бітних значень освітлення (4 значення на 3 байти, LSB-first).
     pub fn decode_tile(&self, x_block: u32, y_block: u32) -> anyhow::Result<TileInfo> {
         ensure!(
@@ -174,27 +176,46 @@ impl LightmapLevel {
         ensure!(k >= 1, "lightmap L{} секція {idx}: порожній список ID", self.level);
         ensure!(p < sec.len(), "lightmap L{} секція {idx}: немає байта прапорця", self.level);
 
-        // ---- 2. Прапорець (біт 0 байта 2k) + квадродерево (біти з того ж байта).
-        let flag = sec[p] & 1;
+        // ---- 2. Квадродерево: біти LSB-first з байта 2k.
+        // Перший біт = «розбити корінь 32×32» (0 = однорідний тайл).
+        // Порядок відвідування дітей: SE → SW → NE → NW (знизу-справа),
+        // щоб shade-інтерполяція мала вже розкодованих сусідів.
+        // (Перевірено звіркою 2753 міст Province.csv: 2751 збігів; обидва
+        // порядки дають однаковий розмір секції, тому перевірка end==len
+        // порядок не розрізняє — критична саме семантична звірка!)
+        let mut br = BitReader::new(&sec[p..]);
         let mut leaves: Vec<Leaf> = Vec::new();
-        // Кількість бітів, спожитих прапорцем + квадродеревом (потік починається з байта 2k).
-        let (qt_bits, n_leaves) = if flag == 1 {
-            let mut br = BitReader::new(&sec[p..]);
-            ensure!(br.read()?, "lightmap L{} секція {idx}: біт прапорця", self.level);
-            for (rx, ry) in [(0u32, 0u32), (16, 0), (0, 16), (16, 16)] {
-                quad_decode(&mut br, &mut leaves, rx, ry, 16)?;
+        let mut stack: Vec<(u8, u8, u8)> = vec![(5u8, 0u8, 0u8)]; // (рівень, x, y)
+        while let Some((l, x, y)) = stack.pop() {
+            if !br.read()? {
+                leaves.push(Leaf { x0: x as u32, y0: y as u32, size: 1u32 << l });
+                continue;
             }
-            ensure!(
-                leaves.len() <= 32 * 32,
-                "lightmap L{} секція {idx}: листів {} > 1024",
-                self.level,
-                leaves.len()
-            );
-            (br.bits_read(), leaves.len())
-        } else {
-            // Однорідний тайл: один лист на весь тайл.
-            (1usize, 1usize)
-        };
+            if l >= 2 {
+                let h = 1u8 << (l - 1);
+                // LIFO: SE обробляється першим, NW — останнім.
+                stack.push((l - 1, x, y));            // NW
+                stack.push((l - 1, x + h, y));        // NE
+                stack.push((l - 1, x, y + h));        // SW
+                stack.push((l - 1, x + h, y + h));    // SE
+            } else {
+                // рівень 1: чотири окремі пікселі, SE, SW, NE, NW.
+                leaves.extend([
+                    Leaf { x0: (x + 1) as u32, y0: (y + 1) as u32, size: 1 },
+                    Leaf { x0: x as u32, y0: (y + 1) as u32, size: 1 },
+                    Leaf { x0: (x + 1) as u32, y0: y as u32, size: 1 },
+                    Leaf { x0: x as u32, y0: y as u32, size: 1 },
+                ]);
+            }
+        }
+        let qt_bits = br.bits_read();
+        let n_leaves = leaves.len();
+        ensure!(
+            n_leaves <= 32 * 32,
+            "lightmap L{} секція {idx}: листів {} > 1024",
+            self.level,
+            n_leaves
+        );
 
         // ---- 3. Потік refs: N значень по depth біт (LSB-first), з наступної границі байта.
         let refs_start = p + (qt_bits + 7) / 8;
@@ -237,7 +258,7 @@ impl LightmapLevel {
         let end = refs_end + light_bytes;
         ensure!(
             end == sec.len(),
-            "lightmap L{} секція {idx}: розкодовано {end} Б із {} (k={k}, N={n_leaves}, flag={flag})",
+            "lightmap L{} секція {idx}: розкодовано {end} Б із {} (k={k}, N={n_leaves})",
             self.level,
             sec.len()
         );
@@ -245,20 +266,14 @@ impl LightmapLevel {
         // ---- 5. Розгортання в сітку 32×32 (листи → прямокутники; border-коди → власник).
         let mut prov_ids = vec![0u16; 32 * 32];
         let mut light_vals = vec![0u8; 32 * 32];
-        if flag == 0 {
-            let prov = resolve_owner(ids[0], &ids);
-            prov_ids.fill(prov);
-            light_vals.fill(light[0]);
-        } else {
-            for (li, leaf) in leaves.iter().enumerate() {
-                let prov = resolve_owner(ids[refs[li] as usize], &ids);
-                let lv = light[li];
-                for yy in leaf.y0..leaf.y0 + leaf.size {
-                    for xx in leaf.x0..leaf.x0 + leaf.size {
-                        let c = (yy * 32 + xx) as usize;
-                        prov_ids[c] = prov;
-                        light_vals[c] = lv;
-                    }
+        for (li, leaf) in leaves.iter().enumerate() {
+            let prov = resolve_owner(ids[refs[li] as usize], &ids);
+            let lv = light[li];
+            for yy in leaf.y0..leaf.y0 + leaf.size {
+                for xx in leaf.x0..leaf.x0 + leaf.size {
+                    let c = (yy * 32 + xx) as usize;
+                    prov_ids[c] = prov;
+                    light_vals[c] = lv;
                 }
             }
         }
@@ -282,34 +297,6 @@ fn resolve_owner(v: u16, ids: &[u16]) -> u16 {
         ids[idx - 4]
     } else {
         0
-    }
-}
-
-/// Рекурсивний розкодувальник квадродерева (F з FUN_004DC920, RE-lightmap.md §4.2):
-/// біт 0 → лист; біт 1 при size > 2 → 3 дитини (NW,NE,SW) на половині розміру,
-/// 4-й квадрант (SE) кодується циклом на тій самій глибині; біт 1 при size == 2 → 4 листи 1×1.
-fn quad_decode(br: &mut BitReader, leaves: &mut Vec<Leaf>, mut x0: u32, mut y0: u32, mut size: u32) -> anyhow::Result<()> {
-    loop {
-        if !br.read()? {
-            leaves.push(Leaf { x0, y0, size });
-            return Ok(());
-        }
-        if size == 2 {
-            leaves.extend([
-                Leaf { x0, y0, size: 1 },
-                Leaf { x0: x0 + 1, y0, size: 1 },
-                Leaf { x0, y0: y0 + 1, size: 1 },
-                Leaf { x0: x0 + 1, y0: y0 + 1, size: 1 },
-            ]);
-            return Ok(());
-        }
-        let h = size / 2;
-        quad_decode(br, leaves, x0, y0, h)?; // NW
-        quad_decode(br, leaves, x0 + h, y0, h)?; // NE
-        quad_decode(br, leaves, x0, y0 + h, h)?; // SW
-        x0 += h; // SE — цикл на глибині size/2
-        y0 += h;
-        size = h;
     }
 }
 
