@@ -201,59 +201,58 @@ impl<'a> MapRenderer<'a> {
                 });
 
                 match (tile, light) {
-                    (Some((tx, ty)), light) => {
-                        // Шар 2 — тайл атласа (index.tbl): тайли зберігають ІНДЕКСИ
-                        // палітри, а не кольори! Колір пікселя = palettes[терен
-                        // блока][індекс] (RE FUN_00417740: тип місцевості → своя
-                        // палітра landscape/trees/mountain/desert/marsh/hills/djungle).
-                        // Індекс 0 = прозорий — просвічує фон провінцій.
-                        let terrain_idx = light
-                            .as_ref()
-                            .and_then(|ti| {
-                                // Провінція центрального пікселя блока → тип терену.
-                                let c = light_idx(bx, by, TILE_PX / 2, TILE_PX / 2, lshift);
-                                let pid = ti.prov_ids[c] as usize;
-                                self.prov_terrain.and_then(|t| t.get(pid)).copied()
-                            })
-                            .unwrap_or(0);
-                        let palettes = self.terrain_palettes;
-                        for py in 0..TILE_PX {
-                            for px in 0..TILE_PX {
-                                let idx =
-                                    self.map.tiles_indices[((ty + py) * ATLAS_W + (tx + px)) as usize]
-                                        as usize;
-                                if idx == 0 {
-                                    continue; // прозорий — фон з lightmap лишається
-                                }
-                                let (r, g, b) = match palettes {
-                                    Some(p) => {
-                                        let [r, g, b] =
-                                            p.color(terrain_idx as usize, idx);
-                                        (r, g, b)
-                                    }
-                                    // Без палітр — сірий (щоб не плутати з фоном).
-                                    None => (128, 128, 128),
-                                };
-                                let lv = light
-                                    .as_ref()
-                                    .map(|ti| ti.light_vals[light_idx(bx, by, px, py, lshift)] as u32);
-                                let color = shade(r, g, b, lv);
-                                put_block_px(canvas, scale, sx, sy, px, py, color);
-                            }
-                        }
-                    }
-                    (None, Some(ti)) => {
-                        // Шар 1 — фон з провінцій lightmap (RE-lightmap.md §6/§10):
-                        // колір пікселя = колір провінції (terrain_color/палітра) + світло.
-                        // Море та провінції без кольору в таблиці → колір океану.
-                        // TODO: точну LUT «світло+колір провінції → піксель» (0x00AA41CB
-                        // з RE-lightmap.md §6) не підтверджено — звірити з оригіналом.
+                    (tile, Some(ti)) => {
+                        // Шар 1 — фон ЗАВЖДИ з lightmap-провінцій: колір провінції
+                        // (політичний або палітра місцевості) + світло. Море та
+                        // провінції без кольору → колір океану.
                         for py in 0..TILE_PX {
                             for px in 0..TILE_PX {
                                 let c = light_idx(bx, by, px, py, lshift);
                                 let base = self.prov_color(ti.prov_ids[c]);
                                 let color = shade((base >> 16) as u8, (base >> 8) as u8, base as u8, Some(ti.light_vals[c] as u32));
                                 put_block_px(canvas, scale, sx, sy, px, py, color);
+                            }
+                        }
+                        // Шар 2 — річки ПОВЕРХ фона (RE-звірка HoI2-Editor/Zolo84):
+                        // tiles.bmp = атлас річкових тайлів, піксель = індекс
+                        // палітри tile.bmp; 0 = прозорий; колір — сама палітра.
+                        if let Some((tx, ty)) = tile {
+                            for py in 0..TILE_PX {
+                                for px in 0..TILE_PX {
+                                    let idx = self.map.tiles_indices
+                                        [((ty + py) * ATLAS_W + (tx + px)) as usize]
+                                        as usize;
+                                    if idx == 0 {
+                                        continue; // прозорий — лишаємо фон
+                                    }
+                                    let [r, g, b] = self
+                                        .map
+                                        .tiles_palette
+                                        .get(idx)
+                                        .copied()
+                                        .unwrap_or([63, 89, 97]); // default: вода
+                                    put_block_px(canvas, scale, sx, sy, px, py, 0xFF00_0000 | (r as u32) << 16 | (g as u32) << 8 | b as u32);
+                                }
+                            }
+                        }
+                    }
+                    (Some((tx, ty)), None) => {
+                        // Немає lightmap (поза межами L1?) — річки все одно малюємо.
+                        for py in 0..TILE_PX {
+                            for px in 0..TILE_PX {
+                                let idx = self.map.tiles_indices
+                                    [((ty + py) * ATLAS_W + (tx + px)) as usize]
+                                    as usize;
+                                if idx == 0 {
+                                    continue;
+                                }
+                                let [r, g, b] = self
+                                    .map
+                                    .tiles_palette
+                                    .get(idx)
+                                    .copied()
+                                    .unwrap_or([63, 89, 97]);
+                                put_block_px(canvas, scale, sx, sy, px, py, 0xFF00_0000 | (r as u32) << 16 | (g as u32) << 8 | b as u32);
                             }
                         }
                     }

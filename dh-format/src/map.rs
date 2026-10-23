@@ -34,10 +34,15 @@ pub struct MapData {
     pub map_w: u32,
     pub map_h: u32,
     /// Атлас тайлів 8192×1408 (32×32-тайли, сітка 256×44).
-    /// tiles.bmp — це НЕ кольорові тайли, а індексні: кожен піксель = ІНДЕКС
-    /// палітри (0 = прозорий). Колір дає палітра типу місцевості блока
-    /// (landscape/hills/mountain/desert/djungle/marsh; RE FUN_00417740).
+    /// tiles.bmp — це атлас **річкових** тайлів (RE-звірка з HoI2-Editor/Zolo84):
+    /// кожен піксель = ІНДЕКС палітри tile.bmp; 0 = прозорий (піксель не малюється).
+    /// Кольори палітри — відтінки води; тайл використовується для ОДНОГО блока
+    /// (у index.tbl кожен номер 1..11225 трапляється рівно один раз — річка в
+    /// кожному блоці унікальна). Тайли малюються ПОВЕРХ lightmap-фона.
     pub tiles_indices: Vec<u8>,
+    /// Палітра річкових тайлів: 256 кольорів RGB з tile.bmp (вона ж — палітра
+    /// tiles.bmp; запис 0 = ключ прозорості (0,255,0)).
+    pub tiles_palette: Vec<[u8; 3]>,
     /// Розкладка: на блок 32×32 мапи — номер тайла в атласі (0 = океан/порожньо).
     /// 336 960 елементів у порядку (y,x): блок (x,y) = index[y*936 + x].
     pub index: Vec<u32>,
@@ -353,9 +358,11 @@ pub fn load(paths: &GamePaths) -> anyhow::Result<MapData> {
     };
 
     // tiles.bmp — атлас 8192×1408, 8-бітний палітровий BMP.
-    // ВАЖЛИВО: тайли — ІНДЕКСНІ (0 = прозорий, решта = індекс палітри типу
-    // місцевості), тому зберігаємо СИРІ індекси пікселів, а не кольори!
-    let tiles_indices = {
+    // ВАЖЛИВО (RE-звірка з HoI2-Editor/Zolo84): цей атлас містить **річкові**
+    // тайли, а не тайли місцевості. Пікселі = індекси палітри tile.bmp;
+    // 0 = прозорий (зелений ключ (0,255,0)), решта індексів — відтінки води.
+    // Тайл малюється ПОВЕРХ lightmap-карти і лише для блоків з index != 0.
+    let (tiles_indices, tiles_palette) = {
         let p = map_dir.join("tiles.bmp");
         let raw = read_file(&p, "tiles.bmp")?;
         ensure!(
@@ -371,6 +378,12 @@ pub fn load(paths: &GamePaths) -> anyhow::Result<MapData> {
             width == ATLAS_W as i32 && height == ATLAS_H as i32 && bpp == 8,
             "tiles.bmp: {width}×{height} {bpp}біт ≠ {ATLAS_W}×{ATLAS_H} 8біт"
         );
+        // Палітра BMP: 256 записів BGRX починаючи з байта 54.
+        let mut palette = Vec::with_capacity(256);
+        for i in 0..256 {
+            let o = 54 + i * 4;
+            palette.push([raw[o + 2], raw[o + 1], raw[o]]);
+        }
         let stride = ((width as usize * bpp as usize + 31) / 32) * 4;
         let mut indices = Vec::with_capacity((width * height) as usize);
         // bottom-up BMP: рядок 0 у файлі = нижній.
@@ -378,20 +391,26 @@ pub fn load(paths: &GamePaths) -> anyhow::Result<MapData> {
             let row = &raw[px_off + y * stride..];
             indices.extend_from_slice(&row[..width as usize]);
         }
-        indices
+        (indices, palette)
     };
 
     // index.tbl — uint32 на блок 32×32, 336 960 = 936×360 блоків, 0 = океан, 1..11225 = тайл атласу.
+    // ВАЖЛИВО: файл зберігається **стовпцями** (column-major): зміщення(bx,by) = (bx·360+by)·4
+    // (RE-звірка з HoI2-Editor/Zolo84: при такому порядку річкові тайли складаються в
+    // зв'язні системи — 70% з'єднань між блоками проти 14% при row-major).
+    // У пам'яті транспонуємо до row-major (index[by·936+bx]), щоб решта коду не мінялась.
     let index = {
         let p = map_dir.join("index.tbl");
         let raw = read_file(&p, "index.tbl")?;
         let n = (BLOCKS_X * BLOCKS_Y) as usize;
         ensure!(raw.len() == n * 4, "index.tbl: розмір {} ≠ {n}×4", raw.len());
-        let mut v = Vec::with_capacity(n);
-        for i in 0..n {
-            let t = LittleEndian::read_u32(&raw[i * 4..]);
-            ensure!(t < TILE_SLOTS, "index.tbl[{i}] = {t} ≥ {TILE_SLOTS} (поза атласом)");
-            v.push(t);
+        let mut v = vec![0u32; n];
+        for bx_i in 0..BLOCKS_X as usize {
+            for by_i in 0..BLOCKS_Y as usize {
+                let t = LittleEndian::read_u32(&raw[(bx_i * BLOCKS_Y as usize + by_i) * 4..]);
+                ensure!(t < TILE_SLOTS, "index.tbl[{bx_i},{by_i}] = {t} ≥ {TILE_SLOTS} (поза атласом)");
+                v[by_i * BLOCKS_X as usize + bx_i] = t;
+            }
         }
         v
     };
@@ -542,6 +561,7 @@ pub fn load(paths: &GamePaths) -> anyhow::Result<MapData> {
         map_w,
         map_h,
         tiles_indices,
+        tiles_palette,
         index,
         bounds,
         adjacent,
