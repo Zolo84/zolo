@@ -80,6 +80,9 @@ pub struct World {
     /// Пауза: викликач не просуває `GameTime`, поки `paused` (окремого стану паузи
     /// в оригінальному .text не знайдено — RE-pause-found.md §3).
     pub paused: bool,
+    /// Черга подій, що очікують розгляду (команда `event` 0x1f7 — диспетчер
+    /// `FUN_004a8c90`; черга подій — `queued_events` 0x581, RE-scripts.md §4).
+    pub pending_events: Vec<u32>,
 }
 
 /// Ставка денного податку (частка IC, що йде в гроші) у фазі економіки.
@@ -97,6 +100,7 @@ impl World {
             alliances: Vec::new(),
             speed: 3,
             paused: false,
+            pending_events: Vec::new(),
         }
     }
 

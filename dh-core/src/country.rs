@@ -30,6 +30,9 @@ pub struct Country {
     pub capital: Option<ProvinceId>,
     pub money: f64,
     pub manpower: f64,
+    /// Престиж (у DH токен `wealth` 0x237 — RE-scripts.md §5 «Ресурси/економіка»;
+    /// команда престижу виконується через цей баланс).
+    pub prestige: f64,
     /// Промисловий потенціал (джерело доходу у фазі 5).
     pub ic: f64,
     pub resources: CountryResources,
@@ -51,6 +54,7 @@ impl Country {
             capital: None,
             money: 0.0,
             manpower: 0.0,
+            prestige: 0.0,
             ic: 0.0,
             resources: CountryResources::default(),
             techs: Vec::new(),
