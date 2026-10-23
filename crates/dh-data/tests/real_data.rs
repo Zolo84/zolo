@@ -178,7 +178,8 @@ fn ardennes_scenario_weather() {
     assert_eq!(patterns.len(), 1);
     assert_eq!(patterns[0].centre, Some(71));
     assert_eq!(patterns[0].provinces.len(), 49);
-    assert_eq!(patterns[0].heading, "northwest");
+    // `heading = "northwest"` is quoted, so the game ignores it.
+    assert_eq!(patterns[0].heading, None);
     let snowing = s
         .provinces
         .iter()

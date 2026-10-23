@@ -14,6 +14,7 @@ pub mod movement;
 pub mod params;
 pub mod rng;
 pub mod supply;
+pub mod weather;
 pub mod world;
 
 pub use battle::{ActiveEvent, Battle, BattleSide, CombatEvent, Engage};
@@ -22,6 +23,7 @@ pub use dig_in::DigIn;
 pub use leaders::LeaderState;
 pub use params::Params;
 pub use rng::Rng;
+pub use weather::WeatherSystem;
 pub use world::{Country, UnitState, World};
 
 use dh_data::GameDate;

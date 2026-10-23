@@ -42,6 +42,11 @@ pub struct Params {
     pub leader_skill: f32,              // combat[86]
     pub retreat_org: f32,               // combat[228]
     pub leader_experience: f32,         // combat[6]
+    /// Land speed bonus of a leader's own terrain trait, and of
+    /// WinterSpecialist in cold weather (land-movement.md §3.5).
+    pub leader_move: f32, // combat[159]
+    /// Land speed bonus of a similar terrain trait.
+    pub leader_move_similar: f32, // combat[160]
     /// Supply efficiency a Logistics Wizard adds while it is below 1.
     pub logistics_wizard_ese: f32, // combat[161]
     /// Land speed factor out of supply (land-movement.md §3.1).
@@ -108,6 +113,8 @@ impl Default for Params {
             leader_skill: 0.05,
             retreat_org: 5.0,
             leader_experience: 1.3,
+            leader_move: 0.05,
+            leader_move_similar: 0.025,
             logistics_wizard_ese: 0.1,
             out_of_supply_speed: 0.1,
             land_command_limit: [12, 9, 3, 1],
@@ -203,6 +210,8 @@ impl Params {
             (86, &mut p.leader_skill),
             (228, &mut p.retreat_org),
             (6, &mut p.leader_experience),
+            (159, &mut p.leader_move),
+            (160, &mut p.leader_move_similar),
             (161, &mut p.logistics_wizard_ese),
             (208, &mut p.out_of_supply_speed),
             (230, &mut p.event_speed_min),

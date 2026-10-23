@@ -475,6 +475,7 @@ fn march(args: &Args) -> Result<(), String> {
             .collect::<Vec<_>>()
             .join(" → ")
     );
+    sim.add_system(dh_sim::WeatherSystem::new(ctx.clone()));
     sim.add_system(March::new(ctx.clone()));
     let start = sim.date();
     let mut last = route[0];

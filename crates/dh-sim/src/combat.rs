@@ -20,12 +20,12 @@
 //! attacking elsewhere, doctrine traits, combined arms, surprise,
 //! experience, supply efficiency (with Logistics Wizard and HQ influence),
 //! terrain (with terrain traits and the hard-unit city penalty), weather
-//! (clear only), night, leader skill with the PanzerLeader and Commando
+//! (with WinterSpecialist), night, leader skill with the PanzerLeader and Commando
 //! traits, command limits by direction, envelopment, encirclement, dig-in,
 //! land forts (with FortressBuster), dissent and difficulty. Not yet:
 //! paratroopers and invasion size, shore bombardment, country bonuses by
 //! type, supply and fuel shortage, army detection, mission efficiency. Misc
-//! values are the shipped `db/misc.txt` ones.
+//! values come from the world's [`crate::Params`].
 
 pub mod events;
 
@@ -34,7 +34,7 @@ use crate::movement::{terrain, MoveContext};
 use crate::params::{self, Params};
 use crate::{Battle, CombatEvent, Rng, System, World};
 use dh_data::leaders::traits;
-use dh_data::{Branch, Difficulty, DivisionStats};
+use dh_data::{Branch, Difficulty, DivisionStats, Weather};
 use dh_map::AdjKind;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -59,9 +59,12 @@ const ENGINEER_RIVER: f32 = 0.2;
 const FORTRESS_BUSTER: f32 = 0.75;
 const SPECIALIST: f32 = 1.1;
 const COMMANDO_OTHERS: f32 = 0.95;
+/// WinterSpecialist additions to the weather modifier (row 12, `0x4C37E2`).
+const WINTER_SPECIALIST_FROST: f32 = 0.2;
+const WINTER_SPECIALIST_SNOW: f32 = 0.25;
 /// Terrain traits by terrain 0..=7 (row 11): the terrain's own trait and a
 /// similar one.
-const TERRAIN_TRAITS: [(u32, u32); 8] = [
+pub(crate) const TERRAIN_TRAITS: [(u32, u32); 8] = [
     (0, 0),
     (traits::RANGER, traits::JUNGLE_RAT),
     (traits::MOUNTAINEER, traits::HILLS_FIGHTER),
@@ -327,6 +330,7 @@ impl Combat {
         let province = ctx.province(battle.province);
         let terrain = province.map_or(terrain::PLAINS, |p| p.terrain);
         let night = self.night && province.is_some_and(|p| is_night(world.date, p.army_pos));
+        let weather = world.weather_at(battle.province);
         // Row 18: the defenders count the provinces the attackers stand in
         // (not on an island).
         let directions = if attacking || ctx.is_island(battle.province) {
@@ -471,7 +475,17 @@ impl Combat {
                 }
                 // Weather is always clear for now, so WinterSpecialist (frost,
                 // snow, blizzard) never applies.
-                w *= 1.0 + m(&format!("{side}_CLEAR"));
+                // Row 12: the battle province's weather; WinterSpecialist
+                // within the limit softens frost and snow.
+                let mut wm = m(&format!("{side}_{}", weather.modifier_suffix()));
+                if within && leader.has_trait(traits::WINTER_SPECIALIST) {
+                    wm += match weather {
+                        Weather::Frozen => WINTER_SPECIALIST_FROST,
+                        Weather::Snowing | Weather::Blizzard => WINTER_SPECIALIST_SNOW,
+                        _ => 0.0,
+                    };
+                }
+                w *= 1.0 + wm;
                 if night {
                     w *= 1.0 + m(&format!("{side}_NIGHT"));
                 }
@@ -817,6 +831,8 @@ mod tests {
                 infra: 1.0,
                 army_pos: (0, 0),
                 climate: Default::default(),
+                centre: (0, 0),
+                north: true,
             })
         };
         let (land, sea) = (province(terrain::PLAINS), province(terrain::OCEAN));

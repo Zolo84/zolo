@@ -243,12 +243,11 @@ impl Combat {
             .map(|&u| {
                 let unit = &world.units[u];
                 let p = unit.unit.location.unwrap_or(0);
-                let supply = if self.supply {
-                    world.supply_speed_factor(&self.ctx, unit.controller(), p)
-                } else {
-                    1.0
-                };
-                self.ctx.stack_speed(&unit.unit.divisions, p, supply)
+                let mut cond = world.move_conditions(&self.ctx, u, p, p);
+                if !self.supply {
+                    cond.supply = 1.0;
+                }
+                self.ctx.stack_speed(&unit.unit.divisions, p, &cond)
             })
             .sum();
         total / stacks.len() as f32

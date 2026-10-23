@@ -1,6 +1,6 @@
 //! Mutable game state.
 
-use dh_data::{Diplomacy, GameDate, Scenario, Techs, Unit, Vfs};
+use dh_data::{Diplomacy, GameDate, Scenario, Techs, Unit, Vfs, Weather};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[derive(Debug, Clone)]
@@ -60,6 +60,11 @@ pub struct World {
     pub leaders: BTreeMap<i64, crate::LeaderState>,
     /// Constants from `db/misc.txt`; set them with [`World::set_params`].
     pub params: crate::Params,
+    /// Weather by province id (weather.md §1); provinces past the end are clear.
+    pub weather: Vec<Weather>,
+    pub weather_fronts: Vec<crate::weather::WeatherFront>,
+    /// The scenario's `static = yes`: weather never changes.
+    pub weather_static: bool,
 }
 
 /// A unit on the map and the country it belongs to.
@@ -126,7 +131,26 @@ impl World {
             battles: Vec::new(),
             leaders: BTreeMap::new(),
             params: crate::Params::default(),
+            weather: Vec::new(),
+            weather_fronts: Vec::new(),
+            weather_static: false,
         }
+    }
+
+    /// Current weather of a province.
+    pub fn weather_at(&self, province: u32) -> Weather {
+        self.weather
+            .get(province as usize)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    pub fn set_weather(&mut self, province: u32, weather: Weather) {
+        let i = province as usize;
+        if i >= self.weather.len() {
+            self.weather.resize(i + 1, Weather::Clear);
+        }
+        self.weather[i] = weather;
     }
 
     /// Replaces the `misc.txt` constants (e.g. with a mod's). Countries keep
@@ -182,6 +206,13 @@ impl World {
             world
                 .units
                 .extend(c.units.iter().map(|u| UnitState::new(&c.tag, u.clone())));
+        }
+        world.weather_static = scenario.weather.is_static;
+        world.weather_fronts = crate::weather::fronts_from(&scenario.weather);
+        for p in &scenario.provinces {
+            if let Some(w) = p.weather {
+                world.set_weather(p.id, w);
+            }
         }
         // Provinces without an explicit controller are controlled by their owner.
         for (p, tag) in &world.owner {

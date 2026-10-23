@@ -34,10 +34,25 @@ impl Weather {
             .find(|w| w.name().eq_ignore_ascii_case(name))
     }
 
+    /// Keyword in scenarios and saves (`0x75EAD0`, `0x75EB50`): frozen is
+    /// `winter`; the word `frozen` is not accepted.
     pub fn name(self) -> &'static str {
         [
-            "clear", "frozen", "raining", "snowing", "storm", "blizzard", "muddy",
+            "clear", "winter", "raining", "snowing", "storm", "blizzard", "muddy",
         ][self as usize]
+    }
+
+    /// Frozen, snowing or blizzard (`0x4E8210`): precipitation here falls as snow.
+    pub fn is_cold(self) -> bool {
+        matches!(self, Weather::Frozen | Weather::Snowing | Weather::Blizzard)
+    }
+
+    /// Raining, snowing, storm or blizzard (`0x4E8230`).
+    pub fn is_precipitation(self) -> bool {
+        matches!(
+            self,
+            Weather::Raining | Weather::Snowing | Weather::Storm | Weather::Blizzard
+        )
     }
 
     /// Suffix of the weather rows of `modifiers.csv` (`ATT_CLEAR`, `MOV_SNOW`…).
@@ -108,9 +123,26 @@ pub struct WeatherPattern {
     pub id: Option<(i64, i64)>,
     pub provinces: Vec<u32>,
     pub centre: Option<u32>,
-    pub speed: i64,
-    pub heading: String,
+    pub speed: Option<i64>,
+    /// 0 north … 7 northwest. The game only reads a bare word: a quoted
+    /// heading (as in the shipped `ardennes.eug`) is ignored (`0x5344C9`).
+    pub heading: Option<u8>,
+    /// `special = yes`: made like `start_pattern` does, outside the count of
+    /// natural fronts.
+    pub special: bool,
 }
+
+/// Heading words in the game's order (`0x75FBAD`).
+pub const HEADINGS: [&str; 8] = [
+    "north",
+    "northeast",
+    "east",
+    "southeast",
+    "south",
+    "southwest",
+    "west",
+    "northwest",
+];
 
 /// The scenario's `weather` block (inside `globaldata`, or at the top level).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -136,8 +168,17 @@ impl WeatherSetup {
                         .map(|l| l.ints().filter_map(|i| u32::try_from(i).ok()).collect())
                         .unwrap_or_default(),
                     centre: p.get_i64("centre").and_then(|c| u32::try_from(c).ok()),
-                    speed: p.get_i64("speed").unwrap_or(0),
-                    heading: p.get_str("heading").unwrap_or("").to_owned(),
+                    speed: p.get_i64("speed"),
+                    heading: p
+                        .get_scalar("heading")
+                        .filter(|h| !h.quoted)
+                        .and_then(|h| {
+                            HEADINGS
+                                .iter()
+                                .position(|w| w.eq_ignore_ascii_case(h.as_str()))
+                        })
+                        .map(|i| i as u8),
+                    special: p.get_bool("special").unwrap_or(false),
                 })
                 .collect(),
         }
@@ -154,6 +195,8 @@ mod tests {
             assert_eq!(Weather::from_name(&w.name().to_uppercase()), Some(w));
         }
         assert_eq!(Weather::from_name("sunny"), None);
+        assert_eq!(Weather::from_name("frozen"), None);
+        assert_eq!(Weather::from_name("winter"), Some(Weather::Frozen));
         assert_eq!(Climate::from_name("Mediterranean"), Climate::Mediterranean);
         assert_eq!(Climate::from_name("-"), Climate::None);
         assert_eq!(Climate::from_name(""), Climate::None);
@@ -163,19 +206,28 @@ mod tests {
     fn scenario_pattern() {
         let doc = dh_text::script::parse(
             br#"weather = { pattern = { id = { type = 9430 id = 4 }
-                provinces = { 48 49 45 } centre = 71 speed = 0 heading = "northwest" } }"#,
+                provinces = { 48 49 45 } centre = 71 speed = 0 heading = "northwest" }
+                pattern = { heading = southwest special = yes } }"#,
         );
         let setup = WeatherSetup::from_block(doc.root.get_block("weather").unwrap());
         assert!(!setup.is_static);
         assert_eq!(
             setup.patterns,
-            [WeatherPattern {
-                id: Some((9430, 4)),
-                provinces: vec![48, 49, 45],
-                centre: Some(71),
-                speed: 0,
-                heading: "northwest".into(),
-            }]
+            [
+                WeatherPattern {
+                    id: Some((9430, 4)),
+                    provinces: vec![48, 49, 45],
+                    centre: Some(71),
+                    speed: Some(0),
+                    heading: None,
+                    special: false,
+                },
+                WeatherPattern {
+                    heading: Some(5),
+                    special: true,
+                    ..Default::default()
+                }
+            ]
         );
     }
 }

@@ -117,6 +117,8 @@ mod tests {
             infra: 1.0,
             army_pos: (0, 0),
             climate: Default::default(),
+            centre: (0, 0),
+            north: true,
         });
         let ctx = MoveContext {
             adjacency: Adjacency::from_lists(vec![

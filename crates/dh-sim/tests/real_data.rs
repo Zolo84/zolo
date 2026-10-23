@@ -38,7 +38,7 @@ fn hop_times_match_worked_example() {
             from,
             ctx.adjacency.link(from, to).unwrap(),
             false,
-            1.0,
+            &Default::default(),
         )
     };
     assert_eq!(hours(300, 299), Some(21), "Berlin → Potsdam");
@@ -52,6 +52,20 @@ fn hop_times_match_worked_example() {
         Some(125),
         "Stettin → Stralsund (forest, river)"
     );
+
+    // Weather at Potsdam scales infantry speed by 1 + MOV_<weather>.
+    let link = ctx.adjacency.link(300, 299).unwrap();
+    let mut cond = dh_sim::movement::MoveConditions::default();
+    let mut weather_hours = |w| {
+        cond.weather = w;
+        ctx.hop_hours(&corps.divisions, 300, link, false, &cond)
+            .unwrap()
+    };
+    use dh_data::Weather;
+    // 21 h in clear weather means distance / speed is in 21..22 h.
+    assert_eq!(weather_hours(Weather::Snowing), 33); // ÷ 0.65
+    assert_eq!(weather_hours(Weather::Muddy), 43); // ÷ 0.5
+    assert_eq!(weather_hours(Weather::Blizzard), 72); // ÷ 0.3
 }
 
 #[test]
@@ -700,4 +714,69 @@ fn the_selected_mod_brings_its_own_map() {
     // Stuttgart and Strasbourg are about 120 km apart.
     let d = ctx.distance(134, 107).unwrap() * 100.0;
     assert!((90.0..150.0).contains(&d), "{d} km");
+}
+
+/// A year of weather on the 1936 map: fronts build up to 24, arctic winters
+/// freeze, and summers thaw the temperate north.
+#[test]
+fn a_year_of_weather() {
+    use dh_data::{Climate, Weather};
+    use dh_sim::WeatherSystem;
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let ctx = Arc::new(ctx);
+    let (world, _) = World::from_scenario(&scenario);
+    let mut sim = Simulation::new(world, 7);
+    sim.add_system(WeatherSystem::new(ctx.clone()));
+    let share = |w: &World, climate: Climate, f: &dyn Fn(Weather) -> bool| {
+        let ps: Vec<u32> = (0..ctx.provinces.len() as u32)
+            .filter(|&p| {
+                ctx.province(p)
+                    .is_some_and(|i| i.climate == climate && i.north && !i.is_water())
+            })
+            .collect();
+        ps.iter().filter(|&&p| f(w.weather_at(p))).count() as f32 / ps.len() as f32
+    };
+    // The state on the first of each month, February 1936 to January 1937.
+    let mut stats = Vec::new();
+    for month in 1..=12 {
+        while sim.world.date.month == month && sim.world.hour < 24 * 400 {
+            sim.tick();
+        }
+        let w = &sim.world;
+        let wet = (0..ctx.provinces.len() as u32)
+            .filter(|&p| w.weather_at(p).is_precipitation())
+            .count() as f32
+            / ctx.provinces.len() as f32;
+        stats.push((
+            w.weather_fronts.len(),
+            wet,
+            share(w, Climate::Arctic, &|x| x.is_cold()),
+            share(w, Climate::Temperate, &|x| x.is_cold()),
+            share(w, Climate::Muddy, &|x| x == Weather::Muddy),
+        ));
+    }
+    eprintln!("{stats:?}");
+    assert!(
+        stats.iter().all(|s| s.0 == 24),
+        "one front per update up to 24"
+    );
+    assert!(
+        stats.iter().all(|s| (0.05..0.4).contains(&s.1)),
+        "rain or snow"
+    );
+    let arctic = |i: usize| stats[i].2;
+    let temperate = |i: usize| stats[i].3;
+    let mud = |i: usize| stats[i].4;
+    // Arctic north: frozen from October to April, thawed in summer.
+    assert!([0, 1, 2, 9, 10, 11].iter().all(|&i| arctic(i) == 1.0));
+    assert!([4, 5, 6].iter().all(|&i| arctic(i) == 0.0));
+    // Temperate north: no frost in the first winter (no deep winter there,
+    // and the year starts clear), frost from November, gone by April.
+    assert_eq!(temperate(0), 0.0);
+    assert!(temperate(10) > 0.5 && temperate(11) > 0.5);
+    assert!([3, 4, 5, 6, 7, 8].iter().all(|&i| temperate(i) == 0.0));
+    // Muddy climate: mud after the April thaw, dried up by July.
+    assert!(mud(3) > 0.3 && mud(5) < 0.05);
 }

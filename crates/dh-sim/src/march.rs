@@ -3,8 +3,10 @@
 //! A stack stores the hour it left its province and the hour it reaches the
 //! next one on its route (spec §5.2); the hop time is fixed when the hop starts.
 
-use crate::movement::MoveContext;
+use crate::combat::TERRAIN_TRAITS;
+use crate::movement::{MoveConditions, MoveContext};
 use crate::{Rng, System, World};
+use dh_data::leaders::traits;
 use std::sync::Arc;
 
 /// An arrival, for logging.
@@ -44,13 +46,14 @@ impl March {
         let unit = &mut world.units[index];
         unit.route = path.provinces[1..].iter().copied().collect();
         unit.depart = world.hour;
-        let hours = Self::next_hop_hours(ctx, &world.units[index], world).unwrap_or(1);
+        let hours = Self::next_hop_hours(ctx, world, index).unwrap_or(1);
         let unit = &mut world.units[index];
         unit.arrive = world.hour + hours as u64;
         Ok(path.provinces)
     }
 
-    fn next_hop_hours(ctx: &MoveContext, unit: &crate::UnitState, world: &World) -> Option<u32> {
+    fn next_hop_hours(ctx: &MoveContext, world: &World, index: usize) -> Option<u32> {
+        let unit = &world.units[index];
         let from = unit.unit.location?;
         let next = *unit.route.front()?;
         let link = ctx.adjacency.link(from, next)?;
@@ -58,8 +61,45 @@ impl March {
             .controller
             .get(&next)
             .is_some_and(|c| world.at_war(unit.controller(), c));
-        let supply = world.supply_speed_factor(ctx, unit.controller(), from);
-        ctx.hop_hours(&unit.unit.divisions, from, link, hostile, supply)
+        let cond = world.move_conditions(ctx, index, from, next);
+        ctx.hop_hours(&unit.unit.divisions, from, link, hostile, &cond)
+    }
+}
+
+impl World {
+    /// Conditions of a hop by stack `unit` from `from` into `dest`: supply
+    /// where it stands, the weather it marches into and its leader's traits
+    /// (land-movement.md §3.5).
+    pub fn move_conditions(
+        &self,
+        ctx: &MoveContext,
+        unit: usize,
+        from: u32,
+        dest: u32,
+    ) -> MoveConditions {
+        let p = &self.params;
+        let weather = self.weather_at(dest);
+        let traits = self.stack_leader(unit).traits;
+        let mut leader = 1.0;
+        if self.within_command_limit(unit) {
+            let terrain = ctx.province(dest).map_or(0, |i| i.terrain);
+            if let Some(&(own, similar)) = TERRAIN_TRAITS.get(terrain as usize) {
+                if traits & own != 0 {
+                    leader *= 1.0 + p.leader_move;
+                } else if traits & similar != 0 {
+                    leader *= 1.0 + p.leader_move_similar;
+                }
+            }
+        }
+        // WinterSpecialist needs no command-limit check (`0x508501`).
+        if traits & traits::WINTER_SPECIALIST != 0 && weather.is_cold() {
+            leader *= 1.0 + p.leader_move;
+        }
+        MoveConditions {
+            supply: self.supply_speed_factor(ctx, self.units[unit].controller(), from),
+            weather,
+            leader,
+        }
     }
 }
 
@@ -100,7 +140,7 @@ impl System for March {
                 if world.units[i].route.is_empty() {
                     break;
                 }
-                let hours = Self::next_hop_hours(&self.ctx, &world.units[i], world).unwrap_or(1);
+                let hours = Self::next_hop_hours(&self.ctx, world, i).unwrap_or(1);
                 let unit = &mut world.units[i];
                 unit.depart = arrived;
                 unit.arrive = arrived + hours as u64;

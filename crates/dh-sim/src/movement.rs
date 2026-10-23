@@ -1,12 +1,11 @@
 //! Land movement (`docs/spec/land-movement.md`): hop time between adjacent
 //! provinces, stack speed, and route finding with the game's land cost.
 //!
-//! Not modelled yet (fixed at their neutral values): weather (clear), night
-//! (off in the shipped game), country speed
-//! multiplier and difficulty (1.0), leader traits, missions, fuel, and
-//! embarking.
+//! Not modelled yet (fixed at their neutral values): night (off in the
+//! shipped game), country speed multiplier and difficulty (1.0), missions,
+//! fuel, and embarking.
 
-use dh_data::{Division, Misc, Provinces, UnitDb, Vfs};
+use dh_data::{Division, Misc, Provinces, UnitDb, Vfs, Weather};
 use dh_map::distance::AirDist;
 use dh_map::{AdjKind, Adjacency, Link, Path};
 
@@ -34,8 +33,30 @@ pub mod terrain {
 
 /// Row index of `MOV_*` modifiers in `modifiers.csv`, by terrain index 0..=7.
 const MOV_TERRAIN_ROW: [usize; 8] = [43, 47, 45, 44, 49, 46, 48, 50];
-/// `MOV_CLEAR`: the weather row used while weather is not simulated.
-const MOV_CLEAR_ROW: usize = 35;
+/// Row index of `MOV_*` modifiers by weather 0..=6 (`0x44D760`).
+const MOV_WEATHER_ROW: [usize; 7] = [35, 38, 39, 37, 40, 36, 41];
+
+/// What a stack's speed depends on besides its divisions and the
+/// destination province (spec §3).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MoveConditions {
+    /// Speed factor from supply (§3.1): 1.0 for a fully supplied stack.
+    pub supply: f32,
+    /// Weather of the destination province.
+    pub weather: Weather,
+    /// Leader trait bonuses (§3.5) as one factor, applied after `× 0.75`.
+    pub leader: f32,
+}
+
+impl Default for MoveConditions {
+    fn default() -> Self {
+        MoveConditions {
+            supply: 1.0,
+            weather: Weather::Clear,
+            leader: 1.0,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct ProvinceInfo {
@@ -45,6 +66,11 @@ pub struct ProvinceInfo {
     /// Army position in level-1 map pixels.
     pub army_pos: (i64, i64),
     pub climate: dh_data::Climate,
+    /// Centre of its bounding box (`boundbox.tbl`), level-1 pixels, y down.
+    pub centre: (i64, i64),
+    /// Northern hemisphere: city `YPos` (the box centre's when the city is
+    /// at 0;0) below 7200, y growing southward (weather.md §1).
+    pub north: bool,
 }
 
 impl ProvinceInfo {
@@ -141,6 +167,10 @@ impl MoveContext {
         let table = Provinces::load_active(vfs, &mut warnings).map_err(|e| e.to_string())?;
         let max_id = table.by_id.keys().copied().max().unwrap_or(0) as usize;
         let mut provinces = vec![None; max_id + 1];
+        let boxes = vfs
+            .read(&format!("{dir}/boundbox.tbl"))
+            .map(|b| dh_map::BoundBox::parse(&b))
+            .unwrap_or_default();
         for (id, p) in &table.by_id {
             let f = |k: &str| p.fields.get(k).map(String::as_str);
             let num = |k: &str| f(k).and_then(|v| v.parse::<i64>().ok());
@@ -149,11 +179,23 @@ impl MoveContext {
                 "clear" => terrain::PLAINS,
                 t => terrain::NAMES.iter().position(|n| *n == t).unwrap_or(11) as u8,
             };
+            let army_pos = (num("army xpos").unwrap_or(0), num("army ypos").unwrap_or(0));
+            // `0x4D7620`: x0 + (x1 − x0) / 2, likewise y.
+            let centre = boxes.get(*id as u16).map_or(army_pos, |r| {
+                (
+                    r.left as i64 + (r.right as i64 - r.left as i64) / 2,
+                    r.top as i64 + (r.bottom as i64 - r.top as i64) / 2,
+                )
+            });
+            let city = (num("city xpos").unwrap_or(0), num("city ypos").unwrap_or(0));
+            let city_y = if city == (0, 0) { centre.1 } else { city.1 };
             provinces[*id as usize] = Some(ProvinceInfo {
                 terrain,
                 infra: num("infrastructure").unwrap_or(0) as f32 / 100.0,
-                army_pos: (num("army xpos").unwrap_or(0), num("army ypos").unwrap_or(0)),
+                army_pos,
                 climate: dh_data::Climate::from_name(f("climate").unwrap_or("")),
+                centre,
+                north: city_y < 7200,
             });
         }
 
@@ -240,7 +282,7 @@ impl MoveContext {
     }
 
     /// Speed of a stack in its destination province, km/h (spec §3).
-    pub fn stack_speed(&self, divisions: &[Division], dest: u32, supply: f32) -> f32 {
+    pub fn stack_speed(&self, divisions: &[Division], dest: u32, cond: &MoveConditions) -> f32 {
         if divisions.is_empty() {
             return 1.0;
         }
@@ -258,7 +300,10 @@ impl MoveContext {
             if let Some(&row) = MOV_TERRAIN_ROW.get(terrain as usize) {
                 x *= 1.0 + self.modifiers.get(row, column);
             }
-            x *= 1.0 + self.modifiers.get(MOV_CLEAR_ROW, column);
+            x *= 1.0
+                + self
+                    .modifiers
+                    .get(MOV_WEATHER_ROW[cond.weather as usize], column);
             best = best.min(x);
             if d.organisation.is_some_and(|o| o < 1.0) {
                 halve = true;
@@ -267,20 +312,19 @@ impl MoveContext {
         if halve {
             best /= 2.0;
         }
-        best *= supply;
-        best.max(1.0) * 0.75
+        best *= cond.supply;
+        best.max(1.0) * 0.75 * cond.leader
     }
 
     /// Whole hours to move a stack across one link (spec §4), at least 1.
     /// `hostile`: the destination is controlled by a country at war with the stack.
-    /// `supply`: speed factor from supply (1.0 for a fully supplied stack).
     pub fn hop_hours(
         &self,
         divisions: &[Division],
         from: u32,
         link: &Link,
         hostile: bool,
-        supply: f32,
+        cond: &MoveConditions,
     ) -> Option<u32> {
         let dest = self.province(link.to)?;
         let mut d = self.distance(from, link.to)? * 100.0;
@@ -293,7 +337,7 @@ impl MoveContext {
             }
         }
         d = d.max(1.0);
-        let v = self.stack_speed(divisions, link.to, supply);
+        let v = self.stack_speed(divisions, link.to, cond);
         if hostile && !dest.is_water() {
             d *= 1.25;
         }
