@@ -34,7 +34,8 @@ pub struct MapData {
     pub map_w: u32,
     pub map_h: u32,
     /// Атлас тайлів 8192×1408 (32×32-тайли, сітка 256×44).
-    pub tiles_bmp: image::RgbImage,
+    /// tiles.bmp як RGBA (індекс палітри 0 = прозорий, альфа 0).
+    pub tiles_bmp: image::RgbaImage,
     /// Розкладка: на блок 32×32 мапи — номер тайла в атласі (0 = океан/порожньо).
     /// 336 960 елементів у порядку (y,x): блок (x,y) = index[y*936 + x].
     pub index: Vec<u32>,
@@ -362,23 +363,48 @@ pub fn load(paths: &GamePaths) -> anyhow::Result<MapData> {
         m
     };
 
-    // tiles.bmp — атлас 8192×1408, BMP 8 біт з палітрою (та його розмір 54+1024+8192·1408 = 11 535 414).
+    // tiles.bmp — атлас 8192×1408, 8-бітний палітровий BMP.
+    // Індекс палітри 0 = прозорий (порожня зона атласа); перетворюємо на RGBA
+    // з альфа-каналом, щоб тайли коректно накладалися на фон провінцій.
     let tiles_bmp = {
         let p = map_dir.join("tiles.bmp");
-        let img = image::ImageReader::open(&p)
-            .with_context(|| format!("відкриття tiles.bmp ({})", p.display()))?
-            .with_guessed_format()
-            .context("визначення формату tiles.bmp")?
-            .decode()
-            .context("декодування tiles.bmp")?
-            .to_rgb8();
+        let raw = read_file(&p, "tiles.bmp")?;
         ensure!(
-            img.width() == ATLAS_W && img.height() == ATLAS_H,
-            "tiles.bmp: розмір {}×{} ≠ {ATLAS_W}×{ATLAS_H}",
-            img.width(),
-            img.height()
+            raw.len() >= 54 + 1024,
+            "tiles.bmp: замалий для заголовка+палітри ({})",
+            raw.len()
         );
-        img
+        let px_off = LittleEndian::read_u32(&raw[10..14]) as usize;
+        let width = LittleEndian::read_i32(&raw[18..22]);
+        let height = LittleEndian::read_i32(&raw[22..26]);
+        let bpp = LittleEndian::read_u16(&raw[28..30]);
+        ensure!(
+            width == ATLAS_W as i32 && height == ATLAS_H as i32 && bpp == 8,
+            "tiles.bmp: {width}×{height} {bpp}біт ≠ {ATLAS_W}×{ATLAS_H} 8біт"
+        );
+        // Палітра: 256 записів по 4 байти (B,G,R,0) — кольори вже у звичному порядку.
+        let mut pal = [[0u8; 3]; 256];
+        for i in 0..256 {
+            let o = 54 + i * 4;
+            pal[i] = [raw[o + 2], raw[o + 1], raw[o]];
+        }
+        let stride = ((width as usize * bpp as usize + 31) / 32) * 4;
+        let mut rgba = Vec::with_capacity((width * height) as usize * 4);
+        // bottom-up BMP: рядок 0 у файлі = нижній.
+        for y in (0..height as usize).rev() {
+            let row = &raw[px_off + y * stride..];
+            for x in 0..width as usize {
+                let idx = row[x] as usize;
+                if idx == 0 {
+                    rgba.extend_from_slice(&[0, 0, 0, 0]); // прозорий
+                } else {
+                    let c = pal[idx];
+                    rgba.extend_from_slice(&[c[0], c[1], c[2], 255]);
+                }
+            }
+        }
+        image::RgbaImage::from_raw(ATLAS_W, ATLAS_H, rgba)
+            .context("tiles.bmp: створення RgbaImage")?
     };
 
     // index.tbl — uint32 на блок 32×32, 336 960 = 936×360 блоків, 0 = океан, 1..11225 = тайл атласу.

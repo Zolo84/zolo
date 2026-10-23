@@ -242,7 +242,7 @@ fn run_headless(paths: &GamePaths, cli: &Cli) -> Result<()> {
 // Вікно (winit + Wayland/X11 + dh-render)
 // ---------------------------------------------------------------------------
 
-use dh_render::canvas::{Canvas, RenderSurface, SoftbufferCanvas};
+use dh_render::canvas::{RenderSurface, SoftbufferCanvas};
 use dh_render::map_render::{MapRenderer, Viewport};
 use dh_render::text::{self, TextAlign, TextStyle};
 
@@ -265,6 +265,9 @@ struct AppState {
     zoom: u8,
     last_frame: Instant,
     keys_down: std::collections::HashSet<winit::keyboard::KeyCode>,
+    /// Кольори провінцій для політичної карти: id → ARGB (власник → колір країни
+    /// з country.csv + colorscales.csv; без власника — колір місцевості).
+    prov_colors: Vec<u32>,
 }
 
 impl AppState {
@@ -274,6 +277,33 @@ impl AppState {
             .find(|f| f.set == "root" && f.size == 14 && f.name.to_ascii_lowercase().contains("eurostile"))
             .or_else(|| self.fonts.iter().find(|f| f.size >= 12 && f.size <= 18))
             .or_else(|| self.fonts.first())
+    }
+
+    /// Будує таблицю кольорів провінцій (політична карта):
+    /// провінція з власником → колір країни (country.csv + colorscales.csv),
+    /// без власника → колір місцевості (terrain_color), вода → water (135,172,216).
+    fn build_province_colors(
+        prov_csv: &[ProvinceCsv],
+        world: &World,
+        country_db: &dh_format::db::CountryDb,
+    ) -> Vec<u32> {
+        let mut colors = vec![0xFF87_ACD8u32; 3000]; // water (135,172,216)
+        for p in prov_csv {
+            if p.id == 0 {
+                continue;
+            }
+            let (r, g, b) = dh_format::province::terrain_color(p.terrain);
+            colors[p.id as usize] = 0xFF00_0000 | ((r as u32) << 16) | ((g as u32) << 8) | b as u32;
+        }
+        // Власники: колір країни перекриває колір місцевості.
+        for prov in &world.provinces {
+            let Some(owner) = prov.owner else { continue };
+            let Some(country) = world.countries.get(owner) else { continue };
+            let (r, g, b) = country_db.color_of(&country.tag);
+            colors[prov.id as usize] =
+                0xFF00_0000 | ((r as u32) << 16) | ((g as u32) << 8) | b as u32;
+        }
+        colors
     }
 
     fn render_frame(&mut self) -> Result<()> {
@@ -289,7 +319,8 @@ impl AppState {
         let cam_y = self.cam_y;
 
         let view = Viewport::new(cam_x, cam_y, (w / 32).max(1), (h / 32).max(1));
-        let renderer = MapRenderer::new(map_ref, zoom, view).with_provinces(false);
+        let mut renderer = MapRenderer::new(map_ref, zoom, view).with_provinces(false);
+        renderer.prov_colors = Some(&self.prov_colors);
 
         // Підготувати HUD-дані ДО мутабельного borrow поверхні.
         let font_ptr: *const BitmapFont = self.hud_font().map_or(std::ptr::null(), |f| f);
@@ -510,6 +541,26 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
         }
     }
 
+    // Кольори країн (оригінал): db/country.csv → вбудована палітра exe.
+    let country_db = dh_format::db::CountryDb::load(paths)?;
+    log::info!("кольори країн: {} тегів", country_db.colors.len());
+    let prov_colors = match &world {
+        Some(w) => AppState::build_province_colors(&prov_csv, w, &country_db),
+        None => {
+            // map-only: кольори місцевості (без власників).
+            let mut colors = vec![0xFF87_ACD8u32; 3000];
+            for p in &prov_csv {
+                if p.id == 0 {
+                    continue;
+                }
+                let (r, g, b) = dh_format::province::terrain_color(p.terrain);
+                colors[p.id as usize] =
+                    0xFF00_0000 | ((r as u32) << 16) | ((g as u32) << 8) | b as u32;
+            }
+            colors
+        }
+    };
+
     let mut app = App(AppState {
         cli: cli.clone(),
         map,
@@ -525,6 +576,7 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
         zoom: 0,
         last_frame: Instant::now(),
         keys_down: Default::default(),
+        prov_colors,
     });
 
     let event_loop = EventLoop::new().context("winit: event loop")?;

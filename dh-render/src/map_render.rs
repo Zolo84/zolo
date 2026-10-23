@@ -11,7 +11,7 @@ use dh_format::ProvinceId;
 
 /// Колір океану (index = 0): темно-синій (ARGB8888, див. [`Canvas`]).
 /// TODO: звірити з оригінальним кольором гри (палітри/colorscales.csv) — RE-mapformats-full.md.
-pub const OCEAN_COLOR: Color = Color::rgb(20, 58, 106);
+pub const OCEAN_COLOR: Color = Color::rgb(135, 172, 216);
 
 /// Колір тонкої рамки-підсвітки провінцій при `show_provinces` (тимчасовий).
 /// TODO: точної семантики «підсвітлення» провінцій в оригіналі не підтверджено.
@@ -72,7 +72,9 @@ fn light_idx(bx: u32, by: u32, px: u32, py: u32, lshift: u32) -> usize {
 #[inline]
 fn shade(r: u8, g: u8, b: u8, light: Option<u32>) -> u32 {
     let m = match light {
-        Some(lv) => ((lv + 16) * 256) / 63,
+        // 6-біт світло 0..63: у грі день ~24-40 (не затемнює сильно).
+        // Множник зміщений у світлу зону: light=24 → ~0.95, light=63 → ~1.6 (кап 255).
+        Some(lv) => (((lv + 40) * 256) / 63).min(400),
         None => 256,
     };
     let f = |c: u8| ((c as u32 * m) >> 8).min(255) as u8;
@@ -190,10 +192,14 @@ impl<'a> MapRenderer<'a> {
                 match (tile, light) {
                     (Some((tx, ty)), light) => {
                         // Шар 2 — тайл атласа (index.tbl): покриває весь блок,
-                        // освітлення 6-бітним значенням lightmap.
+                        // освітлення 6-бітним значенням lightmap. Прозорі пікселі
+                        // (індекс палітри 0) пропускаються — просвічує фон провінцій.
                         for py in 0..TILE_PX {
                             for px in 0..TILE_PX {
                                 let p = self.map.tiles_bmp.get_pixel(tx + px, ty + py);
+                                if p[3] == 0 {
+                                    continue; // прозорий — фон з lightmap лишається
+                                }
                                 let lv = light
                                     .as_ref()
                                     .map(|ti| ti.light_vals[light_idx(bx, by, px, py, lshift)] as u32);

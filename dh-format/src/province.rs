@@ -161,8 +161,8 @@ fn num_i32(raw: &str) -> i32 {
 /// colorscales.csv — RE-mapformats розділи 5-6).
 pub fn terrain_color(t: Terrain) -> (u8, u8, u8) {
     match t {
-        Terrain::Ocean => (32, 74, 128),
-        Terrain::Water => (56, 110, 168),
+        Terrain::Ocean => (135, 172, 216),
+        Terrain::Water => (135, 172, 216),
         Terrain::Plains => (132, 178, 96),
         Terrain::Hills => (172, 162, 102),
         Terrain::Mountain => (142, 128, 114),
