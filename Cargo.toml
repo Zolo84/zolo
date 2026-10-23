@@ -1,0 +1,34 @@
+[workspace]
+resolver = "2"
+members = [
+    "dh-format",   # читання всіх форматів гри
+    "dh-core",     # ігрове ядро: світ, час, фази, команди
+    "dh-render",   # рендер мапи/UI (softbuffer)
+    "dh-engine",   # бінарник: збирає все разом
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+dh-format = { path = "dh-format" }
+dh-core = { path = "dh-core" }
+dh-render = { path = "dh-render" }
+anyhow = "1"
+bzip2 = "0.5"
+byteorder = "1"
+chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
+flate2 = "1"
+image = { version = "0.25", default-features = false, features = ["bmp", "png"] }
+log = "0.4"
+simplelog = "0.12"
+softbuffer = "0.4"
+thiserror = "2"
+winit = "0.30"
+
+[profile.release]
+opt-level = 3
+lto = true

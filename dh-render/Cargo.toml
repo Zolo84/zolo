@@ -1,0 +1,13 @@
+[package]
+name = "dh-render"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dh-core = { workspace = true }
+dh-format = { workspace = true }
+anyhow = { workspace = true }
+softbuffer = { workspace = true }
+winit = { workspace = true }
+log = { workspace = true }
+image = { workspace = true }

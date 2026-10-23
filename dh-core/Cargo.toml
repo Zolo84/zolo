@@ -1,0 +1,10 @@
+[package]
+name = "dh-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dh-format = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }

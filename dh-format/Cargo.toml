@@ -1,0 +1,12 @@
+[package]
+name = "dh-format"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+bzip2 = { workspace = true }
+byteorder = { workspace = true }
+image = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }

@@ -1,0 +1,13 @@
+[package]
+name = "dh-engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dh-core = { workspace = true }
+dh-format = { workspace = true }
+dh-render = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+log = { workspace = true }
+simplelog = { workspace = true }
