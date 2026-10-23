@@ -1,0 +1,10 @@
+// FUN_006697d0 @ 6697d0 size=7
+
+void __fastcall FUN_006697d0(undefined4 *param_1)
+
+{
+  *param_1 = &PTR_LAB_007f0c08;
+  return;
+}
+
+

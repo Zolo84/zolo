@@ -1,0 +1,41 @@
+// FUN_007488d0 @ 7488d0 size=115
+
+void __fastcall FUN_007488d0(undefined4 *param_1)
+
+{
+  char cVar1;
+  int iVar2;
+  
+  *param_1 = &PTR_FUN_007fa230;
+  iVar2 = param_1[6];
+  if (iVar2 != 0) {
+    cVar1 = *(char *)(iVar2 + -1);
+    if ((cVar1 == '\0') || (cVar1 == -1)) {
+      FUN_00796cd8((char *)(iVar2 + -1));
+    }
+    else {
+      *(char *)(iVar2 + -1) = cVar1 + -1;
+    }
+  }
+  param_1[6] = 0;
+  param_1[7] = 0;
+  param_1[8] = 0;
+  iVar2 = param_1[2];
+  if (iVar2 != 0) {
+    cVar1 = *(char *)(iVar2 + -1);
+    if ((cVar1 != '\0') && (cVar1 != -1)) {
+      *(char *)(iVar2 + -1) = cVar1 + -1;
+      param_1[2] = 0;
+      param_1[3] = 0;
+      param_1[4] = 0;
+      return;
+    }
+    FUN_00796cd8((char *)(iVar2 + -1));
+  }
+  param_1[2] = 0;
+  param_1[3] = 0;
+  param_1[4] = 0;
+  return;
+}
+
+

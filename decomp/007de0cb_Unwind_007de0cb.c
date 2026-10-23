@@ -1,0 +1,12 @@
+// Unwind@007de0cb @ 7de0cb size=11
+
+void Unwind_007de0cb(void)
+
+{
+  int unaff_EBP;
+  
+  FUN_00796cd8(*(undefined4 *)(unaff_EBP + -0x10));
+  return;
+}
+
+

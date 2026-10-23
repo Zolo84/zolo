@@ -1,0 +1,27 @@
+// thunk_FUN_006a8570 @ 44bad0 size=5
+
+void __fastcall thunk_FUN_006a8570(undefined4 *param_1)
+
+{
+  void *pvStack_c;
+  undefined1 *puStack_8;
+  undefined4 uStack_4;
+  
+  puStack_8 = &LAB_007d5a88;
+  pvStack_c = ExceptionList;
+  ExceptionList = &pvStack_c;
+  *param_1 = &PTR_FUN_007f66cc;
+  *(undefined ***)((int)param_1 + 10) = &PTR_FUN_007f66c4;
+  *(undefined ***)((int)param_1 + 0xe) = &PTR_LAB_007f66b0;
+  *(undefined ***)((int)param_1 + 0x16) = &PTR_LAB_007f66ac;
+  uStack_4 = 0;
+  if ((undefined4 *)param_1[0x4f21] != (undefined4 *)0x0) {
+    (*(code *)**(undefined4 **)param_1[0x4f21])(1);
+  }
+  uStack_4 = 0xffffffff;
+  FUN_00444340();
+  ExceptionList = pvStack_c;
+  return;
+}
+
+

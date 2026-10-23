@@ -1,0 +1,86 @@
+// FUN_00505ba0 @ 505ba0 size=245
+
+undefined4 FUN_00505ba0(undefined4 param_1)
+
+{
+  switch(param_1) {
+  case 0:
+    return 0x1b3;
+  case 1:
+    return 0x677;
+  case 2:
+    return 0x8d;
+  case 3:
+    return 0x678;
+  case 4:
+    return 0xb5;
+  case 5:
+    return 0xb4;
+  case 6:
+    return 0x679;
+  case 7:
+    return 0x67a;
+  case 8:
+    return 0x67b;
+  case 9:
+    return 0xb3;
+  case 10:
+    return 0xa5;
+  case 0xb:
+    return 0x605;
+  case 0xc:
+    return 0xa8;
+  case 0xd:
+    return 0xb1;
+  case 0xe:
+    return 0xaf;
+  case 0xf:
+    return 0x93;
+  case 0x10:
+    return 0x67d;
+  case 0x11:
+    return 0x597;
+  case 0x12:
+    return 0x81;
+  case 0x13:
+    return 0x67c;
+  case 0x14:
+    return 0x99;
+  case 0x15:
+    return 0x606;
+  case 0x16:
+    return 0x67e;
+  case 0x17:
+    return 0x2c5;
+  case 0x18:
+    return 0x67f;
+  case 0x19:
+    return 0x10c;
+  case 0x1a:
+    return 0x10d;
+  case 0x1b:
+    return 0x174;
+  case 0x1c:
+    return 0x9a;
+  case 0x1d:
+    return 0x9d;
+  case 0x1e:
+    return 0x9c;
+  case 0x1f:
+    return 0x9f;
+  case 0x20:
+    return 0xa3;
+  case 0x21:
+    return 0x9b;
+  case 0x22:
+    return 0x9e;
+  case 0x23:
+    return 0xa0;
+  case 0x24:
+    return 0xa4;
+  default:
+    return 0;
+  }
+}
+
+

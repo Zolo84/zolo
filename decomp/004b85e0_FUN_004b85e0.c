@@ -1,0 +1,126 @@
+// FUN_004b85e0 @ 4b85e0 size=365
+
+char * FUN_004b85e0(undefined4 param_1)
+
+{
+  switch(param_1) {
+  case 0:
+    return s_BM_AMPH_PENALTY_0083f0fc;
+  case 1:
+    return s_BM_BASE_PROXIMITY_0083f0e8;
+  case 2:
+    return s_BM_BLIZZARD_0083f0dc;
+  case 3:
+    return s_BM_CARRIER_DOCTRINE_0083f0c8;
+  case 4:
+    return s_BM_DISSENT_0083f0bc;
+  case 5:
+    return s_BM_DIVISION_PENALTY_0083f0a8;
+  case 6:
+    return s_BM_DUGIN_MODIFIER_0083f094;
+  case 7:
+    return s_BM_ENCIRCLEMENT_PENALTY_0083f07c;
+  case 8:
+    return s_BM_ENVELOPMENT_PENALTY_0083f064;
+  case 9:
+    return s_BM_FOREST_0083f058;
+  case 10:
+    return s_BM_FORT_MODIFIER_0083f044;
+  case 0xb:
+    return s_BM_FROZEN_0083f038;
+  case 0xc:
+    return s_BM_HQ_NEARBY_0083f028;
+  case 0xd:
+    return s_BM_JUNGLE_0083f01c;
+  case 0xe:
+    return s_BM_LEADER_BONUS_0083f00c;
+  case 0xf:
+    return s_BM_MARSH_0083f000;
+  case 0x10:
+    return s_BM_MOUNTAIN_0083eff4;
+  case 0x11:
+    return s_BM_HILLS_0083efe8;
+  case 0x12:
+    return s_BM_MUDDY_0083efdc;
+  case 0x13:
+    return s_BM_NIGHT_MODIFIER_0083efc8;
+  case 0x14:
+    return s_BM_PARATROOP_PENALTY_0083efb0;
+  case 0x15:
+    return s_BM_RAIN_0083efa8;
+  case 0x16:
+    return s_BM_RIVER_PENALTY_0083ef94;
+  case 0x17:
+    return s_BM_SNOW_0083ef8c;
+  case 0x18:
+    return s_BM_STORM_MODIFIER_0083ef78;
+  case 0x19:
+    return s_BM_URBAN_0083ef6c;
+  case 0x1a:
+    return s_BM_SHORE_BOMBARD_0083ef58;
+  case 0x1b:
+    return s_BM_NIGHT_FLYER_0083ef48;
+  case 0x1c:
+    return s_BM_OFFENSIVE_DOCTRINE_0083ef30;
+  case 0x1d:
+    return s_BM_DEFENSIVE_DOCTRINE_0083ef18;
+  case 0x1e:
+    return s_BM_SUPERIOR_TACTITIAN_0083ef00;
+  case 0x1f:
+    return s_BM_STACKING_PENALTY_0083eeec;
+  case 0x20:
+    return s_BM_DIFFICULTY_0083eedc;
+  case 0x21:
+    return s_BM_LACK_OF_SUPPLIES_0083eec8;
+  case 0x22:
+    return s_BM_OUT_OF_FUEL_0083eeb8;
+  case 0x23:
+    return s_BM_DESERT_0083eeac;
+  case 0x24:
+    return s_BM_WEATHER_EQ_0083ee9c;
+  case 0x25:
+    return s_BM_MINISTER_MODS_0083ee88;
+  case 0x26:
+    return s_BM_PANZER_LEADER_0083ee74;
+  case 0x27:
+    return s_BM_COMMANDO_0083ee68;
+  case 0x28:
+    return s_BM_SEAWOLF_0083ee5c;
+  case 0x29:
+    return s_BM_MULTIPLE_0083ee04;
+  case 0x2a:
+    return s_BM_SURPRISE_0083ee50;
+  case 0x2b:
+    return s_BM_RADAR_STATION_0083ee3c;
+  case 0x2c:
+    return s_BM_COMBINED_ARMS_0083ee28;
+  case 0x2d:
+    return s_BM_BETTER_COMBINED_ARMS_0083ee10;
+  case 0x2e:
+    return s_BM_EXPERIENCE_0083edf4;
+  case 0x2f:
+    return s_BM_INTERCEPT_0083ede4;
+  case 0x30:
+    return s_BM_MISSION_EFFICIENCY_0083edcc;
+  case 0x31:
+    return s_BM_ESE_0083edc4;
+  case 0x32:
+    return s_BM_AIRCOMBAT_0083edb4;
+  case 0x33:
+    return s_BM_INTEL_ADVANTAGE_0083eda0;
+  case 0x34:
+    return s_BM_FLEET_DESTROYER_0083ed8c;
+  case 0x35:
+    return s_BM_TANK_BUSTER_0083ed7c;
+  case 0x36:
+    return s_BM_CARPET_BOMBER_0083ed68;
+  case 0x37:
+    return s_BM_CLEAR_0083ed5c;
+  case 0x38:
+    return s_BM_PLAIN_0083ed50;
+  default:
+    return (char *)0x0;
+  }
+}
+
+

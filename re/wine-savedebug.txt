@@ -1,0 +1,1648 @@
+{Strings format check for all languages
+} Done. No possible errors found.
+DirectDraw object created 
+About to Initialize video!
+Setting Mode.
+Mode Set.
+Video Initialized!
+Set windorect!
+Windorect set!
+Backbuffer cleared
+Fonts Initialized!
+Loadimage!
+Loadimage used!
+Starting to Initialize sound!
+Sound fully initialized!
+Network initialized!
+MainPalettes initialized!
+Core GFX initialized!
+Initialising Map!
+Map okay.
+
+Parsing division_types.txt{
+	Reading infantry... Done!
+	Reading cavalry... Done!
+	Reading motorized... Done!
+	Reading mechanized... Done!
+	Reading light_armor... Done!
+	Reading armor... Done!
+	Reading paratrooper... Done!
+	Reading marine... Done!
+	Reading bergsjaeger... Done!
+	Reading garrison... Done!
+	Reading hq... Done!
+	Reading militia... Done!
+	Reading multi_role... Done!
+	Reading interceptor... Done!
+	Reading strategic_bomber... Done!
+	Reading tactical_bomber... Done!
+	Reading naval_bomber... Done!
+	Reading cas... Done!
+	Reading transport_plane... Done!
+	Reading flying_bomb... Done!
+	Reading flying_rocket... Done!
+	Reading battleship... Done!
+	Reading light_cruiser... Done!
+	Reading heavy_cruiser... Done!
+	Reading battlecruiser... Done!
+	Reading destroyer... Done!
+	Reading carrier... Done!
+	Reading escort_carrier... Done!
+	Reading submarine... Done!
+	Reading nuclear_submarine... Done!
+	Reading transport... Done!
+	Reading light_carrier... Done!
+	Reading rocket_interceptor... Done!
+	Reading d_rsv_33... Done!
+	Reading d_rsv_34... Done!
+	Reading d_rsv_35... Done!
+	Reading d_rsv_36... Done!
+	Reading d_rsv_37... Done!
+	Reading d_rsv_38... Done!
+	Reading d_rsv_39... Done!
+	Reading d_rsv_40... Done!
+} Done!
+
+Stat. Page Columns{
+	Army types columns on statistics page: 12
+	Naval types columns on statistics page: 10
+	Air types columns on statistics page: 9
+}
+
+AI Production Classes Redefinition{
+}
+
+Starting Unit Production Availability{
+	Militia -> Yes
+	Transports -> Yes
+}
+
+Defined Total Unit Types : 41
+Valid Land Unit Types    : 12
+Valid Air Unit Types     : 10
+Valid Naval Unit Types   : 11
+Valid Total Unit Types   : 33
+
+Unit Types List Priorities{
+	Land{
+		Infantry = 10
+		Garrison = 20
+		Militia = 30
+		Mountain = 40
+		Marines = 50
+		Paratroops = 60
+		Cavalry = 70
+		Motorized = 80
+		Mechanized = 90
+		Light Armored = 100
+		Armored = 110
+		HQ = 120
+	}
+
+	Air{
+		Interceptors = 10
+		Rocket Interceptors = 20
+		Fighters = 30
+		Close Air Support = 40
+		Tactical Bombers = 50
+		Naval Bomber = 60
+		Strategic Bombers = 70
+		Transport Planes = 80
+		Flying Bomb = 90
+		Strategic Rocket = 100
+	}
+
+	Naval{
+		Destroyers = 10
+		Light Cruiser = 20
+		Heavy Cruiser = 30
+		Battlecruiser = 40
+		Battleship = 50
+		Escort Carrier = 60
+		Light Carrier = 70
+		Carrier = 80
+		Submarines = 90
+		Heavy Submarine = 100
+		Transports = 110
+	}
+
+	All{
+		Infantry = 10
+		Garrison = 20
+		Militia = 30
+		Mountain = 40
+		Marines = 50
+		Paratroops = 60
+		Cavalry = 70
+		Motorized = 80
+		Mechanized = 90
+		Light Armored = 100
+		Armored = 110
+		HQ = 120
+		Interceptors = 10
+		Rocket Interceptors = 20
+		Fighters = 30
+		Close Air Support = 40
+		Tactical Bombers = 50
+		Naval Bomber = 60
+		Strategic Bombers = 70
+		Transport Planes = 80
+		Flying Bomb = 90
+		Strategic Rocket = 100
+		Destroyers = 10
+		Light Cruiser = 20
+		Heavy Cruiser = 30
+		Battlecruiser = 40
+		Battleship = 50
+		Escort Carrier = 60
+		Light Carrier = 70
+		Carrier = 80
+		Submarines = 90
+		Heavy Submarine = 100
+		Transports = 110
+	}
+}
+	INFO: [Infantry] ui_list priority is not defined. Setting to [0].
+	INFO: [Cavalry] ui_list priority is not defined. Setting to [1].
+	INFO: [Motorized] ui_list priority is not defined. Setting to [2].
+	INFO: [Mechanized] ui_list priority is not defined. Setting to [3].
+	INFO: [Light Armored] ui_list priority is not defined. Setting to [4].
+	INFO: [Armored] ui_list priority is not defined. Setting to [5].
+	INFO: [Paratroops] ui_list priority is not defined. Setting to [6].
+	INFO: [Marines] ui_list priority is not defined. Setting to [7].
+	INFO: [Mountain] ui_list priority is not defined. Setting to [8].
+	INFO: [Garrison] ui_list priority is not defined. Setting to [9].
+	INFO: [HQ] ui_list priority is not defined. Setting to [10].
+	INFO: [Militia] ui_list priority is not defined. Setting to [11].
+	INFO: [Fighters] ui_list priority is not defined. Setting to [1].
+	INFO: [Interceptors] ui_list priority is not defined. Setting to [1].
+	INFO: [Strategic Bombers] ui_list priority is not defined. Setting to [1].
+	INFO: [Tactical Bombers] ui_list priority is not defined. Setting to [1].
+	INFO: [Naval Bomber] ui_list priority is not defined. Setting to [1].
+	INFO: [Close Air Support] ui_list priority is not defined. Setting to [1].
+	INFO: [Transport Planes] ui_list priority is not defined. Setting to [1].
+	INFO: [Flying Bomb] ui_list priority is not defined. Setting to [1].
+	INFO: [Strategic Rocket] ui_list priority is not defined. Setting to [1].
+	INFO: [Battleship] ui_list priority is not defined. Setting to [7].
+	INFO: [Light Cruiser] ui_list priority is not defined. Setting to [4].
+	INFO: [Battlecruiser] ui_list priority is not defined. Setting to [6].
+	INFO: [Destroyers] ui_list priority is not defined. Setting to [3].
+	INFO: [Carrier] ui_list priority is not defined. Setting to [8].
+	INFO: [Escort Carrier] ui_list priority is not defined. Setting to [6].
+	INFO: [Submarines] ui_list priority is not defined. Setting to [2].
+	INFO: [Heavy Submarine] ui_list priority is not defined. Setting to [7].
+	INFO: [Transports] ui_list priority is not defined. Setting to [1].
+	INFO: [Light Carrier] ui_list priority is not defined. Setting to [8].
+	INFO: [Rocket Interceptors] ui_list priority is not defined. Setting to [1].
+	INFO: [(null)] ui_list priority is not defined. Setting to [33].
+	INFO: [(null)] ui_list priority is not defined. Setting to [34].
+	INFO: [(null)] ui_list priority is not defined. Setting to [35].
+	INFO: [(null)] ui_list priority is not defined. Setting to [36].
+	INFO: [(null)] ui_list priority is not defined. Setting to [37].
+	INFO: [(null)] ui_list priority is not defined. Setting to [38].
+	INFO: [(null)] ui_list priority is not defined. Setting to [39].
+	INFO: [(null)] ui_list priority is not defined. Setting to [40].
+
+Sorted Units by [ui_list] Priority{
+	(null) = 40
+	(null) = 39
+	(null) = 38
+	(null) = 37
+	(null) = 36
+	(null) = 35
+	(null) = 34
+	(null) = 33
+	Militia = 11
+	HQ = 10
+	Garrison = 9
+	Mountain = 8
+	Carrier = 8
+	Light Carrier = 8
+	Marines = 7
+	Battleship = 7
+	Heavy Submarine = 7
+	Paratroops = 6
+	Battlecruiser = 6
+	Escort Carrier = 6
+	Armored = 5
+	Heavy Cruiser = 5
+	Light Armored = 4
+	Light Cruiser = 4
+	Mechanized = 3
+	Destroyers = 3
+	Motorized = 2
+	Submarines = 2
+	Cavalry = 1
+	Fighters = 1
+	Interceptors = 1
+	Strategic Bombers = 1
+	Tactical Bombers = 1
+	Naval Bomber = 1
+	Close Air Support = 1
+	Transport Planes = 1
+	Flying Bomb = 1
+	Strategic Rocket = 1
+	Transports = 1
+	Rocket Interceptors = 1
+	Infantry = 0
+	}
+
+Parsing brigade_types.txt{
+	Reading none... Done!
+	Reading artillery... Done!
+	Reading sp_artillery... Done!
+	Reading rocket_artillery... Done!
+	Reading sp_rct_artillery... Done!
+	Reading anti_tank... Done!
+	Reading tank_destroyer... Done!
+	Reading light_armor_brigade... Done!
+	Reading heavy_armor... Done!
+	Reading super_heavy_armor... Done!
+	Reading armored_car... Done!
+	Reading anti_air... Done!
+	Reading police... Done!
+	Reading engineer... Done!
+	Reading cag... Done!
+	Reading escort... Done!
+	Reading naval_asw... Done!
+	Reading naval_anti_air_s... Done!
+	Reading naval_radar_s... Done!
+	Reading naval_fire_controll_s... Done!
+	Reading naval_improved_hull_s... Done!
+	Reading naval_torpedoes_s... Done!
+	Reading naval_anti_air_l... Done!
+	Reading naval_radar_l... Done!
+	Reading naval_fire_controll_l... Done!
+	Reading naval_improved_hull_l... Done!
+	Reading naval_torpedoes_l... Done!
+	Reading cavalry_brigade... Done!
+	Reading sp_anti_air... Done!
+	Reading medium_armor... Done!
+	Reading floatplane... Done!
+	Reading light_cag... Done!
+	Reading amph_armor... Done!
+	Reading glider_armor... Done!
+	Reading glider_artillery... Done!
+	Reading super_heavy_artillery... Done!
+	Reading b_rsv_36... Done!
+	Reading b_rsv_37... Done!
+	Reading b_rsv_38... Done!
+	Reading b_rsv_39... Done!
+	Reading b_rsv_40... Done!
+} Done!
+
+Brigade Sub Types{
+	Engineer Brigade set as Engineer.
+	Carrier Air Group set as CAG.
+	Escort Fighters set as Escort.
+	Light Carrier Air Group set as CAG.
+}
+
+Defined Total Brigade Types : 41
+Valid Land Brigade Types    : 17
+Valid Air Brigade Types     : 1
+Valid Naval Brigade Types   : 13
+Valid Total Brigade Types   : 31
+
+Brigade List Priorities{
+	Land{
+		Artillery Brigade = 10
+		Light Glider Artillery = 10
+		Super Heavy Artillery = 10
+		Anti-aircraft Brigade = 20
+		Engineer Brigade = 30
+		Police = 40
+		Cavalry Brigade = 50
+		Armored Car = 60
+		Self-Propelled Artillery = 70
+		Tank Destroyer = 80
+		Self-Propelled Anti-aircraft = 90
+		Light Armored Brigade = 100
+		Amphibious Light Armor = 100
+		Light Glider Armor = 100
+		Medium-tank Brigade = 110
+		Heavy Armored = 120
+		Super Heavy Armored = 130
+	}
+
+	Air{
+		Escort Fighters = 10
+	}
+
+	Naval{
+		Carrier Air Group = 10
+		Light Carrier Air Group = 20
+		Floatplane = 30
+		ASW = 40
+		Torpedoes = 50
+		Anti-air = 60
+		Radar = 70
+		Fire Control = 80
+		Improved Hull = 90
+		Capital Anti-air = 100
+		Capital Radar = 110
+		Capital Fire Control = 120
+		Capital Improved Hull = 130
+	}
+
+	All{
+		Artillery Brigade = 10
+		Light Glider Artillery = 10
+		Super Heavy Artillery = 10
+		Anti-aircraft Brigade = 20
+		Engineer Brigade = 30
+		Police = 40
+		Cavalry Brigade = 50
+		Armored Car = 60
+		Self-Propelled Artillery = 70
+		Tank Destroyer = 80
+		Self-Propelled Anti-aircraft = 90
+		Light Armored Brigade = 100
+		Amphibious Light Armor = 100
+		Light Glider Armor = 100
+		Medium-tank Brigade = 110
+		Heavy Armored = 120
+		Super Heavy Armored = 130
+		Escort Fighters = 10
+		Carrier Air Group = 10
+		Light Carrier Air Group = 20
+		Floatplane = 30
+		ASW = 40
+		Torpedoes = 50
+		Anti-air = 60
+		Radar = 70
+		Fire Control = 80
+		Improved Hull = 90
+		Capital Anti-air = 100
+		Capital Radar = 110
+		Capital Fire Control = 120
+		Capital Improved Hull = 130
+	}
+}
+
+Reading unit modifiers (modifiers.csv)... Done!
+
+Reading brigade modifiers (brigade_modifiers.csv)... Done!
+
+Parsing Mods\Darkest Hour Full\db\revolt.txt... {
+ Reading [ETH]...
+ Reading [AFG]...
+ Reading [ALB]...
+ Reading [ALG]...
+ Reading [ANG]...
+ Reading [ARA]...
+ Reading [ARG]...
+ Reading [ARM]...
+ Reading [AST]...
+ Reading [AUS]...
+ Reading [U09]...
+ Reading [AZB]...
+ Reading [BEL]...
+ Reading [BEN]...
+ Reading [BHU]...
+ Reading [BOL]...
+ Reading [BOS]...
+ Reading [BRA]...
+ Reading [BRU]...
+ Reading [BUL]...
+ Reading [BUR]...
+ Reading [BLR]...
+ Reading [CAL]...
+ Reading [CAM]...
+ Reading [CMB]...
+ Reading [CAN]...
+ Reading [U82]...
+ Reading [U78]...
+ Reading [U83]...
+ Reading [U84]...
+ Reading [CHL]...
+ Reading [CHC]...
+ Reading [U87]...
+ Reading [CHI]...
+ Reading [COL]...
+ Reading [CSA]...
+ Reading [CON]...
+ Reading [U85]...
+ Reading [COS]...
+ Reading [CRO]...
+ Reading [CZE]...
+ Reading [CUB]...
+ Reading [CYP]...
+ Reading [DDR]...
+ Reading [DEN]...
+ Reading [DOM]...
+ Reading [EAF]...
+ Reading [ECU]...
+ Reading [EGY]...
+ Reading [SAL]...
+ Reading [U73]...
+ Reading [EQA]...
+ Reading [EST]...
+ Reading [EUS]...
+ Reading [FIN]...
+ Reading [FLA]...
+ Reading [FRA]...
+ Reading [U01]...
+ Reading [GAB]...
+ Reading [U86]...
+ Reading [DFR]...
+ Reading [U08]...
+ Reading [GEO]...
+ Reading [GER]...
+ Reading [GLD]...
+ Reading [GUY]...
+ Reading [U77]...
+ Reading [GRE]...
+ Reading [CGX]...
+ Reading [GUA]...
+ Reading [GUI]...
+ Reading [HAI]...
+ Reading [U39]...
+ Reading [HON]...
+ Reading [HUN]...
+ Reading [ICL]...
+ Reading [IND]...
+ Reading [IDC]...
+ Reading [INO]...
+ Reading [PER]...
+ Reading [IRQ]...
+ Reading [IRE]...
+ Reading [U71]...
+ Reading [ISR]...
+ Reading [ITA]...
+ Reading [RSI]...
+ Reading [U88]...
+ Reading [U89]...
+ Reading [JAP]...
+ Reading [JOR]...
+ Reading [U80]...
+ Reading [KAZ]...
+ Reading [U90]...
+ Reading [KOR]...
+ Reading [PRK]...
+ Reading [KUR]...
+ Reading [U91]...
+ Reading [KYG]...
+ Reading [LAO]...
+ Reading [LAT]...
+ Reading [LEB]...
+ Reading [LIB]...
+ Reading [LBY]...
+ Reading [LIT]...
+ Reading [LUX]...
+ Reading [MAD]...
+ Reading [MLY]...
+ Reading [MAL]...
+ Reading [U92]...
+ Reading [MAN]...
+ Reading [U93]...
+ Reading [MEN]...
+ Reading [MEX]...
+ Reading [MON]...
+ Reading [MTN]...
+ Reading [MOR]...
+ Reading [MOZ]...
+ Reading [NAM]...
+ Reading [NEP]...
+ Reading [HOL]...
+ Reading [NZL]...
+ Reading [NIC]...
+ Reading [U94]...
+ Reading [NIG]...
+ Reading [NOR]...
+ Reading [OMN]...
+ Reading [OTT]...
+ Reading [PAK]...
+ Reading [PAL]...
+ Reading [PAN]...
+ Reading [PAR]...
+ Reading [PRU]...
+ Reading [PHI]...
+ Reading [POL]...
+ Reading [POR]...
+ Reading [PRI]...
+ Reading [QUE]...
+ Reading [RHO]...
+ Reading [ROM]...
+ Reading [RUS]...
+ Reading [U95]...
+ Reading [SAR]...
+ Reading [SAU]...
+ Reading [SCA]...
+ Reading [SCO]...
+ Reading [U96]...
+ Reading [SER]...
+ Reading [CSX]...
+ Reading [SIB]...
+ Reading [SIE]...
+ Reading [U75]...
+ Reading [SIK]...
+ Reading [SLO]...
+ Reading [SLV]...
+ Reading [SOM]...
+ Reading [SAF]...
+ Reading [SOV]...
+ Reading [SPA]...
+ Reading [SPR]...
+ Reading [SUD]...
+ Reading [SWE]...
+ Reading [SCH]...
+ Reading [SYR]...
+ Reading [TAJ]...
+ Reading [U97]...
+ Reading [TAN]...
+ Reading [TEX]...
+ Reading [SIA]...
+ Reading [TIB]...
+ Reading [U99]...
+ Reading [TRA]...
+ Reading [U98]...
+ Reading [TUN]...
+ Reading [TUR]...
+ Reading [TRK]...
+ Reading [U70]...
+ Reading [UKR]...
+ Reading [ENG]...
+ Reading [USA]...
+ Reading [U81]...
+ Reading [URU]...
+ Reading [UZB]...
+ Reading [VEN]...
+ Reading [VIE]...
+ Reading [U72]...
+ Reading [U76]...
+ Reading [WLL]...
+ Reading [U79]...
+ Reading [CXB]...
+ Reading [YEM]...
+ Reading [YUG]...
+ Reading [CYN]...
+ Reading [U10]...
+ Reading [U11]...
+ Reading [U12]...
+ Reading [U13]...
+ Reading [U14]...
+ Reading [U15]...
+ Reading [U16]...
+ Reading [U17]...
+ Reading [U18]...
+ Reading [U19]...
+ Reading [U20]...
+ Reading [U21]...
+ Reading [U22]...
+ Reading [U23]...
+ Reading [U24]...
+ Reading [U25]...
+ Reading [U26]...
+ Reading [U27]...
+ Reading [U28]...
+ Reading [U29]...
+ Reading [U30]...
+ Reading [U31]...
+ Reading [U32]...
+ Reading [U33]...
+ Reading [U34]...
+ Reading [U35]...
+ Reading [U40]...
+ Reading [U41]...
+ Reading [U42]...
+ Reading [U43]...
+ Reading [U44]...
+ Reading [U45]...
+ Reading [U46]...
+ Reading [U47]...
+ Reading [U48]...
+ Reading [U49]...
+ Reading [U50]...
+ Reading [UTC]...
+ Reading [UER]...
+ Reading [UPE]...
+ Reading [UGS]...
+ Reading [U05]...
+ Reading [U06]...
+ Reading [U02]...
+ Reading [U51]...
+ Reading [U53]...
+ Reading [U60]...
+ Reading [U37]...
+ Reading [U62]...
+ Reading [U74]...
+}
+
+
+Reading unit model files...{
+infantry ('db\units\divisions\infantry.txt'): (max brigades set to 2) 18 model(s) loaded (0 to 17).
+cavalry ('db\units\divisions\cavalry.txt'): 15 model(s) loaded (0 to 14).
+motorized ('db\units\divisions\motorized.txt'): 8 model(s) loaded (0 to 7).
+mechanized ('db\units\divisions\mechanized.txt'): 6 model(s) loaded (0 to 5).
+light_armor ('db\units\divisions\light_armor.txt'): 3 model(s) loaded (0 to 2).
+armor ('db\units\divisions\armor.txt'): 8 model(s) loaded (0 to 7).
+paratrooper ('db\units\divisions\paratrooper.txt'): 8 model(s) loaded (0 to 7).
+marine ('db\units\divisions\marine.txt'): 11 model(s) loaded (0 to 10).
+bergsjaeger ('db\units\divisions\bergsjaeger.txt'): 18 model(s) loaded (0 to 17).
+garrison ('db\units\divisions\garrison.txt'): (max brigades set to 2) 10 model(s) loaded (0 to 9).
+hq ('db\units\divisions\hq.txt'): 6 model(s) loaded (0 to 5).
+militia ('db\units\divisions\militia.txt'): 10 model(s) loaded (0 to 9).
+multi_role ('db\units\divisions\multi_role.txt'): 14 model(s) loaded (0 to 13).
+interceptor ('db\units\divisions\interceptor.txt'): 17 model(s) loaded (0 to 16).
+strategic_bomber ('db\units\divisions\strategic_bomber.txt'): 10 model(s) loaded (0 to 9).
+tactical_bomber ('db\units\divisions\tactical_bomber.txt'): 13 model(s) loaded (0 to 12).
+naval_bomber ('db\units\divisions\naval_bomber.txt'): 9 model(s) loaded (0 to 8).
+cas ('db\units\divisions\cas.txt'): 7 model(s) loaded (0 to 6).
+transport_plane ('db\units\divisions\transport_plane.txt'): (max brigades set to 1) 6 model(s) loaded (0 to 5).
+flying_bomb ('db\units\divisions\flying_bomb.txt'): 1 model(s) loaded (0 to 0).
+flying_rocket ('db\units\divisions\flying_rocket.txt'): 3 model(s) loaded (0 to 2).
+battleship ('db\units\divisions\battleship.txt'): 14 model(s) loaded (0 to 13).
+light_cruiser ('db\units\divisions\light_cruiser.txt'): 10 model(s) loaded (0 to 9).
+heavy_cruiser ('db\units\divisions\heavy_cruiser.txt'): 10 model(s) loaded (0 to 9).
+battlecruiser ('db\units\divisions\battlecruiser.txt'): 7 model(s) loaded (0 to 6).
+destroyer ('db\units\divisions\destroyer.txt'): 10 model(s) loaded (0 to 9).
+carrier ('db\units\divisions\carrier.txt'): (max brigades set to 4) 9 model(s) loaded (0 to 8).
+escort_carrier ('db\units\divisions\escort_carrier.txt'): (max brigades set to 3) 5 model(s) loaded (0 to 4).
+submarine ('db\units\divisions\submarine.txt'): (max brigades set to 1) 13 model(s) loaded (0 to 12).
+nuclear_submarine ('db\units\divisions\nuclear_submarine.txt'): (max brigades set to 2) 4 model(s) loaded (0 to 3).
+transport ('db\units\divisions\transport.txt'): 6 model(s) loaded (0 to 5).
+light_carrier ('db\units\divisions\light_carrier.txt'): (max brigades set to 4) 4 model(s) loaded (0 to 3).
+rocket_interceptor ('db\units\divisions\rocket_interceptor.txt'): (max brigades set to 0) 2 model(s) loaded (0 to 1).
+d_rsv_33 ('db\units\divisions\d_rsv_33.txt'): 1 model(s) loaded (0 to 0).
+d_rsv_34 ('db\units\divisions\d_rsv_34.txt'): 1 model(s) loaded (0 to 0).
+d_rsv_35 ('db\units\divisions\d_rsv_35.txt'): 1 model(s) loaded (0 to 0).
+d_rsv_36 ('db\units\divisions\d_rsv_36.txt'): 1 model(s) loaded (0 to 0).
+d_rsv_37 ('db\units\divisions\d_rsv_37.txt'): 1 model(s) loaded (0 to 0).
+d_rsv_38 ('db\units\divisions\d_rsv_38.txt'): 1 model(s) loaded (0 to 0).
+d_rsv_39 ('db\units\divisions\d_rsv_39.txt'): 1 model(s) loaded (0 to 0).
+d_rsv_40 ('db\units\divisions\d_rsv_40.txt'): 1 model(s) loaded (0 to 0).
+Units models read is complete. 303 models loaded in total.
+
+UPGRADE PATHS
+
+infantry (18 models)
+	 Can be upgraded to cavalry (0.8100 Cost, 0.7200 Time)
+	 Can be upgraded to motorized (1.3400 Cost, 0.5200 Time)
+	 Can be upgraded to mechanized (0.9900 Cost, 0.8000 Time)
+	 Can be upgraded to paratrooper (1.4200 Cost, 0.5000 Time)
+	 Can be upgraded to marine (1.3000 Cost, 0.5000 Time)
+	 Can be upgraded to bergsjaeger (0.9300 Cost, 0.5000 Time)
+	 Can be upgraded to garrison (0.6900 Cost, 0.3200 Time)
+	infantry-0 upgrades to infantry-1
+	infantry-1 upgrades to infantry-2
+	infantry-2 upgrades to infantry-3
+	infantry-3 upgrades to infantry-4
+	infantry-4 upgrades to infantry-5
+	infantry-5 upgrades to infantry-6
+	infantry-6 upgrades to infantry-7
+	infantry-7 upgrades to infantry-8
+	infantry-8 upgrades to infantry-9
+	infantry-9 upgrades to infantry-10
+	infantry-10 upgrades to infantry-11
+	infantry-11 upgrades to infantry-12
+	infantry-12 upgrades to infantry-13
+	infantry-13 upgrades to infantry-14
+	infantry-14 upgrades to infantry-15
+	infantry-15 upgrades to infantry-16
+	infantry-16 upgrades to infantry-17
+	infantry-17 does not upgrade
+
+cavalry (15 models)
+	 Can be upgraded to infantry (0.2800 Cost, 0.8000 Time)
+	 Can be upgraded to motorized (0.3000 Cost, 0.8000 Time)
+	 Can be upgraded to mechanized (0.5500 Cost, 0.8000 Time)
+	 Can be upgraded to light_armor (0.6900 Cost, 0.8000 Time)
+	 Can be upgraded to armor (0.8700 Cost, 0.8000 Time)
+	cavalry-0 upgrades to cavalry-1
+	cavalry-1 upgrades to cavalry-2
+	cavalry-2 upgrades to cavalry-3
+	cavalry-3 upgrades to cavalry-4
+	cavalry-4 upgrades to cavalry-5
+	cavalry-5 upgrades to cavalry-6
+	cavalry-6 upgrades to cavalry-7
+	cavalry-7 upgrades to cavalry-8
+	cavalry-8 upgrades to cavalry-9
+	cavalry-9 upgrades to cavalry-10
+	cavalry-10 upgrades to cavalry-11
+	cavalry-11 upgrades to cavalry-12
+	cavalry-12 upgrades to cavalry-13
+	cavalry-13 upgrades to cavalry-14
+	cavalry-14 does not upgrade
+
+motorized (8 models)
+	 Can be upgraded to infantry (1.1600 Cost, 0.1900 Time)
+	 Can be upgraded to mechanized (0.3200 Cost, 0.8000 Time)
+	 Can be upgraded to light_armor (0.4900 Cost, 0.8000 Time)
+	 Can be upgraded to armor (0.7300 Cost, 0.8000 Time)
+	motorized-0 upgrades to motorized-1
+	motorized-1 upgrades to motorized-2
+	motorized-2 upgrades to motorized-3
+	motorized-3 upgrades to motorized-4
+	motorized-4 upgrades to motorized-5
+	motorized-5 upgrades to motorized-6
+	motorized-6 upgrades to motorized-7
+	motorized-7 does not upgrade
+
+mechanized (6 models)
+	 Can be upgraded to infantry (1.1600 Cost, 0.1900 Time)
+	 Can be upgraded to motorized (0.8100 Cost, 0.2700 Time)
+	 Can be upgraded to light_armor (0.2800 Cost, 0.8000 Time)
+	 Can be upgraded to armor (0.5300 Cost, 0.8000 Time)
+	mechanized-0 upgrades to mechanized-1
+	mechanized-1 upgrades to mechanized-2
+	mechanized-2 upgrades to mechanized-3
+	mechanized-3 upgrades to mechanized-4
+	mechanized-4 upgrades to mechanized-5
+	mechanized-5 does not upgrade
+
+light_armor (3 models)
+	 Can be upgraded to infantry (1.1600 Cost, 0.1900 Time)
+	 Can be upgraded to motorized (0.9600 Cost, 0.2300 Time)
+	 Can be upgraded to mechanized (0.3900 Cost, 0.5600 Time)
+	 Can be upgraded to armor (0.3600 Cost, 0.8000 Time)
+	light_armor-0 upgrades to light_armor-1
+	light_armor-1 upgrades to light_armor-2
+	light_armor-2 upgrades to armor-0
+
+armor (8 models)
+	 Can be upgraded to infantry (1.1600 Cost, 0.1900 Time)
+	 Can be upgraded to motorized (0.9600 Cost, 0.2300 Time)
+	 Can be upgraded to mechanized (0.3900 Cost, 0.5600 Time)
+	 Can be upgraded to light_armor (0.2800 Cost, 0.8000 Time)
+	armor-0 upgrades to armor-1
+	armor-1 upgrades to armor-2
+	armor-2 upgrades to armor-3
+	armor-3 upgrades to armor-4
+	armor-4 upgrades to armor-5
+	armor-5 upgrades to armor-6
+	armor-6 upgrades to armor-7
+	armor-7 does not upgrade
+
+paratrooper (8 models)
+	 Can be upgraded to infantry (0.2800 Cost, 0.8000 Time)
+	paratrooper-0 upgrades to paratrooper-1
+	paratrooper-1 upgrades to paratrooper-2
+	paratrooper-2 upgrades to paratrooper-3
+	paratrooper-3 upgrades to paratrooper-4
+	paratrooper-4 upgrades to paratrooper-5
+	paratrooper-5 upgrades to paratrooper-6
+	paratrooper-6 upgrades to paratrooper-7
+	paratrooper-7 does not upgrade
+
+marine (11 models)
+	 Can be upgraded to infantry (0.8800 Cost, 0.2500 Time)
+	marine-0 upgrades to marine-1
+	marine-1 upgrades to marine-2
+	marine-2 upgrades to marine-3
+	marine-3 upgrades to marine-4
+	marine-4 upgrades to marine-5
+	marine-5 upgrades to marine-6
+	marine-6 upgrades to marine-7
+	marine-7 upgrades to marine-8
+	marine-8 upgrades to marine-9
+	marine-9 upgrades to marine-10
+	marine-10 does not upgrade
+
+bergsjaeger (18 models)
+	 Can be upgraded to infantry (0.8800 Cost, 0.2500 Time)
+	bergsjaeger-0 upgrades to bergsjaeger-1
+	bergsjaeger-1 upgrades to bergsjaeger-2
+	bergsjaeger-2 upgrades to bergsjaeger-3
+	bergsjaeger-3 upgrades to bergsjaeger-4
+	bergsjaeger-4 upgrades to bergsjaeger-5
+	bergsjaeger-5 upgrades to bergsjaeger-6
+	bergsjaeger-6 upgrades to bergsjaeger-7
+	bergsjaeger-7 upgrades to bergsjaeger-8
+	bergsjaeger-8 upgrades to bergsjaeger-9
+	bergsjaeger-9 upgrades to bergsjaeger-10
+	bergsjaeger-10 upgrades to bergsjaeger-11
+	bergsjaeger-11 upgrades to bergsjaeger-12
+	bergsjaeger-12 upgrades to bergsjaeger-13
+	bergsjaeger-13 upgrades to bergsjaeger-14
+	bergsjaeger-14 upgrades to bergsjaeger-15
+	bergsjaeger-15 upgrades to bergsjaeger-16
+	bergsjaeger-16 upgrades to bergsjaeger-17
+	bergsjaeger-17 does not upgrade
+
+garrison (10 models)
+	 Can be upgraded to infantry (0.7700 Cost, 0.8000 Time)
+	garrison-0 upgrades to garrison-1
+	garrison-1 upgrades to garrison-2
+	garrison-2 upgrades to garrison-3
+	garrison-3 upgrades to garrison-4
+	garrison-4 upgrades to garrison-5
+	garrison-5 upgrades to garrison-6
+	garrison-6 upgrades to garrison-7
+	garrison-7 upgrades to garrison-8
+	garrison-8 upgrades to garrison-9
+	garrison-9 does not upgrade
+
+hq (6 models)
+	hq-0 upgrades to hq-1
+	hq-1 upgrades to hq-2
+	hq-2 upgrades to hq-3
+	hq-3 upgrades to hq-4
+	hq-4 upgrades to hq-5
+	hq-5 does not upgrade
+
+militia (10 models)
+	 Can be upgraded to infantry (0.8100 Cost, 0.8000 Time)
+	 Can be upgraded to cavalry (1.1100 Cost, 0.8000 Time)
+	 Can be upgraded to garrison (0.2800 Cost, 0.8000 Time)
+	militia-0 upgrades to militia-1
+	militia-1 upgrades to militia-2
+	militia-2 upgrades to militia-3
+	militia-3 upgrades to militia-4
+	militia-4 upgrades to militia-5
+	militia-5 upgrades to militia-6
+	militia-6 upgrades to militia-7
+	militia-7 upgrades to militia-8
+	militia-8 upgrades to militia-9
+	militia-9 does not upgrade
+
+multi_role (14 models)
+	 Can be upgraded to interceptor (1.4000 Cost, 0.4200 Time)
+	 Can be upgraded to cas (1.4000 Cost, 0.4200 Time)
+	 Can be upgraded to rocket_interceptor (1.4000 Cost, 0.4200 Time)
+	multi_role-0 upgrades to multi_role-1
+	multi_role-1 upgrades to multi_role-2
+	multi_role-2 upgrades to multi_role-3
+	multi_role-3 upgrades to multi_role-4
+	multi_role-4 upgrades to multi_role-5
+	multi_role-5 upgrades to multi_role-6
+	multi_role-6 upgrades to multi_role-7
+	multi_role-7 upgrades to multi_role-8
+	multi_role-8 upgrades to multi_role-9
+	multi_role-9 upgrades to multi_role-10
+	multi_role-10 upgrades to multi_role-11
+	multi_role-11 upgrades to multi_role-12
+	multi_role-12 upgrades to multi_role-13
+	multi_role-13 does not upgrade
+
+interceptor (17 models)
+	 Can be upgraded to multi_role (1.4000 Cost, 0.4200 Time)
+	 Can be upgraded to cas (1.4000 Cost, 0.4200 Time)
+	 Can be upgraded to rocket_interceptor (1.4000 Cost, 0.4200 Time)
+	interceptor-0 upgrades to interceptor-1
+	interceptor-1 upgrades to interceptor-2
+	interceptor-2 upgrades to interceptor-3
+	interceptor-3 upgrades to interceptor-4
+	interceptor-4 upgrades to interceptor-5
+	interceptor-5 upgrades to interceptor-6
+	interceptor-6 upgrades to interceptor-7
+	interceptor-7 upgrades to interceptor-8
+	interceptor-8 upgrades to interceptor-9
+	interceptor-9 upgrades to interceptor-10
+	interceptor-10 upgrades to interceptor-11
+	interceptor-11 upgrades to interceptor-12
+	interceptor-12 upgrades to interceptor-13
+	interceptor-13 upgrades to interceptor-14
+	interceptor-14 upgrades to interceptor-15
+	interceptor-15 upgrades to interceptor-16
+	interceptor-16 does not upgrade
+
+strategic_bomber (10 models)
+	 Can be upgraded to tactical_bomber (1.4000 Cost, 0.5400 Time)
+	 Can be upgraded to naval_bomber (1.4000 Cost, 0.5400 Time)
+	strategic_bomber-0 upgrades to strategic_bomber-1
+	strategic_bomber-1 upgrades to strategic_bomber-2
+	strategic_bomber-2 upgrades to strategic_bomber-3
+	strategic_bomber-3 upgrades to strategic_bomber-4
+	strategic_bomber-4 upgrades to strategic_bomber-5
+	strategic_bomber-5 upgrades to strategic_bomber-6
+	strategic_bomber-6 upgrades to strategic_bomber-7
+	strategic_bomber-7 upgrades to strategic_bomber-8
+	strategic_bomber-8 upgrades to strategic_bomber-9
+	strategic_bomber-9 does not upgrade
+
+tactical_bomber (13 models)
+	 Can be upgraded to strategic_bomber (1.4000 Cost, 0.5400 Time)
+	 Can be upgraded to naval_bomber (1.4000 Cost, 0.5400 Time)
+	tactical_bomber-0 upgrades to tactical_bomber-1
+	tactical_bomber-1 upgrades to tactical_bomber-2
+	tactical_bomber-2 upgrades to tactical_bomber-3
+	tactical_bomber-3 upgrades to tactical_bomber-4
+	tactical_bomber-4 upgrades to tactical_bomber-5
+	tactical_bomber-5 upgrades to tactical_bomber-6
+	tactical_bomber-6 upgrades to tactical_bomber-7
+	tactical_bomber-7 upgrades to tactical_bomber-8
+	tactical_bomber-8 upgrades to tactical_bomber-9
+	tactical_bomber-9 upgrades to tactical_bomber-10
+	tactical_bomber-10 upgrades to tactical_bomber-11
+	tactical_bomber-11 upgrades to tactical_bomber-12
+	tactical_bomber-12 does not upgrade
+
+naval_bomber (9 models)
+	 Can be upgraded to strategic_bomber (1.4000 Cost, 0.5400 Time)
+	 Can be upgraded to tactical_bomber (1.4000 Cost, 0.5400 Time)
+	naval_bomber-0 upgrades to naval_bomber-1
+	naval_bomber-1 upgrades to naval_bomber-2
+	naval_bomber-2 upgrades to naval_bomber-3
+	naval_bomber-3 upgrades to naval_bomber-4
+	naval_bomber-4 upgrades to naval_bomber-5
+	naval_bomber-5 upgrades to naval_bomber-6
+	naval_bomber-6 upgrades to naval_bomber-7
+	naval_bomber-7 upgrades to naval_bomber-8
+	naval_bomber-8 does not upgrade
+
+cas (7 models)
+	 Can be upgraded to multi_role (1.4000 Cost, 0.4200 Time)
+	 Can be upgraded to interceptor (1.4000 Cost, 0.4200 Time)
+	 Can be upgraded to rocket_interceptor (1.4000 Cost, 0.4200 Time)
+	cas-0 upgrades to cas-1
+	cas-1 upgrades to cas-2
+	cas-2 upgrades to cas-3
+	cas-3 upgrades to cas-4
+	cas-4 upgrades to cas-5
+	cas-5 upgrades to cas-6
+	cas-6 does not upgrade
+
+transport_plane (6 models)
+	transport_plane-0 upgrades to transport_plane-1
+	transport_plane-1 upgrades to transport_plane-2
+	transport_plane-2 upgrades to transport_plane-3
+	transport_plane-3 upgrades to transport_plane-4
+	transport_plane-4 upgrades to transport_plane-5
+	transport_plane-5 does not upgrade
+
+flying_bomb (1 models)
+	flying_bomb-0 does not upgrade
+
+flying_rocket (3 models)
+	flying_rocket-0 does not upgrade
+	flying_rocket-1 does not upgrade
+	flying_rocket-2 does not upgrade
+
+battleship (14 models)
+	battleship-0 does not upgrade
+	battleship-1 does not upgrade
+	battleship-2 does not upgrade
+	battleship-3 does not upgrade
+	battleship-4 does not upgrade
+	battleship-5 does not upgrade
+	battleship-6 does not upgrade
+	battleship-7 does not upgrade
+	battleship-8 does not upgrade
+	battleship-9 does not upgrade
+	battleship-10 does not upgrade
+	battleship-11 does not upgrade
+	battleship-12 does not upgrade
+	battleship-13 does not upgrade
+
+light_cruiser (10 models)
+	light_cruiser-0 does not upgrade
+	light_cruiser-1 does not upgrade
+	light_cruiser-2 does not upgrade
+	light_cruiser-3 does not upgrade
+	light_cruiser-4 does not upgrade
+	light_cruiser-5 does not upgrade
+	light_cruiser-6 does not upgrade
+	light_cruiser-7 does not upgrade
+	light_cruiser-8 does not upgrade
+	light_cruiser-9 does not upgrade
+
+heavy_cruiser (10 models)
+	heavy_cruiser-0 does not upgrade
+	heavy_cruiser-1 does not upgrade
+	heavy_cruiser-2 does not upgrade
+	heavy_cruiser-3 does not upgrade
+	heavy_cruiser-4 does not upgrade
+	heavy_cruiser-5 does not upgrade
+	heavy_cruiser-6 does not upgrade
+	heavy_cruiser-7 does not upgrade
+	heavy_cruiser-8 does not upgrade
+	heavy_cruiser-9 does not upgrade
+
+battlecruiser (7 models)
+	battlecruiser-0 does not upgrade
+	battlecruiser-1 does not upgrade
+	battlecruiser-2 does not upgrade
+	battlecruiser-3 does not upgrade
+	battlecruiser-4 does not upgrade
+	battlecruiser-5 does not upgrade
+	battlecruiser-6 does not upgrade
+
+destroyer (10 models)
+	destroyer-0 does not upgrade
+	destroyer-1 does not upgrade
+	destroyer-2 does not upgrade
+	destroyer-3 does not upgrade
+	destroyer-4 does not upgrade
+	destroyer-5 does not upgrade
+	destroyer-6 does not upgrade
+	destroyer-7 does not upgrade
+	destroyer-8 does not upgrade
+	destroyer-9 does not upgrade
+
+carrier (9 models)
+	carrier-0 does not upgrade
+	carrier-1 does not upgrade
+	carrier-2 does not upgrade
+	carrier-3 does not upgrade
+	carrier-4 does not upgrade
+	carrier-5 does not upgrade
+	carrier-6 does not upgrade
+	carrier-7 does not upgrade
+	carrier-8 does not upgrade
+
+escort_carrier (5 models)
+	escort_carrier-0 does not upgrade
+	escort_carrier-1 does not upgrade
+	escort_carrier-2 does not upgrade
+	escort_carrier-3 does not upgrade
+	escort_carrier-4 does not upgrade
+
+submarine (13 models)
+	submarine-0 does not upgrade
+	submarine-1 does not upgrade
+	submarine-2 does not upgrade
+	submarine-3 does not upgrade
+	submarine-4 does not upgrade
+	submarine-5 does not upgrade
+	submarine-6 does not upgrade
+	submarine-7 does not upgrade
+	submarine-8 does not upgrade
+	submarine-9 does not upgrade
+	submarine-10 does not upgrade
+	submarine-11 does not upgrade
+	submarine-12 does not upgrade
+
+nuclear_submarine (4 models)
+	nuclear_submarine-0 does not upgrade
+	nuclear_submarine-1 does not upgrade
+	nuclear_submarine-2 does not upgrade
+	nuclear_submarine-3 does not upgrade
+
+transport (6 models)
+	transport-0 does not upgrade
+	transport-1 does not upgrade
+	transport-2 does not upgrade
+	transport-3 does not upgrade
+	transport-4 does not upgrade
+	transport-5 does not upgrade
+
+light_carrier (4 models)
+	light_carrier-0 does not upgrade
+	light_carrier-1 does not upgrade
+	light_carrier-2 does not upgrade
+	light_carrier-3 does not upgrade
+
+rocket_interceptor (2 models)
+	 Can be upgraded to multi_role (1.4000 Cost, 0.4200 Time)
+	 Can be upgraded to interceptor (1.4000 Cost, 0.4200 Time)
+	 Can be upgraded to cas (1.4000 Cost, 0.4200 Time)
+	rocket_interceptor-0 upgrades to rocket_interceptor-1
+	rocket_interceptor-1 upgrades to interceptor-12
+
+d_rsv_33 (1 models)
+	d_rsv_33-0 does not upgrade
+
+d_rsv_34 (1 models)
+	d_rsv_34-0 does not upgrade
+
+d_rsv_35 (1 models)
+	d_rsv_35-0 does not upgrade
+
+d_rsv_36 (1 models)
+	d_rsv_36-0 does not upgrade
+
+d_rsv_37 (1 models)
+	d_rsv_37-0 does not upgrade
+
+d_rsv_38 (1 models)
+	d_rsv_38-0 does not upgrade
+
+d_rsv_39 (1 models)
+	d_rsv_39-0 does not upgrade
+
+d_rsv_40 (1 models)
+	d_rsv_40-0 does not upgrade
+
+}
+
+Reading brigade model files...{
+none ('db\units\brigades\none.txt'): 1 model(s) loaded (0 to 0).
+artillery ('db\units\brigades\artillery.txt'): 14 model(s) loaded (0 to 13).
+sp_artillery ('db\units\brigades\sp_artillery.txt'): 8 model(s) loaded (0 to 7).
+rocket_artillery ('db\units\brigades\rocket_artillery.txt'): 1 model(s) loaded (0 to 0).
+sp_rct_artillery ('db\units\brigades\sp_rct_artillery.txt'): 1 model(s) loaded (0 to 0).
+anti_tank ('db\units\brigades\anti_tank.txt'): 1 model(s) loaded (0 to 0).
+tank_destroyer ('db\units\brigades\tank_destroyer.txt'): 8 model(s) loaded (0 to 7).
+light_armor_brigade ('db\units\brigades\light_armor_brigade.txt'): 9 model(s) loaded (0 to 8).
+heavy_armor ('db\units\brigades\heavy_armor.txt'): 6 model(s) loaded (0 to 5).
+super_heavy_armor ('db\units\brigades\super_heavy_armor.txt'): 2 model(s) loaded (0 to 1).
+armored_car ('db\units\brigades\armored_car.txt'): 8 model(s) loaded (0 to 7).
+anti_air ('db\units\brigades\anti_air.txt'): 7 model(s) loaded (0 to 6).
+police ('db\units\brigades\police.txt'): 3 model(s) loaded (0 to 2).
+engineer ('db\units\brigades\engineer.txt'): 8 model(s) loaded (0 to 7).
+cag ('db\units\brigades\cag.txt'): 9 model(s) loaded (0 to 8).
+escort ('db\units\brigades\escort.txt'): 9 model(s) loaded (0 to 8).
+naval_asw ('db\units\brigades\naval_asw.txt'): 6 model(s) loaded (0 to 5).
+naval_anti_air_s ('db\units\brigades\naval_anti_air_s.txt'): 6 model(s) loaded (0 to 5).
+naval_radar_s ('db\units\brigades\naval_radar_s.txt'): 4 model(s) loaded (0 to 3).
+naval_fire_controll_s ('db\units\brigades\naval_fire_controll_s.txt'): 3 model(s) loaded (0 to 2).
+naval_improved_hull_s ('db\units\brigades\naval_improved_hull_s.txt'): 1 model(s) loaded (0 to 0).
+naval_torpedoes_s ('db\units\brigades\naval_torpedoes_s.txt'): 2 model(s) loaded (0 to 1).
+naval_anti_air_l ('db\units\brigades\naval_anti_air_l.txt'): 6 model(s) loaded (0 to 5).
+naval_radar_l ('db\units\brigades\naval_radar_l.txt'): 5 model(s) loaded (0 to 4).
+naval_fire_controll_l ('db\units\brigades\naval_fire_controll_l.txt'): 3 model(s) loaded (0 to 2).
+naval_improved_hull_l ('db\units\brigades\naval_improved_hull_l.txt'): 1 model(s) loaded (0 to 0).
+naval_torpedoes_l ('db\units\brigades\naval_torpedoes_l.txt'): 1 model(s) loaded (0 to 0).
+cavalry_brigade ('db\units\brigades\cavalry_brigade.txt'): 15 model(s) loaded (0 to 14).
+sp_anti_air ('db\units\brigades\sp_anti_air.txt'): 6 model(s) loaded (0 to 5).
+medium_armor ('db\units\brigades\medium_armor.txt'): 11 model(s) loaded (0 to 10).
+floatplane ('db\units\brigades\floatplane.txt'): 8 model(s) loaded (0 to 7).
+light_cag ('db\units\brigades\light_cag.txt'): 9 model(s) loaded (0 to 8).
+amph_armor ('db\units\brigades\amph_armor.txt'): 2 model(s) loaded (0 to 1).
+glider_armor ('db\units\brigades\glider_armor.txt'): 2 model(s) loaded (0 to 1).
+glider_artillery ('db\units\brigades\glider_artillery.txt'): 5 model(s) loaded (0 to 4).
+super_heavy_artillery ('db\units\brigades\super_heavy_artillery.txt'): 6 model(s) loaded (0 to 5).
+b_rsv_36 ('db\units\brigades\b_rsv_36.txt'): 1 model(s) loaded (0 to 0).
+b_rsv_37 ('db\units\brigades\b_rsv_37.txt'): 1 model(s) loaded (0 to 0).
+b_rsv_38 ('db\units\brigades\b_rsv_38.txt'): 1 model(s) loaded (0 to 0).
+b_rsv_39 ('db\units\brigades\b_rsv_39.txt'): 1 model(s) loaded (0 to 0).
+b_rsv_40 ('db\units\brigades\b_rsv_40.txt'): 1 model(s) loaded (0 to 0).
+
+UPGRADE PATHS
+
+none (1 models)
+	none-0 does not upgrade
+
+artillery (14 models)
+	artillery-0 upgrades to artillery-1
+	artillery-1 upgrades to artillery-2
+	artillery-2 upgrades to artillery-3
+	artillery-3 upgrades to artillery-4
+	artillery-4 upgrades to artillery-5
+	artillery-5 upgrades to artillery-6
+	artillery-6 upgrades to artillery-7
+	artillery-7 upgrades to artillery-8
+	artillery-8 upgrades to artillery-9
+	artillery-9 upgrades to artillery-10
+	artillery-10 upgrades to artillery-11
+	artillery-11 upgrades to artillery-12
+	artillery-12 upgrades to artillery-13
+	artillery-13 does not upgrade
+
+sp_artillery (8 models)
+	sp_artillery-0 upgrades to sp_artillery-1
+	sp_artillery-1 upgrades to sp_artillery-2
+	sp_artillery-2 upgrades to sp_artillery-3
+	sp_artillery-3 upgrades to sp_artillery-4
+	sp_artillery-4 upgrades to sp_artillery-5
+	sp_artillery-5 upgrades to sp_artillery-6
+	sp_artillery-6 upgrades to sp_artillery-7
+	sp_artillery-7 does not upgrade
+
+rocket_artillery (1 models)
+	rocket_artillery-0 does not upgrade
+
+sp_rct_artillery (1 models)
+	sp_rct_artillery-0 does not upgrade
+
+anti_tank (1 models)
+	anti_tank-0 does not upgrade
+
+tank_destroyer (8 models)
+	tank_destroyer-0 upgrades to tank_destroyer-1
+	tank_destroyer-1 upgrades to tank_destroyer-2
+	tank_destroyer-2 upgrades to tank_destroyer-3
+	tank_destroyer-3 upgrades to tank_destroyer-4
+	tank_destroyer-4 upgrades to tank_destroyer-5
+	tank_destroyer-5 upgrades to tank_destroyer-6
+	tank_destroyer-6 upgrades to tank_destroyer-7
+	tank_destroyer-7 does not upgrade
+
+light_armor_brigade (9 models)
+	light_armor_brigade-0 upgrades to light_armor_brigade-1
+	light_armor_brigade-1 upgrades to light_armor_brigade-2
+	light_armor_brigade-2 upgrades to light_armor_brigade-3
+	light_armor_brigade-3 upgrades to light_armor_brigade-4
+	light_armor_brigade-4 upgrades to light_armor_brigade-5
+	light_armor_brigade-5 upgrades to light_armor_brigade-6
+	light_armor_brigade-6 upgrades to light_armor_brigade-7
+	light_armor_brigade-7 upgrades to light_armor_brigade-8
+	light_armor_brigade-8 does not upgrade
+
+heavy_armor (6 models)
+	heavy_armor-0 upgrades to medium_armor-0
+	heavy_armor-1 upgrades to heavy_armor-2
+	heavy_armor-2 upgrades to heavy_armor-3
+	heavy_armor-3 upgrades to heavy_armor-4
+	heavy_armor-4 upgrades to heavy_armor-5
+	heavy_armor-5 does not upgrade
+
+super_heavy_armor (2 models)
+	super_heavy_armor-0 upgrades to medium_armor-0
+	super_heavy_armor-1 does not upgrade
+
+armored_car (8 models)
+	armored_car-0 upgrades to armored_car-1
+	armored_car-1 upgrades to armored_car-2
+	armored_car-2 upgrades to armored_car-3
+	armored_car-3 upgrades to armored_car-4
+	armored_car-4 upgrades to armored_car-5
+	armored_car-5 upgrades to armored_car-6
+	armored_car-6 upgrades to armored_car-7
+	armored_car-7 does not upgrade
+
+anti_air (7 models)
+	anti_air-0 upgrades to anti_air-1
+	anti_air-1 upgrades to anti_air-2
+	anti_air-2 upgrades to anti_air-3
+	anti_air-3 upgrades to anti_air-4
+	anti_air-4 upgrades to anti_air-5
+	anti_air-5 upgrades to anti_air-6
+	anti_air-6 does not upgrade
+
+police (3 models)
+	police-0 upgrades to police-1
+	police-1 upgrades to police-2
+	police-2 does not upgrade
+
+engineer (8 models)
+	engineer-0 upgrades to engineer-1
+	engineer-1 upgrades to engineer-2
+	engineer-2 upgrades to engineer-3
+	engineer-3 upgrades to engineer-4
+	engineer-4 upgrades to engineer-5
+	engineer-5 upgrades to engineer-6
+	engineer-6 upgrades to engineer-7
+	engineer-7 does not upgrade
+
+cag (9 models)
+	cag-0 upgrades to cag-1
+	cag-1 upgrades to cag-2
+	cag-2 upgrades to cag-3
+	cag-3 upgrades to cag-4
+	cag-4 upgrades to cag-5
+	cag-5 upgrades to cag-6
+	cag-6 upgrades to cag-7
+	cag-7 upgrades to cag-8
+	cag-8 does not upgrade
+
+escort (9 models)
+	escort-0 upgrades to escort-1
+	escort-1 upgrades to escort-2
+	escort-2 upgrades to escort-3
+	escort-3 upgrades to escort-4
+	escort-4 upgrades to escort-5
+	escort-5 upgrades to escort-6
+	escort-6 upgrades to escort-7
+	escort-7 upgrades to escort-8
+	escort-8 does not upgrade
+
+naval_asw (6 models)
+	naval_asw-0 upgrades to naval_asw-1
+	naval_asw-1 upgrades to naval_asw-2
+	naval_asw-2 upgrades to naval_asw-3
+	naval_asw-3 upgrades to naval_asw-4
+	naval_asw-4 upgrades to naval_asw-5
+	naval_asw-5 does not upgrade
+
+naval_anti_air_s (6 models)
+	naval_anti_air_s-0 upgrades to naval_anti_air_s-1
+	naval_anti_air_s-1 upgrades to naval_anti_air_s-2
+	naval_anti_air_s-2 upgrades to naval_anti_air_s-3
+	naval_anti_air_s-3 upgrades to naval_anti_air_s-4
+	naval_anti_air_s-4 upgrades to naval_anti_air_s-5
+	naval_anti_air_s-5 does not upgrade
+
+naval_radar_s (4 models)
+	naval_radar_s-0 upgrades to naval_radar_s-1
+	naval_radar_s-1 upgrades to naval_radar_s-2
+	naval_radar_s-2 upgrades to naval_radar_s-3
+	naval_radar_s-3 does not upgrade
+
+naval_fire_controll_s (3 models)
+	naval_fire_controll_s-0 upgrades to naval_fire_controll_s-1
+	naval_fire_controll_s-1 upgrades to naval_fire_controll_s-2
+	naval_fire_controll_s-2 does not upgrade
+
+naval_improved_hull_s (1 models)
+	naval_improved_hull_s-0 does not upgrade
+
+naval_torpedoes_s (2 models)
+	naval_torpedoes_s-0 upgrades to naval_torpedoes_s-1
+	naval_torpedoes_s-1 does not upgrade
+
+naval_anti_air_l (6 models)
+	naval_anti_air_l-0 upgrades to naval_anti_air_l-1
+	naval_anti_air_l-1 upgrades to naval_anti_air_l-2
+	naval_anti_air_l-2 upgrades to naval_anti_air_l-3
+	naval_anti_air_l-3 upgrades to naval_anti_air_l-4
+	naval_anti_air_l-4 upgrades to naval_anti_air_l-5
+	naval_anti_air_l-5 does not upgrade
+
+naval_radar_l (5 models)
+	naval_radar_l-0 upgrades to naval_radar_l-1
+	naval_radar_l-1 upgrades to naval_radar_l-2
+	naval_radar_l-2 upgrades to naval_radar_l-3
+	naval_radar_l-3 upgrades to naval_radar_l-4
+	naval_radar_l-4 does not upgrade
+
+naval_fire_controll_l (3 models)
+	naval_fire_controll_l-0 upgrades to naval_fire_controll_l-1
+	naval_fire_controll_l-1 upgrades to naval_fire_controll_l-2
+	naval_fire_controll_l-2 does not upgrade
+
+naval_improved_hull_l (1 models)
+	naval_improved_hull_l-0 does not upgrade
+
+naval_torpedoes_l (1 models)
+	naval_torpedoes_l-0 does not upgrade
+
+cavalry_brigade (15 models)
+	cavalry_brigade-0 upgrades to cavalry_brigade-1
+	cavalry_brigade-1 upgrades to cavalry_brigade-2
+	cavalry_brigade-2 upgrades to cavalry_brigade-3
+	cavalry_brigade-3 upgrades to cavalry_brigade-4
+	cavalry_brigade-4 upgrades to cavalry_brigade-5
+	cavalry_brigade-5 upgrades to cavalry_brigade-6
+	cavalry_brigade-6 upgrades to cavalry_brigade-7
+	cavalry_brigade-7 upgrades to cavalry_brigade-8
+	cavalry_brigade-8 upgrades to cavalry_brigade-9
+	cavalry_brigade-9 upgrades to cavalry_brigade-10
+	cavalry_brigade-10 upgrades to cavalry_brigade-11
+	cavalry_brigade-11 upgrades to cavalry_brigade-12
+	cavalry_brigade-12 upgrades to cavalry_brigade-13
+	cavalry_brigade-13 upgrades to cavalry_brigade-14
+	cavalry_brigade-14 does not upgrade
+
+sp_anti_air (6 models)
+	sp_anti_air-0 upgrades to sp_anti_air-1
+	sp_anti_air-1 upgrades to sp_anti_air-2
+	sp_anti_air-2 upgrades to sp_anti_air-3
+	sp_anti_air-3 upgrades to sp_anti_air-4
+	sp_anti_air-4 upgrades to sp_anti_air-5
+	sp_anti_air-5 does not upgrade
+
+medium_armor (11 models)
+	medium_armor-0 upgrades to medium_armor-1
+	medium_armor-1 upgrades to medium_armor-2
+	medium_armor-2 upgrades to medium_armor-3
+	medium_armor-3 upgrades to medium_armor-4
+	medium_armor-4 upgrades to medium_armor-5
+	medium_armor-5 upgrades to medium_armor-6
+	medium_armor-6 upgrades to medium_armor-7
+	medium_armor-7 upgrades to medium_armor-8
+	medium_armor-8 upgrades to medium_armor-9
+	medium_armor-9 upgrades to medium_armor-10
+	medium_armor-10 does not upgrade
+
+floatplane (8 models)
+	floatplane-0 upgrades to floatplane-1
+	floatplane-1 upgrades to floatplane-2
+	floatplane-2 upgrades to floatplane-3
+	floatplane-3 upgrades to floatplane-4
+	floatplane-4 upgrades to floatplane-5
+	floatplane-5 upgrades to floatplane-6
+	floatplane-6 upgrades to floatplane-7
+	floatplane-7 does not upgrade
+
+light_cag (9 models)
+	light_cag-0 upgrades to light_cag-1
+	light_cag-1 upgrades to light_cag-2
+	light_cag-2 upgrades to light_cag-3
+	light_cag-3 upgrades to light_cag-4
+	light_cag-4 upgrades to light_cag-5
+	light_cag-5 upgrades to light_cag-6
+	light_cag-6 upgrades to light_cag-7
+	light_cag-7 upgrades to light_cag-8
+	light_cag-8 does not upgrade
+
+amph_armor (2 models)
+	amph_armor-0 upgrades to amph_armor-1
+	amph_armor-1 does not upgrade
+
+glider_armor (2 models)
+	glider_armor-0 upgrades to glider_armor-1
+	glider_armor-1 does not upgrade
+
+glider_artillery (5 models)
+	glider_artillery-0 upgrades to glider_artillery-1
+	glider_artillery-1 upgrades to glider_artillery-2
+	glider_artillery-2 upgrades to glider_artillery-3
+	glider_artillery-3 upgrades to glider_artillery-4
+	glider_artillery-4 does not upgrade
+
+super_heavy_artillery (6 models)
+	super_heavy_artillery-0 upgrades to super_heavy_artillery-1
+	super_heavy_artillery-1 upgrades to super_heavy_artillery-2
+	super_heavy_artillery-2 upgrades to super_heavy_artillery-3
+	super_heavy_artillery-3 upgrades to super_heavy_artillery-4
+	super_heavy_artillery-4 upgrades to super_heavy_artillery-5
+	super_heavy_artillery-5 does not upgrade
+
+b_rsv_36 (1 models)
+	b_rsv_36-0 does not upgrade
+
+b_rsv_37 (1 models)
+	b_rsv_37-0 does not upgrade
+
+b_rsv_38 (1 models)
+	b_rsv_38-0 does not upgrade
+
+b_rsv_39 (1 models)
+	b_rsv_39-0 does not upgrade
+
+b_rsv_40 (1 models)
+	b_rsv_40-0 does not upgrade
+
+}
+
+Loading minister personalities...
+The generic minister personality is loaded and set.
+Loading minister personalities DONE. 188 personalities loaded.
+
+
+Calculating minister personality values...{
+'Generic minister' (ID 0): -1 (user specified)
+'Biased Intellectual' (ID 1): 42 
+'Ideological Crusader' (ID 2): 61 
+'Apologetic Clerk' (ID 3): 56 
+'Iron-fisted Brute' (ID 4): 30 
+'Great Compromiser' (ID 5): 143 
+'General Staffer' (ID 6): 28 
+'The Cloak-and-Dagger Schemer' (ID 7): 15 
+'Administrative Genius' (ID 8): 70 
+'Resource Industrialist' (ID 9): 55 
+'Laissez-Faire Capitalist' (ID 10): -40 
+'Theoretical Scientist' (ID 11): -8 
+'Military Entrepreneur' (ID 12): -8 
+'Battle Fleet Proponent' (ID 13): -8 
+'Submarine Proponent' (ID 14): -8 
+'Tank Proponent' (ID 15): -8 
+'Infantry Proponent' (ID 16): -8 
+'Air-to-Ground Proponent' (ID 17): -8 
+'Air-to-Sea Proponent' (ID 18): -8 
+'Strategic Air Proponent' (ID 19): -8 
+'Silent Lawyer' (ID 20): 20 
+'Compassionate Gentleman' (ID 21): 32 
+'Crime Fighter' (ID 22): 40 
+'Prince of Terror' (ID 23): -2 
+'Back Stabber' (ID 24): -1 (user specified)
+'Man of the People' (ID 25): 70 
+'Efficient Sociopath' (ID 26): -2 
+'Technical Specialist' (ID 27): 120 
+'Logistics Specialist' (ID 28): 250 
+'Political Specialist' (ID 29): 70 
+'Dismal Enigma' (ID 30): 65 
+'Industrial Specialist' (ID 31): 48 
+'Naval Intelligence Specialist' (ID 32): 206 
+'School of Maneuver' (ID 33): 50 
+'School of Fire Support' (ID 34): 20 
+'School of Mass Combat' (ID 35): 61 
+'School of Psychology' (ID 36): 310 
+'School of Defense' (ID 37): 120 
+'Elastic Defense Doctrine' (ID 38): 30 
+'Trenches War Expert' (ID 39): 48 
+'Decisive Battle Doctrine' (ID 40): 14 
+'Armored Spearhead Doctrine' (ID 41): 57 
+'Guns and Butter Doctrine' (ID 42): 60 
+'Open Seas Doctrine' (ID 43): 20 
+'Decisive Battle Doctrine' (ID 44): -20 
+'Power Projection Doctrine' (ID 45): 70 
+'Indirect Approach Doctrine' (ID 46): 70 
+'Base Control Doctrine' (ID 47): -22 
+'Air Superiority Doctrine' (ID 48): 28 
+'Naval Aviation Doctrine' (ID 49): 40 
+'Army Aviation Doctrine' (ID 50): 20 
+'Carpet Bombing Doctrine' (ID 51): 33 
+'Vertical Envelopment Doctrine' (ID 52): 25 
+'Undistinguished Suit' (ID 53): -1 (user specified)
+'Air Superiority Proponent' (ID 54): -8 
+'Corrupt Kleptocrat' (ID 55): -1 (user specified)
+'Crooked Kleptocrat' (ID 56): -1 (user specified)
+'Power-Hungry Demagogue' (ID 57): 34 
+'Barking Buffoon' (ID 58): -35 
+'Stern Imperialist' (ID 59): 290 
+'Ruthless Powermonger' (ID 60): -270 
+'Autocratic Charmer' (ID 61): -120 
+'Resigned Generalissimo' (ID 62): 115 
+'Benevolent Gentleman' (ID 63): 20 
+'Weary Stiff-Neck' (ID 64): 44 
+'Insignificant Layman' (ID 65): 0 
+'Die-Hard Reformer' (ID 66): 5 
+'Pig-Headed Isolationist' (ID 67): 20 
+'Popular Figurehead' (ID 68): 60 
+'Silent Workhorse' (ID 69): 3 
+'Naive Optimist' (ID 70): 30 
+'Flamboyant Tough Guy' (ID 71): 1 
+'Happy Amateur' (ID 72): 10 
+'Backroom Backstabber' (ID 73): -1 (user specified)
+'Smiling Oilman' (ID 74): 10 
+'Old General' (ID 75): 0 
+'Old Admiral' (ID 76): 8 
+'Old Air Marshal' (ID 77): 11 
+'Political Protégé' (ID 78): -2 
+'Ambitious Union Boss' (ID 79): -10 
+'Corporate Suit' (ID 80): -75 
+'Paranoid megalomaniac' (ID 81): 229 
+'Paranoid megalomaniac' (ID 82): 34 
+'Bulldog' (ID 83): 224 
+'Imperialist buffoon' (ID 84): -408 
+'Democratic idealist' (ID 85): -52 
+'Puppet emperor' (ID 86): 285 
+'Genius organizer' (ID 87): 126 
+'Local tyrant' (ID 88): -57 
+'Local tyrant' (ID 89): -57 
+'Oil Baron' (ID 90): 9 
+'Steel Magnate' (ID 91): 9 
+'Industrial Chemist' (ID 92): 9 
+'Media Magnate' (ID 93): 60 
+'Counterattack Genius' (ID 94): 230 
+'Popular Military Leader' (ID 95): 380 
+'Stubborn Disciplinarian' (ID 96): -417 
+'Innovative Offensive General' (ID 97): 48 
+'Benevolent Puppet Kaiser' (ID 98): 387 
+'Despotic Autocrat' (ID 99): -355 
+'The Tiger' (ID 100): 330 
+'Weary Old Emperor' (ID 101): -545 
+'Democratic idealist' (ID 102): 70 
+'Revolutionary Guerilla Fighter' (ID 103): 264 
+'Revolutionary leader' (ID 104): 140 
+'Guerilla warfare doctrine' (ID 105): 157 
+'Planned Economy Proponent' (ID 106): 70 
+'Keynesian Economy Proponent' (ID 107): -42 
+'Reformer of the Army' (ID 108): -14 
+'Construction Magnate' (ID 109): 60 
+'Balanced Budget Proponent' (ID 110): -70 
+'Mixed Economy Proponent' (ID 111): 35 
+'Health and Safety Proponent' (ID 112): -20 
+'Chief of Secret Police' (ID 113): 2 
+'The Special Forces Proponent' (ID 114): 20 
+'The Special Forces Proponent' (ID 115): 38 
+'The Doctrine of Autonomy' (ID 116): 208 
+'Reichskommissar' (ID 117): 10 
+'Silent Lawyer' (ID 13307001): -51 
+'German Military Mission' (ID 118): 80 
+'German Military Mission' (ID 119): 30 
+'German Military Mission' (ID 120): 208 
+'German Military Mission' (ID 121): 208 
+'German Military Mission' (ID 122): 60 
+'German Military Mission' (ID 123): 120 
+'German Military Mission' (ID 124): 81 
+'German Military Mission' (ID 125): 18 
+'German Military Mission' (ID 126): 60 
+'German Military Mission' (ID 127): 415 
+'German Military Mission' (ID 128): 70 
+'British Naval Mission' (ID 129): 90 
+'SS Reichsführer' (ID 130): -18 
+'The Ruthless Organizer' (ID 131): 32 
+'Brilliant Spymaster' (ID 132): 136 
+'The Hangman' (ID 133): 18 
+'Respectable Compromiser' (ID 134): 130 
+'The Salesman of Deception' (ID 135): 32 
+'The Iron Knight' (ID 136): 0 
+'The Brown Eminence' (ID 137): -280 
+'Master of Propaganda' (ID 138): 51 
+'Organization 'Todt'' (ID 139): 55 
+'Guilty Man' (ID 140): -1 (user specified)
+'Quex' (ID 141): 250 
+'The Pacifier' (ID 143): 37 
+'The Appeaser' (ID 144): -33 
+'Fascist Crusader' (ID 145): 24 
+'The Fascist Autarkic' (ID 146): -22 
+'Under-Secretary of War' (ID 147): -7 
+'Old School Admiral' (ID 148): -26 
+'Aggressive Nationalist' (ID 149): 22 
+'Persuader of Democracies' (ID 150): 57 
+'Iron Lazar' (ID 151): 30 
+'Purged Purger' (ID 152): -1 (user specified)
+'Deep Battle Proponent' (ID 153): 2 
+'Chairman of the Council of People's Commissars' (ID 154): -53 
+'Father of United Nations' (ID 155): 35 
+'The Orthodox Economist' (ID 156): 40 
+'Director of FBI' (ID 157): 32 
+'The Cryptographer' (ID 158): 15 
+'Secretary of War' (ID 159): -16 
+'Ambassador to the United Nations' (ID 160): 19 
+'Secretary of the Interior' (ID 161): 0 
+'Supporter of Devaluation' (ID 162): -44 
+'Opposer of the far right' (ID 163): -18 
+'Fortifications Supporter' (ID 164): -15 
+'Static Defense Supporter' (ID 165): -8 
+'Supporter of friendly relations' (ID 166): 9 
+'Opposer to military spending' (ID 167): -95 
+'Razor' (ID 168): 10 
+'Charming Opportunist' (ID 169): 128 
+'Charming Opportunist' (ID 170): 132 
+'Old Guard Reformer' (ID 171): 30 
+'Defender of the Republic' (ID 172): 282 
+'Father of the Nation' (ID 173): 395 
+'Father of the Nation' (ID 174): 15 
+'Jade Marshall' (ID 175): 162 
+'The Bribing President' (ID 176): 190 
+'Pragmatic Patriot' (ID 177): -59 
+'Retired War Patriot' (ID 178): 98 
+'Disillusioned Statesman' (ID 179): -36 
+'Staunch Anti-Communist' (ID 180): 442 
+'Intelligence Genius' (ID 181): 724 
+'Great Helmsman' (ID 182): 1714 
+'People's War Proponent' (ID 183): -82 
+'The Fixer' (ID 184): 246 
+'Capitalist Reformer' (ID 185): 107 
+'Model Governor' (ID 186): 189 
+'Double Agent' (ID 187): -105 
+}Done
+
+Reading distances from map\map_1\airdist.tbl... Done! (2769 provinces read in 11 ms)
+
+Parsing db\mission_eff.csv... done!
