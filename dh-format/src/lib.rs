@@ -5,6 +5,13 @@
 pub mod dates;
 pub mod script;   // лексер/парсер скрипт-мови (1669 токенів)
 pub mod tokens;   // реєстр ключових слів
+pub mod map;      // tiles/index/boundbox/adjacent/airdist/navaldist/lightmap
+pub mod province; // Province.csv
+pub mod db;       // бази даних гри (country.csv, units, tech, ...)
+pub mod scenario; // сценарії .eug
+pub mod savegame; // сейви .eug + bzip2
+pub mod fonts;    // бітмап-шрифти (RLE-гліфи)
+pub mod palette;  // палітри (.act, *_palette.bmp)
 
 pub use dates::*;
 
