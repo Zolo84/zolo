@@ -6,7 +6,8 @@
 //! index.tbl: блок (x,y) = index[y·936 + x], 0 = океан, 1..11225 = тайл атласа.
 
 use crate::canvas::{Canvas, Color};
-use dh_format::map::{BLOCKS_X, BLOCKS_Y, TILE_PX, TILE_SLOTS, MapData};
+use dh_format::map::{ATLAS_W, BLOCKS_X, BLOCKS_Y, TILE_PX, TILE_SLOTS, MapData};
+use dh_format::palette::TerrainPalettes;
 use dh_format::ProvinceId;
 
 /// Колір океану (index = 0): темно-синій (ARGB8888, див. [`Canvas`]).
@@ -110,6 +111,14 @@ pub struct MapRenderer<'a> {
     /// використовується). Якщо None — блоки без тайла атласа малюються
     /// кольором океану (тобто видно лише тайловий шар index.tbl).
     pub prov_colors: Option<&'a [u32]>,
+    /// Тип місцевості кожної провінції (індекс 0..6 у TerrainPalettes;
+    /// Province.csv Terrain → Plains=0, Forest=1, Mountain=2, Desert=3,
+    /// Marsh=4, Hills=5, Jungle=6 — як у FUN_00417740). Потрібен для
+    /// розфарбування індексного атласа tiles.bmp.
+    pub prov_terrain: Option<&'a [u8]>,
+    /// Палітри місцевості (TerrainPalettes::load): колір тайла =
+    /// palettes[терен блока][індекс пікселя у tiles_indices].
+    pub terrain_palettes: Option<&'a TerrainPalettes>,
 }
 
 impl<'a> MapRenderer<'a> {
@@ -121,6 +130,8 @@ impl<'a> MapRenderer<'a> {
             view,
             show_provinces: false,
             prov_colors: None,
+            prov_terrain: None,
+            terrain_palettes: None,
         }
     }
 
@@ -191,19 +202,42 @@ impl<'a> MapRenderer<'a> {
 
                 match (tile, light) {
                     (Some((tx, ty)), light) => {
-                        // Шар 2 — тайл атласа (index.tbl): покриває весь блок,
-                        // освітлення 6-бітним значенням lightmap. Прозорі пікселі
-                        // (індекс палітри 0) пропускаються — просвічує фон провінцій.
+                        // Шар 2 — тайл атласа (index.tbl): тайли зберігають ІНДЕКСИ
+                        // палітри, а не кольори! Колір пікселя = palettes[терен
+                        // блока][індекс] (RE FUN_00417740: тип місцевості → своя
+                        // палітра landscape/trees/mountain/desert/marsh/hills/djungle).
+                        // Індекс 0 = прозорий — просвічує фон провінцій.
+                        let terrain_idx = light
+                            .as_ref()
+                            .and_then(|ti| {
+                                // Провінція центрального пікселя блока → тип терену.
+                                let c = light_idx(bx, by, TILE_PX / 2, TILE_PX / 2, lshift);
+                                let pid = ti.prov_ids[c] as usize;
+                                self.prov_terrain.and_then(|t| t.get(pid)).copied()
+                            })
+                            .unwrap_or(0);
+                        let palettes = self.terrain_palettes;
                         for py in 0..TILE_PX {
                             for px in 0..TILE_PX {
-                                let p = self.map.tiles_bmp.get_pixel(tx + px, ty + py);
-                                if p[3] == 0 {
+                                let idx =
+                                    self.map.tiles_indices[((ty + py) * ATLAS_W + (tx + px)) as usize]
+                                        as usize;
+                                if idx == 0 {
                                     continue; // прозорий — фон з lightmap лишається
                                 }
+                                let (r, g, b) = match palettes {
+                                    Some(p) => {
+                                        let [r, g, b] =
+                                            p.color(terrain_idx as usize, idx);
+                                        (r, g, b)
+                                    }
+                                    // Без палітр — сірий (щоб не плутати з фоном).
+                                    None => (128, 128, 128),
+                                };
                                 let lv = light
                                     .as_ref()
                                     .map(|ti| ti.light_vals[light_idx(bx, by, px, py, lshift)] as u32);
-                                let color = shade(p[0], p[1], p[2], lv);
+                                let color = shade(r, g, b, lv);
                                 put_block_px(canvas, scale, sx, sy, px, py, color);
                             }
                         }

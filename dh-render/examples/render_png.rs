@@ -41,7 +41,6 @@ fn main() -> anyhow::Result<()> {
         let sc_path = paths.mod_dir.join("scenarios").join(format!("{sc_name}.eug"));
         let sc = dh_format::scenario::load_scenario(&sc_path)?;
         let country_db = dh_format::db::CountryDb::load(&paths)?;
-        let scales = dh_format::db::ColorScales::load(&paths)?;
         let mut n_owned = 0;
         for cb in &sc.countries {
             let color = country_db.color_of(&cb.tag);
@@ -103,6 +102,15 @@ fn main() -> anyhow::Result<()> {
     let view = dh_render::map_render::Viewport::new(vx, vy, vw.max(1), vh.max(1));
     let mut r = dh_render::map_render::MapRenderer::new(&map, 0, view);
     r.prov_colors = Some(&prov_colors);
+
+    // Палітри місцевості + таблиця терену провінцій: тайли атласа — індексні.
+    let terrain_palettes = dh_format::palette::TerrainPalettes::load(&paths)?;
+    let mut prov_terrain = vec![0u8; 3000];
+    for p in &provinces {
+        prov_terrain[p.id as usize] = p.terrain.palette_index();
+    }
+    r.terrain_palettes = Some(&terrain_palettes);
+    r.prov_terrain = Some(&prov_terrain);
     r.render(&mut canvas);
 
     // запиши PNG (ARGB → RGB)

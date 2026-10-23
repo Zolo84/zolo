@@ -185,6 +185,50 @@ pub fn map_terrain_palettes(paths: &GamePaths) -> anyhow::Result<Vec<(String, Pa
     Ok(out.into_iter().collect())
 }
 
+/// Палітри місцевості для тайлів tiles.bmp, індексовані типом терену як у
+/// FUN_00417740 (строки `s_*_palette_bmp`): 0=landscape (Plains), 1=trees (Forest),
+/// 2=mountain, 3=desert, 4=marsh, 5=hills, 6=djungle.
+///
+/// Відсутні файли замінюються landscape (у встановленій грі окремих
+/// `trees_palette.bmp`/`*_d.bmp` немає — тайли вже зібрані в tiles.bmp як індекси).
+#[derive(Debug, Clone)]
+pub struct TerrainPalettes {
+    /// 7 палітр за індексом типу місцевості (0..=6), кожна 256 кольорів RGB.
+    pub palettes: Vec<Palette>,
+}
+
+impl TerrainPalettes {
+    pub fn load(paths: &GamePaths) -> anyhow::Result<Self> {
+        let map = map_terrain_palettes(paths)?;
+        let by_name: BTreeMap<&str, &Palette> =
+            map.iter().map(|(k, v)| (k.as_str(), v)).collect();
+        let get = |names: &[&str]| -> Option<Palette> {
+            names.iter().find_map(|n| by_name.get(*n)).map(|p| (*p).clone())
+        };
+        let landscape = get(&["landscape", "plains"])
+            .context("жодна палітра місцевості (landscape_palette.bmp) не знайдена")?;
+        let mut palettes = Vec::with_capacity(7);
+        palettes.push(landscape.clone()); // 0 Plains
+        palettes.push(get(&["trees", "landscape"]).unwrap_or_else(|| landscape.clone())); // 1 Forest
+        palettes.push(get(&["mountain"]).unwrap_or_else(|| landscape.clone())); // 2
+        palettes.push(get(&["desert"]).unwrap_or_else(|| landscape.clone())); // 3
+        palettes.push(get(&["marsh"]).unwrap_or_else(|| landscape.clone())); // 4
+        palettes.push(get(&["hills"]).unwrap_or_else(|| landscape.clone())); // 5
+        palettes.push(get(&["djungle"]).unwrap_or_else(|| landscape.clone())); // 6
+        Ok(Self { palettes })
+    }
+
+    /// Колір RGB за індексом типу місцевості (0..=6) та індексом палітри пікселя.
+    #[inline]
+    pub fn color(&self, terrain: usize, pal_idx: usize) -> [u8; 3] {
+        self.palettes
+            .get(terrain.min(6))
+            .and_then(|p| p.colors.get(pal_idx.min(255)))
+            .copied()
+            .unwrap_or([0, 0, 0])
+    }
+}
+
 /// Рекурсивний пошук усіх *.bmp у каталозі (без сортування всередині рівня —
 /// порядок визначає зовнішній BTreeMap за ключем).
 fn scan_bmps(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {

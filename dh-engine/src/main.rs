@@ -268,6 +268,10 @@ struct AppState {
     /// Кольори провінцій для політичної карти: id → ARGB (власник → колір країни
     /// з country.csv + colorscales.csv; без власника — колір місцевості).
     prov_colors: Vec<u32>,
+    /// Тип місцевості кожної провінції (індекс палітри 0..6, Terrain::palette_index).
+    prov_terrain: Vec<u8>,
+    /// Палітри місцевості для індексного атласа tiles.bmp.
+    terrain_palettes: dh_format::palette::TerrainPalettes,
 }
 
 impl AppState {
@@ -321,6 +325,8 @@ impl AppState {
         let view = Viewport::new(cam_x, cam_y, (w / 32).max(1), (h / 32).max(1));
         let mut renderer = MapRenderer::new(map_ref, zoom, view).with_provinces(false);
         renderer.prov_colors = Some(&self.prov_colors);
+        renderer.prov_terrain = Some(&self.prov_terrain);
+        renderer.terrain_palettes = Some(&self.terrain_palettes);
 
         // Підготувати HUD-дані ДО мутабельного borrow поверхні.
         let font_ptr: *const BitmapFont = self.hud_font().map_or(std::ptr::null(), |f| f);
@@ -439,6 +445,12 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
     }
 
     struct App(AppState);
+    impl App {
+        fn shutdown(&mut self) {
+            self.0.surface = None; // drop спершу поверхню
+            self.0.window = None; // потім вікно
+        }
+    }
     impl ApplicationHandler for App {
         fn resumed(&mut self, el: &ActiveEventLoop) {
             if self.0.window.is_some() {
@@ -480,6 +492,7 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
             match event {
                 WindowEvent::CloseRequested => {
                     log::info!("закриття вікна");
+                    self.shutdown();
                     el.exit();
                 }
                 WindowEvent::Resized(size) => {
@@ -493,7 +506,10 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
                     };
                     if event.state == ElementState::Pressed && !event.repeat {
                         match code {
-                            KeyCode::Escape => el.exit(),
+                            KeyCode::Escape => {
+                                self.shutdown();
+                                el.exit();
+                            }
                             KeyCode::Space => {
                                 if let Some(w) = &mut self.0.world {
                                     w.paused = !w.paused;
@@ -544,6 +560,15 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
     // Кольори країн (оригінал): db/country.csv → вбудована палітра exe.
     let country_db = dh_format::db::CountryDb::load(paths)?;
     log::info!("кольори країн: {} тегів", country_db.colors.len());
+    // Палітри місцевості для індексного атласа tiles.bmp.
+    let terrain_palettes = dh_format::palette::TerrainPalettes::load(paths)?;
+    // Тип місцевості кожної провінції (0..6).
+    let mut prov_terrain = vec![0u8; 3000];
+    for p in &prov_csv {
+        if p.id != 0 {
+            prov_terrain[p.id as usize] = p.terrain.palette_index();
+        }
+    }
     let prov_colors = match &world {
         Some(w) => AppState::build_province_colors(&prov_csv, w, &country_db),
         None => {
@@ -577,6 +602,8 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
         last_frame: Instant::now(),
         keys_down: Default::default(),
         prov_colors,
+        prov_terrain,
+        terrain_palettes,
     });
 
     let event_loop = EventLoop::new().context("winit: event loop")?;

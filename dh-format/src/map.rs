@@ -34,8 +34,10 @@ pub struct MapData {
     pub map_w: u32,
     pub map_h: u32,
     /// Атлас тайлів 8192×1408 (32×32-тайли, сітка 256×44).
-    /// tiles.bmp як RGBA (індекс палітри 0 = прозорий, альфа 0).
-    pub tiles_bmp: image::RgbaImage,
+    /// tiles.bmp — це НЕ кольорові тайли, а індексні: кожен піксель = ІНДЕКС
+    /// палітри (0 = прозорий). Колір дає палітра типу місцевості блока
+    /// (landscape/hills/mountain/desert/djungle/marsh; RE FUN_00417740).
+    pub tiles_indices: Vec<u8>,
     /// Розкладка: на блок 32×32 мапи — номер тайла в атласі (0 = океан/порожньо).
     /// 336 960 елементів у порядку (y,x): блок (x,y) = index[y*936 + x].
     pub index: Vec<u32>,
@@ -364,9 +366,9 @@ pub fn load(paths: &GamePaths) -> anyhow::Result<MapData> {
     };
 
     // tiles.bmp — атлас 8192×1408, 8-бітний палітровий BMP.
-    // Індекс палітри 0 = прозорий (порожня зона атласа); перетворюємо на RGBA
-    // з альфа-каналом, щоб тайли коректно накладалися на фон провінцій.
-    let tiles_bmp = {
+    // ВАЖЛИВО: тайли — ІНДЕКСНІ (0 = прозорий, решта = індекс палітри типу
+    // місцевості), тому зберігаємо СИРІ індекси пікселів, а не кольори!
+    let tiles_indices = {
         let p = map_dir.join("tiles.bmp");
         let raw = read_file(&p, "tiles.bmp")?;
         ensure!(
@@ -382,29 +384,14 @@ pub fn load(paths: &GamePaths) -> anyhow::Result<MapData> {
             width == ATLAS_W as i32 && height == ATLAS_H as i32 && bpp == 8,
             "tiles.bmp: {width}×{height} {bpp}біт ≠ {ATLAS_W}×{ATLAS_H} 8біт"
         );
-        // Палітра: 256 записів по 4 байти (B,G,R,0) — кольори вже у звичному порядку.
-        let mut pal = [[0u8; 3]; 256];
-        for i in 0..256 {
-            let o = 54 + i * 4;
-            pal[i] = [raw[o + 2], raw[o + 1], raw[o]];
-        }
         let stride = ((width as usize * bpp as usize + 31) / 32) * 4;
-        let mut rgba = Vec::with_capacity((width * height) as usize * 4);
+        let mut indices = Vec::with_capacity((width * height) as usize);
         // bottom-up BMP: рядок 0 у файлі = нижній.
         for y in (0..height as usize).rev() {
             let row = &raw[px_off + y * stride..];
-            for x in 0..width as usize {
-                let idx = row[x] as usize;
-                if idx == 0 {
-                    rgba.extend_from_slice(&[0, 0, 0, 0]); // прозорий
-                } else {
-                    let c = pal[idx];
-                    rgba.extend_from_slice(&[c[0], c[1], c[2], 255]);
-                }
-            }
+            indices.extend_from_slice(&row[..width as usize]);
         }
-        image::RgbaImage::from_raw(ATLAS_W, ATLAS_H, rgba)
-            .context("tiles.bmp: створення RgbaImage")?
+        indices
     };
 
     // index.tbl — uint32 на блок 32×32, 336 960 = 936×360 блоків, 0 = океан, 1..11225 = тайл атласу.
@@ -567,7 +554,7 @@ pub fn load(paths: &GamePaths) -> anyhow::Result<MapData> {
         prov_count,
         map_w,
         map_h,
-        tiles_bmp,
+        tiles_indices,
         index,
         bounds,
         adjacent,
@@ -591,8 +578,7 @@ mod tests {
         // Базові константи (RE-mapformats-full.md).
         assert_eq!(map.prov_count, 2769);
         assert_eq!((map.map_w, map.map_h), (29952, 11520));
-        assert_eq!(map.tiles_bmp.width(), 8192);
-        assert_eq!(map.tiles_bmp.height(), 1408);
+        assert_eq!(map.tiles_indices.len(), 8192 * 1408);
         assert_eq!(map.index.len(), 336_960); // 936×360
         assert_eq!(map.bounds.len(), 2770);
         assert_eq!(map.adjacent.len(), 2770);

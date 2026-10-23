@@ -52,6 +52,25 @@ pub enum Terrain {
     Unknown(u8),
 }
 
+impl Terrain {
+    /// Індекс палітри місцевості 0..6 (як у FUN_00417740):
+    /// 0 Plains(landscape), 1 Forest(trees), 2 Mountain, 3 Desert,
+    /// 4 Marsh, 5 Hills, 6 Jungle. Море/інше → 0 (landscape як fallback).
+    pub fn palette_index(self) -> u8 {
+        match self {
+            Terrain::Plains => 0,
+            Terrain::Forest => 1,
+            Terrain::Mountain => 2,
+            Terrain::Desert => 3,
+            Terrain::Marsh => 4,
+            Terrain::Hills => 5,
+            Terrain::Jungle => 6,
+            Terrain::Ocean | Terrain::Water | Terrain::Subarctic | Terrain::Urban
+            | Terrain::Unknown(_) => 0,
+        }
+    }
+}
+
 /// Клімат провінції (з Province.csv).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Climate {
