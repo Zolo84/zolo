@@ -90,10 +90,9 @@ impl World {
                     leader *= 1.0 + p.leader_move_similar;
                 }
             }
-        }
-        // WinterSpecialist needs no command-limit check (`0x508501`).
-        if traits & traits::WINTER_SPECIALIST != 0 && weather.is_cold() {
-            leader *= 1.0 + p.leader_move;
+            if traits & traits::WINTER_SPECIALIST != 0 && weather.is_cold() {
+                leader *= 1.0 + p.leader_move;
+            }
         }
         MoveConditions {
             supply: self.supply_speed_factor(ctx, self.units[unit].controller(), from),

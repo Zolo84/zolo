@@ -780,3 +780,60 @@ fn a_year_of_weather() {
     // Muddy climate: mud after the April thaw, dried up by July.
     assert!(mud(3) > 0.3 && mud(5) < 0.05);
 }
+
+/// A German corps cut off in a Soviet province under a blizzard loses
+/// `(1 − infrastructure) · 0.05 %` of its strength a day (half for divisions
+/// that use no fuel) plus 0.5 for being out of supply; at home in peace it
+/// loses nothing.
+#[test]
+fn winter_attrition_in_enemy_territory() {
+    use dh_data::Weather;
+    use dh_sim::movement::terrain;
+    use dh_sim::Attrition;
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let ctx = Arc::new(ctx);
+    let (mut world, _) = World::from_scenario(&scenario);
+    let corps = world
+        .units
+        .iter()
+        .position(|u| u.unit.name == "VIII. Armeekorps")
+        .unwrap();
+    assert_eq!(world.attrition_rate(&ctx, corps), 0.0, "Berlin in peace");
+
+    world.declare_war("GER", "SOV");
+    let place = world
+        .provinces_owned_by("SOV")
+        .find(|&p| {
+            ctx.province(p).is_some_and(|i| {
+                !i.is_water() && i.terrain != terrain::DESERT && i.terrain != terrain::JUNGLE
+            })
+        })
+        .unwrap();
+    let infra = ctx.province(place).unwrap().infra;
+    world.set_weather(place, Weather::Blizzard);
+    world.units[corps].unit.location = Some(place);
+    let rate = world.attrition_rate(&ctx, corps);
+    assert!((rate - (1.0 - infra)).abs() < 1e-6, "{rate} vs {infra}");
+
+    let before: Vec<f64> = world.units[corps]
+        .unit
+        .divisions
+        .iter()
+        .map(|d| d.strength.unwrap_or(100.0))
+        .collect();
+    let mut sim = Simulation::new(world, 1);
+    sim.add_system(Attrition::new(ctx.clone()));
+    sim.run_hours(24);
+    for (d, str) in sim.world.units[corps].unit.divisions.iter().zip(before) {
+        let fuel = ctx
+            .units
+            .division_stats(d)
+            .is_some_and(|s| s.get("fuelconsumption") != 0.0);
+        let t = if fuel { rate } else { rate * 0.5 };
+        let expected = str - f64::from(t * 0.05 * str as f32 / 100.0 + 0.5);
+        let after = d.strength.unwrap();
+        assert!((after - expected).abs() < 1e-4, "{after} vs {expected}");
+    }
+}

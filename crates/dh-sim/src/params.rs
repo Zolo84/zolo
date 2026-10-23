@@ -42,6 +42,12 @@ pub struct Params {
     pub leader_skill: f32,              // combat[86]
     pub retreat_org: f32,               // combat[228]
     pub leader_experience: f32,         // combat[6]
+    /// Attrition severity (weather.md §4.3).
+    pub attrition: f32, // combat[7]
+    /// Daily strength a land division loses out of supply.
+    pub out_of_supply_attrition: f32, // combat[8]
+    /// Divisions at or below this strength take no attrition.
+    pub attrition_floor: f32, // combat[11]
     /// Land speed bonus of a leader's own terrain trait, and of
     /// WinterSpecialist in cold weather (land-movement.md §3.5).
     pub leader_move: f32, // combat[159]
@@ -68,6 +74,8 @@ pub struct Params {
     pub event_damage: [[f32; 4]; 7], // combat[234..=261]
 
     // `country` section: every country starts with these.
+    /// Divides attrition (`attrition` commands change it).
+    pub country_attrition: f32, // country[8]
     pub hq_ese: f32,          // country[14]
     pub event_hq_chance: f32, // country[15]
     /// Chance of each combat event.
@@ -113,6 +121,9 @@ impl Default for Params {
             leader_skill: 0.05,
             retreat_org: 5.0,
             leader_experience: 1.3,
+            attrition: 0.05,
+            out_of_supply_attrition: 0.5,
+            attrition_floor: 0.0,
             leader_move: 0.05,
             leader_move_similar: 0.025,
             logistics_wizard_ese: 0.1,
@@ -134,6 +145,7 @@ impl Default for Params {
                 [0.75, 0.5, 0.25, 0.5], // tactical withdrawal
                 [1.0, 0.8, 1.5, 1.0],   // breakthrough
             ],
+            country_attrition: 1.0,
             hq_ese: 0.01,
             event_hq_chance: 1.0,
             event_chance: 0.01,
@@ -210,6 +222,9 @@ impl Params {
             (86, &mut p.leader_skill),
             (228, &mut p.retreat_org),
             (6, &mut p.leader_experience),
+            (7, &mut p.attrition),
+            (8, &mut p.out_of_supply_attrition),
+            (11, &mut p.attrition_floor),
             (159, &mut p.leader_move),
             (160, &mut p.leader_move_similar),
             (161, &mut p.logistics_wizard_ese),
@@ -225,6 +240,7 @@ impl Params {
         percent(85, &mut p.event_trait);
         for (n, v) in [
             (3, &mut p.ground_defence_efficiency),
+            (8, &mut p.country_attrition),
             (14, &mut p.hq_ese),
             (15, &mut p.event_hq_chance),
             (16, &mut p.event_chance),

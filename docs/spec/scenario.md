@@ -413,9 +413,14 @@ weather = {
     centre    = int            # центральна провінція
     speed     = int            # швидкість руху
     heading   = "string"       # напрям (текст)
+    special   = bool           # фронт поза лічильником «природних» (weather.md §3)
   }
 }
 ```
+
+Гра читає `heading` лише як слово без лапок (`north` … `northwest` → 0..7); рядок у лапках (як
+`heading = "northwest"` у ванільному `ardennes.eug`) ігнорується, і лишається типовий напрям `east`
+(weather.md §3). Типова `speed` — 3.
 
 Джерела: `static` `:1532-1544`, `pattern` `:1547-1559`, поля фронту `:1625-1697`. Одиниці `speed` і набір
 значень `heading` редактор не тлумачить (див. §10).
@@ -473,7 +478,7 @@ weather = {
 | `max_manpower` | double | макс. людських ресурсів | усі | `:2463-2475` |
 | `points` | int | переможні очки (VP) | усі | `:2478-2490` |
 | `province_revoltrisk` | double | ризик повстання | усі | `:2493-2505` |
-| `weather` | ident | поточна погода: `clear`, `frozen`, `raining`, `snowing`, `storm`, `blizzard`, `muddy` | усі | `:2508-2526`, `Models/Scenarios.cs:167-177` |
+| `weather` | ident | поточна погода: `clear`, `winter` (мерзлий ґрунт), `raining`, `snowing`, `storm`, `blizzard`, `muddy`; гра не приймає `frozen` — пише помилку й зберігає «невідому» погоду 7 (weather.md §3) | усі | `:2508-2526`, `Models/Scenarios.cs:167-177` |
 | `name` | str\|ident | ключ локалізації назви провінції (перевизначення) | **DH** | `:2528-2544` |
 
 **building-size** (`bsize`): голе число → «відносний розмір» (`Size`); блок `{ size current_size }` →

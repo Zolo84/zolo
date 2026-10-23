@@ -182,6 +182,15 @@ pub fn direction(c: (i64, i64), s: (i64, i64)) -> u8 {
     }
 }
 
+/// Removes the first occurrence of `p`, as the game's list does (`0x417400`).
+/// A front's list only holds a province twice in modded set-ups, where it
+/// was not precipitating when it joined.
+fn remove_first(list: &mut Vec<u32>, p: u32) {
+    if let Some(k) = list.iter().position(|&x| x == p) {
+        list.remove(k);
+    }
+}
+
 /// Keeps the provinces' weather moving.
 pub struct WeatherSystem {
     ctx: Arc<MoveContext>,
@@ -404,7 +413,7 @@ impl Update<'_> {
                 Weather::Clear
             };
             self.set(c, w);
-            f.provinces.retain(|&p| p != c);
+            remove_first(&mut f.provinces, c);
             f.centre = 0;
         }
         let mut moved = false;
@@ -422,7 +431,7 @@ impl Update<'_> {
             if c == 0 {
                 if r2 % (if self.dry(s) { 1 } else { 2 }) == 0 {
                     self.clear(s);
-                    f.provinces.remove(i);
+                    remove_first(&mut f.provinces, s);
                     removed = true;
                 }
                 if !removed {
@@ -436,7 +445,7 @@ impl Update<'_> {
                 3 => {
                     if r2 % (if self.rainy(s) { 12 } else { 6 }) == 0 {
                         self.clear(s);
-                        f.provinces.remove(i);
+                        remove_first(&mut f.provinces, s);
                         removed = true;
                     }
                 }

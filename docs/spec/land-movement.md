@@ -276,8 +276,8 @@ best := x · 0.75                                          // 0x7E4094
 | Urban | UrbanWarfareSpecialist (20) | — |
 | Plains | — | — |
 
-`best := best · (1 + бонус)`. Окремо: якщо погода B — frozen, snowing або blizzard (1, 3, 5) і є
-WinterSpecialist (біт 3): `best := best · (1 + combat[159])`. (таблиця переходів `0x508558`, біти поля `+0x1E` генерала)
+`best := best · (1 + бонус)`. Окремо (у тому ж блоці, тобто теж лише в межах ліміту): якщо погода B — frozen,
+snowing або blizzard (1, 3, 5) і є WinterSpecialist (біт 3): `best := best · (1 + combat[159])` (weather.md §4.1). (таблиця переходів `0x508558`, біти поля `+0x1E` генерала)
 
 ---
 

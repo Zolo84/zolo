@@ -5,6 +5,7 @@
 //! added as [`System`]s as they are reverse engineered, so each one can be
 //! tested in isolation against recorded behaviour of the original game.
 
+pub mod attrition;
 pub mod battle;
 pub mod combat;
 pub mod dig_in;
@@ -17,6 +18,7 @@ pub mod supply;
 pub mod weather;
 pub mod world;
 
+pub use attrition::Attrition;
 pub use battle::{ActiveEvent, Battle, BattleSide, CombatEvent, Engage};
 pub use combat::Combat;
 pub use dig_in::DigIn;

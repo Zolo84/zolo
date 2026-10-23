@@ -12,6 +12,8 @@ use dh_map::{AdjKind, Adjacency, Link, Path};
 /// Terrain indices as used by the engine (`map/Terrain types.csv`).
 pub mod terrain {
     pub const PLAINS: u8 = 0;
+    pub const DESERT: u8 = 3;
+    pub const JUNGLE: u8 = 6;
     pub const URBAN: u8 = 7;
     pub const OCEAN: u8 = 8;
     pub const RIVER: u8 = 9;
