@@ -92,6 +92,11 @@ struct Cli {
     #[arg(long)]
     map_only: bool,
 
+    /// Бекенд рендера: auto|soft|vulkan|gl|dx. soft = CPU-канвас (WgpuCanvas),
+    /// решта — GPU-шлях (wgpu_map); dx — тільки Windows.
+    #[arg(long, default_value = "auto")]
+    backend: String,
+
     /// Швидкість гри 0..7 (0 — найповільніша: 500 мс/день; 7 — найшвидша: 2 мс/день).
     #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u8).range(0..=7))]
     speed: u8,
@@ -294,9 +299,32 @@ use dh_render::canvas::RenderSurface;
 use dh_render::map_render::{MapRenderer, Viewport};
 use dh_render::text::{self, TextAlign, TextStyle};
 use dh_render::wgpu_canvas::WgpuCanvas;
+use dh_render::wgpu_map::{Backend, GpuRenderer};
 
 const VIEW_W: u32 = 1280;
 const VIEW_H: u32 = 800;
+
+/// Рендерер: GPU-шлях (wgpu_map) або CPU-канвас (WgpuCanvas, `--backend soft`).
+enum Renderer {
+    Gpu(GpuRenderer<'static>),
+    Soft(WgpuCanvas<'static>),
+}
+
+impl Renderer {
+    fn window_size(&self) -> (u32, u32) {
+        match self {
+            Renderer::Gpu(g) => g.window_size(),
+            Renderer::Soft(c) => (c.width(), c.height()),
+        }
+    }
+
+    fn resize(&mut self, w: u32, h: u32) -> anyhow::Result<()> {
+        match self {
+            Renderer::Gpu(g) => g.resize(w, h),
+            Renderer::Soft(c) => c.resize(w, h),
+        }
+    }
+}
 
 struct AppState {
     cli: Cli,
@@ -307,7 +335,7 @@ struct AppState {
     world: Option<World>,
     game_time: Option<GameTime>,
     window: Option<winit::window::Window>,
-    surface: Option<WgpuCanvas<'static>>,
+    surface: Option<Renderer>,
     /// Верхній лівий кут камери в блоках 32×32.
     cam_x: u32,
     cam_y: u32,
@@ -424,11 +452,10 @@ impl AppState {
 
     fn render_frame(&mut self) -> Result<()> {
         // Роздільні borrows: map/fonts — іммутабельні поля, surface — мутабельне.
-        let (w, h, map_ok) = match self.surface.as_ref() {
-            Some(s) => (s.width(), s.height(), true),
+        let (w, h) = match self.surface.as_ref() {
+            Some(s) => s.window_size(),
             None => return Ok(()),
         };
-        let _ = map_ok;
         let map_ref: &MapData = &self.map;
         let zoom = self.zoom;
         let cam_x = self.cam_x;
@@ -436,23 +463,17 @@ impl AppState {
 
         // Блоків у в'юпорті: при zoom ≥ 0 кожен блок = 32·2^z пікселів екрана,
         // при зум-ауті (zoom < 0) = 32/2^k, тож блоків на екрані більше.
-        let w_blocks = if self.zoom >= 0 {
+        let w_blocks = if zoom >= 0 {
             (w / 32).max(1)
         } else {
-            ((w << -self.zoom) / 32).max(1)
+            ((w << -zoom) / 32).max(1)
         };
-        let h_blocks = if self.zoom >= 0 {
+        let h_blocks = if zoom >= 0 {
             (h / 32).max(1)
         } else {
-            ((h << -self.zoom) / 32).max(1)
+            ((h << -zoom) / 32).max(1)
         };
         let view = Viewport::new(cam_x, cam_y, w_blocks, h_blocks);
-        let mut renderer = MapRenderer::new(map_ref, zoom, view).with_provinces(false);
-        renderer.prov_colors = Some(&self.prov_colors);
-        renderer.prov_terrain = Some(&self.prov_terrain);
-        renderer.terrain_palettes = Some(&self.terrain_palettes);
-        renderer.color_model = self.color_model.as_ref();
-        renderer.prov_scales = Some(&self.prov_scales);
 
         // Підготувати HUD-дані ДО мутабельного borrow поверхні.
         let font_ptr: *const BitmapFont = self.hud_font().map_or(std::ptr::null(), |f| f);
@@ -472,15 +493,36 @@ impl AppState {
             align: TextAlign::Left,
         };
 
-        if let Some(surface) = self.surface.as_mut() {
-            renderer.render(&mut **surface);
-
-            if !font_ptr.is_null() {
-                // unsafe: font_ptr вказує в self.fonts, яке живе довше за borrow
-                let font_ref: &BitmapFont = unsafe { &*font_ptr };
-                text::draw(&mut **surface, font_ref, line.as_bytes(), 6, 3, &style);
+        let Some(surface) = self.surface.as_mut() else {
+            return Ok(());
+        };
+        match surface {
+            Renderer::Gpu(g) => {
+                // GPU-шлях: шейдер сам робить кольори з lightmap; HUD — текст
+                // у CPU-канвас, який малюється поверх окремим проходом.
+                g.set_view(zoom, view);
+                if !font_ptr.is_null() {
+                    let font_ref: &BitmapFont = unsafe { &*font_ptr };
+                    text::draw(g.hud(), font_ref, line.as_bytes(), 6, 3, &style);
+                }
+                g.present()?;
             }
-            surface.present()?;
+            Renderer::Soft(c) => {
+                let mut renderer = MapRenderer::new(map_ref, zoom, view).with_provinces(false);
+                renderer.prov_colors = Some(&self.prov_colors);
+                renderer.prov_terrain = Some(&self.prov_terrain);
+                renderer.terrain_palettes = Some(&self.terrain_palettes);
+                renderer.color_model = self.color_model.as_ref();
+                renderer.prov_scales = Some(&self.prov_scales);
+                renderer.render(&mut **c);
+
+                if !font_ptr.is_null() {
+                    // unsafe: font_ptr вказує в self.fonts, яке живе довше за borrow
+                    let font_ref: &BitmapFont = unsafe { &*font_ptr };
+                    text::draw(&mut **c, font_ref, line.as_bytes(), 6, 3, &style);
+                }
+                c.present()?;
+            }
         }
         Ok(())
     }
@@ -603,18 +645,47 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
             };
             let size = window.inner_size();
             let display = el.owned_display_handle();
-            let surface = WgpuCanvas::new(
-                &window,
-                Box::new(display),
-                size.width.max(1),
-                size.height.max(1),
-            )
-            .expect("wgpu");
-            // WgpuCanvas позичає &Window — протягом життя App вікно живе,
+            let backend = Backend::parse(&self.0.cli.backend).unwrap_or(Backend::Auto);
+            let surface = if backend == Backend::Soft {
+                // CPU-канвас (старий шлях): рендер MapRenderer → WgpuCanvas.
+                log::info!("бекенд: soft (CPU-канвас)");
+                let c = WgpuCanvas::new(
+                    &window,
+                    Box::new(display),
+                    size.width.max(1),
+                    size.height.max(1),
+                )
+                .expect("wgpu (soft)");
+                Renderer::Soft(unsafe {
+                    std::mem::transmute::<WgpuCanvas<'_>, WgpuCanvas<'static>>(c)
+                })
+            } else {
+                log::info!("бекенд: {} (GPU-шейдери)", backend.name());
+                let mut g = GpuRenderer::new_windowed(
+                    &window,
+                    Box::new(display),
+                    size.width.max(1),
+                    size.height.max(1),
+                    backend,
+                )
+                .expect("wgpu (gpu)");
+                g.set_map(&self.0.map).expect("мапа на GPU");
+                let cm = self.0.color_model.as_ref().unwrap_or_else(|| {
+                    panic!(
+                        "GPU-рендер потребує палітри color_model; \
+                         скористайтесь --backend soft або перевірте файли гри"
+                    )
+                });
+                g.set_color_model(cm).expect("палітра на GPU");
+                g.set_scales(&self.0.prov_scales);
+                // GpuRenderer позичає &Window — протягом життя App вікно живе.
+                Renderer::Gpu(unsafe {
+                    std::mem::transmute::<GpuRenderer<'_>, GpuRenderer<'static>>(g)
+                })
+            };
+            // Рендерер позичає &Window — протягом життя App вікно живе,
             // тож продовження життя через transmute є безпечним (App тримає Window).
-            self.0.surface = Some(unsafe {
-                std::mem::transmute::<WgpuCanvas<'_>, WgpuCanvas<'static>>(surface)
-            });
+            self.0.surface = Some(surface);
             self.0.window = Some(window);
             self.0.last_frame = Instant::now();
             log::info!("вікно створено (бекенд: Wayland або X11 за середовищем)");

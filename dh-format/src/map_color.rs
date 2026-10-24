@@ -181,6 +181,11 @@ impl GameColorModel {
         self.prov.get(prov_id).map(|(_, s)| *s).unwrap_or(0)
     }
 
+    /// 16-бітна палітра (8192 × RGB565) — для GPU-рендера.
+    pub fn palette(&self) -> &[u16] {
+        &self.palette
+    }
+
     /// Зсув освітлення провінції (поле +0x13E) — для налагодження.
     pub fn off_of(&self, prov_id: usize) -> i8 {
         self.prov.get(prov_id).map(|(o, _)| *o).unwrap_or(15)
