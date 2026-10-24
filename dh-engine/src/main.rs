@@ -179,6 +179,72 @@ fn load_scenario_pair(
 // Headless
 // ---------------------------------------------------------------------------
 
+/// Сид рушія подій (детермінованість offset-дат/рандомів).
+const EVENT_SEED: u64 = 0xD412_0002;
+
+/// Bootstrap подій (Б.5 з PLAN.md): база з event-файлів сценарію через VFS +
+/// локалізовані назви + черга `queued_events` сценарію. Помилка — warn і
+/// гра без подій (не валить запуск).
+fn bootstrap_events(
+    world: &mut World,
+    sc: &dh_format::scenario::Scenario,
+    data: &dh_data::Scenario,
+    vfs: &dh_data::Vfs,
+) {
+    let files = sc.events.clone();
+    let read = |p: &str| vfs.read(p).map_err(|e| anyhow::anyhow!("{p}: {e}"));
+    let db = match dh_core::events::EventDb::load(&files, &read) {
+        Ok(db) => db,
+        Err(e) => {
+            log::warn!("події: база не завантажилась ({e:#}) — гра без подій");
+            return;
+        }
+    };
+    log::info!(
+        "події: файлів {}, подій {}",
+        db.files.len(),
+        db.events.len()
+    );
+    let db = std::sync::Arc::new(db);
+    world.attach_events(db.clone(), EVENT_SEED);
+
+    // Локалізовані назви подій (ключ → текст; у файлах — EVT_*_NAME).
+    let loc = dh_data::Localisation::load(vfs, dh_data::localisation::Language::English);
+    if let Some(engine) = world.event_engine.as_mut() {
+        for def in db.events.values() {
+            if let Some(k) = &def.name {
+                engine
+                    .names
+                    .entry(k.clone())
+                    .or_insert_with(|| loc.text(k).to_owned());
+            }
+        }
+    }
+
+    // queued_events сценарію: globaldata.queued_events = { event = { tag id hour } }
+    // (RE-eug-format.md §2; година → доби: 0→старт, 24→+1 доба, 72→+3 доби).
+    let start = dh_format::scenario::game_start(sc);
+    if let Some(engine) = world.event_engine.as_mut() {
+        let Some(gd) = data.root.get_block("globaldata") else {
+            return;
+        };
+        for q in gd.get_all("queued_events") {
+            let Some(qb) = q.as_block() else { continue };
+            for ev in qb.get_all("event") {
+                let Some(eb) = ev.as_block() else { continue };
+                let (Some(id), Some(tag)) = (eb.get_i64("id"), eb.get_str("tag")) else {
+                    log::warn!("queued_events: запис без id/tag — пропуск");
+                    continue;
+                };
+                let hours = eb.get_i64("hour").unwrap_or(0);
+                let at = start.add_days((hours + 23) / 24);
+                engine.queue(id as u64, dh_format::Tag(tag.to_ascii_uppercase()), at);
+                log::debug!("queued_events: {tag} {id} +{hours} год");
+            }
+        }
+    }
+}
+
 fn run_headless(paths: &GamePaths, cli: &Cli) -> Result<()> {
     let (map, prov_csv, _palette, _fonts) = load_static(paths)?;
     log::info!(
@@ -199,6 +265,7 @@ fn run_headless(paths: &GamePaths, cli: &Cli) -> Result<()> {
     );
 
     let mut world = build_world(&sc, &prov_csv, cli.speed);
+    bootstrap_events(&mut world, &sc, &data_sc, &vfs);
     let owned = world.provinces.iter().filter(|p| p.owner.is_some()).count();
 
     log::info!(
@@ -1086,7 +1153,6 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
     let mut scenario_data: Option<(dh_data::Scenario, dh_data::Vfs)> = None;
     if !cli.map_only {
         let (sc, data_sc, vfs) = load_scenario_pair(paths, &cli.scenario)?;
-        scenario_data = Some((data_sc, vfs));
         log::info!(
             "сценарій «{}»: країн {}, province-блоків {}, альянсів {}",
             sc.name,
@@ -1094,7 +1160,8 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
             sc.provinces.len(),
             sc.globaldata.alliances.len()
         );
-        let w = build_world(&sc, &prov_csv, cli.speed);
+        let mut w = build_world(&sc, &prov_csv, cli.speed);
+        bootstrap_events(&mut w, &sc, &data_sc, &vfs);
         let owned = w.provinces.iter().filter(|p| p.owner.is_some()).count();
         log::info!(
             "світ: країн {}, провінцій {}, з власником {}, старт {}",
@@ -1103,6 +1170,7 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
             owned,
             w.date.display()
         );
+        scenario_data = Some((data_sc, vfs));
         game_time = Some(GameTime::new(w.date));
         world = Some(w);
     }

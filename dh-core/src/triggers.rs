@@ -1057,7 +1057,7 @@ fn eval_cond(world: &World, target: &CommandTarget, c: &Condition) -> bool {
             let h = (world.date.day as u64)
                 .wrapping_mul(6364136223846793005)
                 ^ 0x9E37_79B9_7F4A_7C15;
-            let r = ((h >> 33) as u64 % 1_000_000) as f64 / 1_000_000.0;
+            let r = ((h >> 33) % 1_000_000) as f64 / 1_000_000.0;
             r < *chance
         }
         Condition::Nuked(_) => unsupported("nuked (0x572): історії ядерних ударів немає (TODO)"),
@@ -1071,8 +1071,11 @@ fn eval_cond(world: &World, target: &CommandTarget, c: &Condition) -> bool {
 
         // Невідомий токен → завжди false + warn.
         Condition::Unknown { id } => {
+            // debug, не warn: датні події оцінюються щодня до deathdate —
+            // warn за добу тонув би в повторах (реєстр нереалізованого —
+            // в тестах і PLAN).
             let name = tokens::name(*id).unwrap_or("<без назви>");
-            log::warn!(
+            log::debug!(
                 "[triggers] оцінка невідомої умови 0x{id:04x} (`{name}`) = false \
                  (ориг.: \"ERROR! Unknown trigger type\")"
             );
@@ -1125,9 +1128,10 @@ fn province_matches(
     })
 }
 
-/// Нереалізована/непідтверджена умова: false + warn (НЕ паніка).
+/// Нереалізована/непідтверджена умова: false + debug (НЕ паніка; debug бо
+/// датні події оцінюються щодня — warn тонув би в повторах).
 fn unsupported(what: &str) -> bool {
-    log::warn!("[triggers] умова не реалізована — оцінка false: {what}");
+    log::debug!("[triggers] умова не реалізована — оцінка false: {what}");
     false
 }
 

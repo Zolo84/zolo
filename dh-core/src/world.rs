@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use dh_format::{GameDate, ProvinceId, ProvinceResources, Tag};
 
 use crate::country::{Country, CountryResources};
+use crate::events;
 
 /// Стан провінції в "живому" світі (на відміну від статичної `ProvinceCsv`).
 #[derive(Debug, Clone)]
@@ -83,6 +84,15 @@ pub struct World {
     /// Черга подій, що очікують розгляду (команда `event` 0x1f7 — диспетчер
     /// `FUN_004a8c90`; черга подій — `queued_events` 0x581, RE-scripts.md §4).
     pub pending_events: Vec<u32>,
+    /// Відкладені запуски командою `event ... when = H` (0x1f7):
+    /// (id події, тег одержувача (може бути порожній), день запуску).
+    pub pending_timed: Vec<(u32, String, i64)>,
+    /// Черга команд `sleepevent = { id = N }` (0x1f8).
+    pub pending_sleep: Vec<u32>,
+    /// Рушій подій (None — події не завантажені; підключає attach_events).
+    pub event_engine: Option<events::EventEngine>,
+    /// Спрацьовування останньої доби (для HUD-стрічки подій).
+    pub last_events: Vec<events::FiredEvent>,
 }
 
 /// Ставка денного податку (частка IC, що йде в гроші) у фазі економіки.
@@ -101,7 +111,16 @@ impl World {
             speed: 3,
             paused: false,
             pending_events: Vec::new(),
+            pending_timed: Vec::new(),
+            pending_sleep: Vec::new(),
+            event_engine: None,
+            last_events: Vec::new(),
         }
+    }
+
+    /// Підключити рушій подій (базу будує двигун з файлів сценарію).
+    pub fn attach_events(&mut self, db: std::sync::Arc<events::EventDb>, seed: u64) {
+        self.event_engine = Some(events::EventEngine::new(db, seed));
     }
 
     /// Додати країну у світ; реєструє її тег. Повертає індекс країни в `countries`.
@@ -325,6 +344,16 @@ impl World {
     /// вона дорівнює ігровій даті (`GameTime::timer`).
     fn phase_events(&mut self) {
         self.date = self.date.add_days(1);
+        // Рушій подій (фаза 7 — «розсилка повідомлень» у RE-misc §C): черга
+        // сценарію, датні події, команди event/sleepevent. Двигун (take +
+        // повернення) — щоб рушій мав &mut World.
+        if let Some(mut engine) = self.event_engine.take() {
+            let fired = engine.run_day(self);
+            self.event_engine = Some(engine);
+            if !fired.is_empty() {
+                self.last_events = fired;
+            }
+        }
         if self.date.is_month_start() {
             log::debug!(
                 "[world][7/7 час] {} — місячний рубіж (ориг. 0x19 → автосейв-декремент: TODO)",
@@ -412,7 +441,7 @@ pub fn build_world(
             has_vp: false,
             vp: 0,
             infra: p.resources.infrastructure,
-            resources: p.resources.clone(),
+            resources: p.resources,
             occupied: false,
         });
     }

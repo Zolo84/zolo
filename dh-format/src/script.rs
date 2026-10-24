@@ -474,7 +474,9 @@ pub fn parse_str(src: &str) -> Result<Value> {
     parse_bytes(src.as_bytes())
 }
 
-fn parse_bytes(bytes: &[u8]) -> Result<Value> {
+/// Байти файлу (CP1252/Latin-1) → дерево значень; для читання через VFS
+/// (байти з vfs.read ідують у лексер 1:1, як у грі).
+pub fn parse_bytes(bytes: &[u8]) -> Result<Value> {
     let mut parser = Parser::new(Lexer::new(bytes));
     let entries = parser.parse_statements(false, 0)?;
     Ok(Value::List(entries))

@@ -8,3 +8,6 @@ dh-format = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+dh-vfs = { workspace = true }

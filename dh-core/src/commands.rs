@@ -110,10 +110,13 @@ pub enum CommandType {
     Invention { tag: Tag, tech: u16 },
 
     // ================= Події / рішення =================
-    /// `event` 0x1f7 (диспетчер +0x420): поставити подію `id` у чергу світу
-    /// (`World::pending_events`); розгляд черги — TODO (диспетчер подій, RE-scripts §4).
-    Event(u32),
-    /// `sleepevent` 0x1f8: «спляча» подія (списку сплячих ще немає — TODO).
+    /// `event` 0x1f7: запустити подію `id` (зі сценарію або іншої події).
+    /// `when = D` — затримка в ДНЯХ до запуску (0 = негайно; у файлах
+    /// 360 = «in 1 year», 720 = «in 2 years» — дні, на відміну від `hour =`
+    /// у queued_events), `where = TAG` — країна-одержувач (порожній тег =
+    /// виконавець; `type = trigger` 0x3dc — те саме без where/when).
+    Event { id: u32, when_days: i64, to: Tag },
+    /// `sleepevent` 0x1f8: «спляча» подія (список сплячих — у рушії подій).
     SleepEvent(u32),
     /// `random` 0x3fa (RE-scripts.md §4): виконати ОДНУ випадкову гілку.
     Random(Vec<Command>),
@@ -309,7 +312,14 @@ impl Command {
             },
 
             // ---- Події / рішення ----
-            0x1f7 => CommandType::Event(val(0) as u32),
+            // event: args = [which(id), when(дні, 0)]; str_args = [where(TAG)].
+            // `type = trigger` (0x3dc) — запуск події для країни-виконавця:
+            // той самий ефект без where/when.
+            0x1f7 | 0x3dc => CommandType::Event {
+                id: val(0) as u32,
+                when_days: val(1) as i64,
+                to: tag(0),
+            },
             0x1f8 => CommandType::SleepEvent(val(0) as u32),
             // random: діти додаються парсером через push_child (RE-scripts.md §4).
             0x3fa => CommandType::Random(Vec::new()),
@@ -343,10 +353,10 @@ impl Command {
 
             // ---- Прапори (0x3d6 flag, 0x3d7 setflag, 0x3d8 clrflag, 0x3d9 local_flag,
             //      0x3da local_setflag, 0x3db local_clrflag) ----
-            0x3d6 | 0x3d7 | 0x3d8 | 0x3d9 | 0x3da | 0x3db => CommandType::Flags {
+            0x3d6..=0x3db => CommandType::Flags {
                 flag: str_args.first().cloned().unwrap_or_default(),
                 set: !matches!(id, 0x3d8 | 0x3db),
-                local: matches!(id, 0x3d9 | 0x3da | 0x3db),
+                local: matches!(id, 0x3d9..=0x3db),
             },
 
             // ---- Сценарні прапори (36 ID 0x1d1..0x1f4, RE-commands-details.md §3):
@@ -907,14 +917,23 @@ impl EffectExecutor for CommandExecutor {
             }
 
             // ================= Події / рішення =================
-            CommandType::Event(id) => {
-                // TODO(RE): повний цикл подій (диспетчер 0x4bb6b0); поки — черга.
-                world.pending_events.push(*id);
-                log::debug!("[commands:{src}] event: {id} → у чергу світу");
+            CommandType::Event { id, when_days, to } => {
+                // Запуск події: затримка `when` (ДНІ; 0 = ця доба). Отримувач —
+                // `where`, порожній тег = країна-виконавець.
+                let due = world.date.add_days(*when_days);
+                world
+                    .pending_timed
+                    .push((*id, to.as_str().to_string(), due.day));
+                log::debug!(
+                    "[commands:{src}] event: {id} → у чергу (через {when_days} діб, кому «{}»)",
+                    to.as_str()
+                );
             }
             CommandType::SleepEvent(id) => {
-                // TODO(RE): «сплячі» події (0x1f8 sleepevent).
-                log::debug!("[commands:{src}] sleepevent {id}: списку сплячих немає (TODO)");
+                // «Сплячі» події (0x1f8 sleepevent): списком володіє рушій
+                // подій (events.rs) — через чергу світу.
+                world.pending_sleep.push(*id);
+                log::debug!("[commands:{src}] sleepevent {id} → у чергу світу");
             }
             CommandType::Random(branches) => {
                 if branches.is_empty() {
@@ -1202,9 +1221,17 @@ mod tests {
     fn event_goes_to_pending_queue() {
         let mut w = two_country_world();
         let mut ex = CommandExecutor::new();
+        // Без `when` — негайно (день поточної дати).
         let cmd = Command::from_token(0x1f7, &[1337.0], &[]).unwrap();
         ex.execute(&mut w, &CommandTarget::World, &cmd).unwrap();
-        assert_eq!(w.pending_events, vec![1337]);
+        assert!(w.pending_events.is_empty());
+        assert_eq!(w.pending_timed, vec![(1337u32, String::new(), w.date.day)]);
+        // `when = 48` днів; `where = GER` — одержувач.
+        let cmd = Command::from_token(0x1f7, &[500.0, 48.0], &["GER".to_string()]).unwrap();
+        ex.execute(&mut w, &CommandTarget::World, &cmd).unwrap();
+        let last = w.pending_timed.last().unwrap();
+        assert_eq!((last.0, &last.1), (500, &"GER".to_string()));
+        assert_eq!(last.2, w.date.day + 48);
     }
 
     #[test]
