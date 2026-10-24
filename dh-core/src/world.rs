@@ -158,6 +158,27 @@ impl World {
         self.speed = speed.min(7);
     }
 
+    /// Аннексія: усі провінції країни `annexed` переходять країні `annexer`
+    /// (власник і контролер). Повертає кількість переданих провінцій.
+    /// Ориг.: мирний договір / команда `annex` (RE-scripts.md; сценарний setowner).
+    pub fn annex(&mut self, annexed: &Tag, annexer: &Tag) -> usize {
+        let (Some(&a_idx), Some(&b_idx)) = (self.tags.get(annexed), self.tags.get(annexer)) else {
+            return 0;
+        };
+        if a_idx == b_idx {
+            return 0;
+        }
+        let mut n = 0;
+        for p in &mut self.provinces {
+            if p.owner == Some(a_idx) {
+                p.owner = Some(b_idx);
+                p.controller = Some(b_idx);
+                n += 1;
+            }
+        }
+        n
+    }
+
     /// Повний денний цикл — 7 фаз у порядку RE-misc-details.md §C (аналог режиму
     /// −1 диспетчера FUN_005b6f60). Викликається движком на кожну подію `DayTick`.
     ///
@@ -417,5 +438,35 @@ mod tests {
         assert!(!w.alliances[ai].leave(1));
         assert_eq!(w.alliances[ai].members, vec![0]);
         assert_eq!(w.alliances[ai].id, 0);
+    }
+
+    /// Аннексія: передача провінцій, нічого не робить для невідомих/тих самих країн.
+    #[test]
+    fn annex_transfers_provinces() {
+        let mut w = World::new();
+        let ger = w.add_country(Country::new(tag("GER"), "Німеччина"));
+        let sov = w.add_country(Country::new(tag("SOV"), "СРСР"));
+        let pol = w.add_country(Country::new(tag("POL"), "Польща"));
+        for (id, owner) in [(1u16, sov), (2, sov), (3, ger), (4, pol)] {
+            w.provinces.push(ProvinceState {
+                id,
+                owner: Some(owner),
+                controller: Some(owner),
+                has_vp: false,
+                vp: 0,
+                infra: 50,
+                resources: ProvinceResources::default(),
+                occupied: false,
+            });
+        }
+        assert_eq!(w.annex(&tag("SOV"), &tag("GER")), 2);
+        let owners: Vec<_> = w.provinces.iter().map(|p| p.owner.unwrap()).collect();
+        assert_eq!(owners, vec![ger, ger, ger, pol]);
+        // Контролер слідує за власником.
+        assert!(w.provinces.iter().all(|p| p.owner == p.controller));
+        // Невідома й та сама країна — без змін.
+        assert_eq!(w.annex(&tag("XXX"), &tag("GER")), 0);
+        assert_eq!(w.annex(&tag("POL"), &tag("POL")), 0);
+        assert_eq!(w.provinces[3].owner, Some(pol));
     }
 }

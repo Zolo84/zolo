@@ -372,6 +372,13 @@ struct AppState {
     /// провінцію (23|0x20 вода, 2|0x20 нічия, номер кольору країни | 0x20
     /// для не-гравця). Разом із `color_model` дає точний рендер без дампів.
     prov_scales: Vec<u8>,
+    /// База країн (колір тегу) — для перебудови політичної карти в рантаймі.
+    country_db: dh_format::db::CountryDb,
+    /// Сигнатура власників/контролерів: якщо змінилась — політику перебудувати.
+    last_political_sig: u64,
+    /// Відкладена аннексія з оточення: (тег, коли виконати) — тестовий шлях
+    /// `DH_ANNEX=SOV` із затримкою `DH_ANNEX_TICK` (сек.).
+    annex_pending: Option<(String, Instant)>,
 }
 
 /// Зібрана міні-карта: буфер ARGB, готовий для blit у канвас.
@@ -437,6 +444,69 @@ impl AppState {
             .find(|p| p.id == id)
             .map(|p| p.name.as_str())
             .unwrap_or("?")
+    }
+
+    /// Сигнатура власників/контролерів усіх провінцій (FNV-1a) — швидка
+    /// перевірка «карта змінилась політично» кожен кадр.
+    fn political_sig(&self) -> u64 {
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        if let Some(w) = &self.world {
+            for p in &w.provinces {
+                let v = ((p.owner.unwrap_or(0xFFFF) as u64) << 16)
+                    | (p.controller.unwrap_or(0xFFFF) as u64);
+                h = (h ^ v).wrapping_mul(0x100_0000_01b3);
+            }
+        }
+        h
+    }
+
+    /// Аннексія країни `tag` гравцем (повертає кількість провінцій).
+    fn annex_to_player(&mut self, tag: &str) -> usize {
+        let Some(w) = &mut self.world else { return 0 };
+        w.annex(
+            &dh_format::Tag(tag.to_string()),
+            &dh_format::Tag(self.cli.player.clone()),
+        )
+    }
+
+    /// Перебудова політичної карти після зміни власників: кольори + шкали +
+    /// перезаливка на GPU + перебудова міні-карти у фоні.
+    fn rebuild_political(&mut self) {
+        let Some(world) = &self.world else { return };
+        self.prov_colors = Self::build_province_colors(&self.prov_csv, world, &self.country_db);
+        let scales = Self::build_province_scales(
+            &self.prov_csv,
+            Some(world),
+            &self.country_db,
+            &self.cli.player,
+        );
+        use dh_format::colorscale::DARK_FLAG;
+        let bright = scales.iter().filter(|&&s| s & DARK_FLAG == 0).count();
+        log::info!(
+            "політична карта перебудована: {bright} світлих провінцій (гравець {})",
+            self.cli.player
+        );
+        self.prov_scales = scales;
+        if let Some(Renderer::Gpu(g)) = &mut self.surface {
+            let _ = g.set_scales(&self.prov_scales);
+        }
+        // Міні-карта: політичні кольори змінились — збираємо заново у фоні.
+        let map = self.map.clone();
+        let colors = self.prov_colors.clone();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(
+            move || match dh_render::minimap::build_minimap(&map, &colors) {
+                Ok(buf) => {
+                    let _ = tx.send(MinimapBuf {
+                        w: dh_render::minimap::MINIMAP_W,
+                        h: dh_render::minimap::MINIMAP_H,
+                        buf,
+                    });
+                }
+                Err(e) => log::warn!("міні-карта не перебудована: {e}"),
+            },
+        );
+        self.minimap_rx = Some(rx);
     }
 
     fn hud_font(&self) -> Option<&BitmapFont> {
@@ -684,6 +754,27 @@ impl AppState {
             }
         }
 
+        // Рантайм-політика: тестова аннексія з оточення (DH_ANNEX, DH_ANNEX_TICK).
+        if let Some((tag, t)) = &self.annex_pending {
+            if Instant::now() >= *t {
+                let tag = tag.clone();
+                self.annex_pending = None;
+                let n = self.annex_to_player(&tag);
+                log::info!(
+                    "аннексія (test env): {tag} → {}, провінцій: {n}",
+                    self.cli.player
+                );
+            }
+        }
+        // Зміна власників/контролерів (аннексії, окупації...) → перебудова карти.
+        let sig = self.political_sig();
+        if sig != self.last_political_sig {
+            if self.last_political_sig != 0 && self.world.is_some() {
+                self.rebuild_political();
+            }
+            self.last_political_sig = sig;
+        }
+
         // Рух камери (утримування WASD) — крок у блоках, масштабований зумом.
         if !self.keys_down.is_empty() {
             // Зум-аут (від'ємний) → більший крок: 8 − 2·(−k) = 8+2k.
@@ -909,6 +1000,29 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
                                     }
                                 );
                             }
+                            KeyCode::KeyN => {
+                                // Аннексія країни під курсором/вибором гравцем.
+                                let prov = self.0.hover.or(self.0.selected).map(|t| t.2);
+                                let owner_tag = prov.and_then(|p| {
+                                    self.0.world.as_ref().and_then(|w| {
+                                        w.provinces
+                                            .iter()
+                                            .find(|ps| ps.id == p)
+                                            .and_then(|ps| ps.owner)
+                                            .and_then(|i| w.countries.get(i))
+                                            .map(|c| c.tag.0.clone())
+                                    })
+                                });
+                                if let Some(tag) = owner_tag {
+                                    let n = self.0.annex_to_player(&tag);
+                                    log::info!(
+                                        "аннексія {tag} → {}: {n} провінцій",
+                                        self.0.cli.player
+                                    );
+                                } else {
+                                    log::info!("немає країни під курсором для аннексії (N)");
+                                }
+                            }
                             _ => {
                                 self.0.keys_down.insert(code);
                             }
@@ -1058,6 +1172,17 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
         terrain_palettes,
         color_model: load_color_model(paths),
         prov_scales,
+        country_db: country_db.clone(),
+        last_political_sig: 0,
+        annex_pending: std::env::var("DH_ANNEX").ok().map(|tag| {
+            let secs: u64 = std::env::var("DH_ANNEX_TICK")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(2);
+            let delay = std::time::Duration::from_secs(secs);
+            log::info!("відкладена аннексія (test): {tag} через {secs} с");
+            (tag, Instant::now() + delay)
+        }),
     });
 
     let event_loop = EventLoop::new().context("winit: event loop")?;
