@@ -115,6 +115,19 @@ fn main() -> anyhow::Result<()> {
     let mut renderer = MapRenderer::new(&map, zoom, view).with_province_scales(&scales);
     renderer.color_model = Some(&color_model);
     renderer.render(&mut canvas);
+    // Top-бар інтерфейсу оригіналу (gfx/SKINS/<player>/topbar.bmp, fallback default).
+    for skin in [player.to_lowercase().as_str(), "default"] {
+        let p = paths
+            .root
+            .join("gfx/SKINS")
+            .join(skin)
+            .join("topbar.bmp");
+        if let Ok(tb) = dh_render::ui::load_bmp(&p) {
+            eprintln!("topbar: {} ({}×{})", p.display(), tb.w, tb.h);
+            tb.draw(&mut canvas, 0, 0);
+            break;
+        }
+    }
 
     let mut img = image::RgbImage::new(w, h);
     for y in 0..h {

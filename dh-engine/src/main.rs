@@ -379,6 +379,8 @@ struct AppState {
     terrain_mode: bool,
     /// База країн (колір тегу) — для перебудови політичної карти в рантаймі.
     country_db: dh_format::db::CountryDb,
+    /// Top-бар інтерфейсу оригіналу (gfx/SKINS/<player>/topbar.bmp, fallback default).
+    topbar: Option<dh_render::ui::UiImage>,
     /// Сигнатура власників/контролерів: якщо змінилась — політику перебудувати.
     last_political_sig: u64,
     /// Відкладена аннексія з оточення: (тег, коли виконати) — тестовий шлях
@@ -695,6 +697,7 @@ impl AppState {
         }
         let mm_ref = self.minimap.as_ref();
         let show_mm = self.show_minimap;
+        let topbar_ref = self.topbar.as_ref();
 
         let map_ref: &MapData = &self.map;
         let view = self.view_for(w, h);
@@ -759,6 +762,13 @@ impl AppState {
                     None => None,
                 };
                 g.set_highlight_rect(hi)?;
+                if let Some(tb) = topbar_ref {
+                    tb.draw(g.hud(), 0, 0);
+                    if std::env::var("DH_UI_DEBUG").is_ok() {
+                        let n = g.hud().buf().iter().filter(|&&p| p != 0).count();
+                        log::info!("[ui] пікселів у HUD-канвасі після topbar: {n}");
+                    }
+                }
                 if !font_ptr.is_null() {
                     let font_ref: &BitmapFont = unsafe { &*font_ptr };
                     text::draw(g.hud(), font_ref, line.as_bytes(), 6, 3, &style);
@@ -785,6 +795,10 @@ impl AppState {
                 renderer.color_model = self.color_model.as_ref();
                 renderer.prov_scales = Some(scale_ref);
                 renderer.render(&mut **c);
+
+                if let Some(tb) = topbar_ref {
+                    tb.draw(&mut **c, 0, 0);
+                }
 
                 if !font_ptr.is_null() {
                     // unsafe: font_ptr вказує в self.fonts, яке живе довше за borrow
@@ -1254,6 +1268,30 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
         Some(mm_rx)
     };
 
+    // Top-бар інтерфейсу зі скина гравця (fallback default).
+    let topbar = {
+        let skin_dir = paths.root.join("gfx/SKINS");
+        let tag = cli.player.to_lowercase();
+        let mut img = None;
+        for skin in [tag.as_str(), "default"] {
+            let p = skin_dir.join(skin).join("topbar.bmp");
+            match dh_render::ui::load_bmp(&p) {
+                Ok(im) => {
+                    log::info!(
+                        "top-бар: {} ({}×{})",
+                        p.display(),
+                        im.w,
+                        im.h
+                    );
+                    img = Some(im);
+                    break;
+                }
+                Err(e) => log::debug!("top-бар: {e}"),
+            }
+        }
+        img
+    };
+
     let mut app = App(AppState {
         cli: cli.clone(),
         map,
@@ -1283,6 +1321,7 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
         terrain_scales,
         terrain_mode: std::env::var("DH_TERRAIN").is_ok(),
         country_db: country_db.clone(),
+        topbar,
         last_political_sig: 0,
         annex_pending: std::env::var("DH_ANNEX").ok().map(|tag| {
             let secs: u64 = std::env::var("DH_ANNEX_TICK")

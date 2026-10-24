@@ -118,9 +118,10 @@ impl<'a> WgpuCanvas<'a> {
             eprintln!("wgpu validation error: {e}");
         }));
 
-        let config = surface
+        let mut config = surface
             .get_default_config(&adapter, width.max(1), height.max(1))
             .context("wgpu: surface config")?;
+        // Канвас тримає сирі коди гри (не-sRGB, як і палітра в wgpu_map).
         eprintln!(
             "[wgpu] config: формат {:?}, present_mode {:?}, alpha {:?}, розмір {}x{}",
             config.format, config.present_mode, config.alpha_mode, config.width, config.height
@@ -139,7 +140,7 @@ impl<'a> WgpuCanvas<'a> {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -257,7 +258,7 @@ impl<'a> WgpuCanvas<'a> {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -343,28 +344,7 @@ impl RenderSurface for WgpuCanvas<'_> {
             },
         );
 
-        // ДІАГНОСТИКА (тимчасова): перші 5 кадрів — вміст канваса, статус поверхні.
-        use std::sync::atomic::{AtomicU32, Ordering};
-        static FRAMES: AtomicU32 = AtomicU32::new(0);
         let frame_result = self.surface.get_current_texture();
-        if FRAMES.fetch_add(1, Ordering::Relaxed) < 5 {
-            let nonzero = self.canvas.buf().iter().filter(|&&p| p != 0).count();
-            eprintln!(
-                "[wgpu] кадр {}: канвас {w}x{h}, ненульових пікселів {nonzero} (з {}), поверхня: {}",
-                FRAMES.load(Ordering::Relaxed),
-                (w as usize) * (h as usize),
-                match &frame_result {
-                    wgpu::CurrentSurfaceTexture::Success(_) => "Success",
-                    wgpu::CurrentSurfaceTexture::Suboptimal(_) => "Suboptimal",
-                    wgpu::CurrentSurfaceTexture::Timeout => "Timeout",
-                    wgpu::CurrentSurfaceTexture::Occluded => "Occluded",
-                    wgpu::CurrentSurfaceTexture::Outdated => "Outdated",
-                    wgpu::CurrentSurfaceTexture::Lost => "Lost",
-                    wgpu::CurrentSurfaceTexture::Validation => "Validation",
-                }
-            );
-        }
-
         let frame = match frame_result {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,

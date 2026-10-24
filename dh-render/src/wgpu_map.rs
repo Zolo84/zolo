@@ -455,7 +455,7 @@ impl<'a> GpuRenderer<'a> {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -544,7 +544,7 @@ impl<'a> GpuRenderer<'a> {
         };
         let view_of = |t: &wgpu::Texture| t.create_view(&wgpu::TextureViewDescriptor::default());
         let t_r32 = bogus(wgpu::TextureFormat::R32Uint);
-        let t_rgba = bogus(wgpu::TextureFormat::Rgba8Unorm);
+        let t_rgba = bogus(wgpu::TextureFormat::Rgba8UnormSrgb);
         let bg_map = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("map bg (stub)"),
             layout: &bgl_map,
@@ -590,7 +590,7 @@ impl<'a> GpuRenderer<'a> {
         let fmt = config
             .as_ref()
             .map(|c| c.format)
-            .unwrap_or(wgpu::TextureFormat::Rgba8Unorm);
+            .unwrap_or(wgpu::TextureFormat::Rgba8UnormSrgb);
         let mk =
             |role: &str, bgl: &wgpu::BindGroupLayout, shader: &wgpu::ShaderModule, blend: bool| {
                 let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -886,15 +886,10 @@ impl<'a> GpuRenderer<'a> {
         }));
         let mut config = surface
             .get_default_config(&adapter, width.max(1), height.max(1))
-            .context("gpu: surface config")?;
-        // Формат поверхні НЕ форсуємо: деякі WSI (особливо Vulkan) не
-        // підтримують Rgba8Unorm і дають порожній/чорний кадр. Беремо те,
-        // що реально підтримує поверхня (як робив старий WgpuCanvas);
-        // піплайни створюються під цей формат у assemble.
-        eprintln!(
-            "[gpu] config: формат {:?}, present_mode {:?}, alpha {:?}, розмір {}x{}",
-            config.format, config.present_mode, config.alpha_mode, config.width, config.height
-        );
+            .context("wgpu: surface config")?;
+        // Текстури — НЕ-sRGB (сирі коди з файлів гри 1:1 з палітрою);
+        // дефолтний формат поверхні (Bgra8UnormSrgb) шкоди не робить:
+        // конверсій на цьому тракті немає (перевірено наживо).
         config.width = width.max(1);
         config.height = height.max(1);
         surface.configure(&device, &config);
@@ -1363,7 +1358,7 @@ impl<'a> GpuRenderer<'a> {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -1539,7 +1534,7 @@ impl<'a> GpuRenderer<'a> {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
