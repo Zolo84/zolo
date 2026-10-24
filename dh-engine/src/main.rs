@@ -11,6 +11,8 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -295,7 +297,7 @@ fn run_headless(paths: &GamePaths, cli: &Cli) -> Result<()> {
 // Вікно (winit + Wayland/X11 + dh-render)
 // ---------------------------------------------------------------------------
 
-use dh_render::canvas::RenderSurface;
+use dh_render::canvas::{Canvas, RenderSurface};
 use dh_render::map_render;
 use dh_render::map_render::{MapRenderer, Viewport};
 use dh_render::text::{self, TextAlign, TextStyle};
@@ -329,7 +331,7 @@ impl Renderer {
 
 struct AppState {
     cli: Cli,
-    map: MapData,
+    map: Arc<MapData>,
     prov_csv: Vec<ProvinceCsv>,
     _palette: Palette,
     fonts: Vec<BitmapFont>,
@@ -344,6 +346,12 @@ struct AppState {
     zoom: i8,
     /// Показувати рамки провінцій (клавіша P).
     show_provinces: bool,
+    /// Зібрана міні-карта (у фоновому потоці, з'являється коли готова).
+    minimap: Option<MinimapBuf>,
+    /// Показувати міні-карту (клавіша M, старт із DH_MINIMAP=1).
+    show_minimap: bool,
+    /// Приймач міні-карти з фонового потоку.
+    minimap_rx: Option<mpsc::Receiver<MinimapBuf>>,
     /// Провінція під курсором (блок_x, блок_y, prov_id) — оновлюється на рух миші.
     hover: Option<(u32, u32, u16)>,
     /// Остання обрана кліком провінція.
@@ -364,6 +372,45 @@ struct AppState {
     /// провінцію (23|0x20 вода, 2|0x20 нічия, номер кольору країни | 0x20
     /// для не-гравця). Разом із `color_model` дає точний рендер без дампів.
     prov_scales: Vec<u8>,
+}
+
+/// Зібрана міні-карта: буфер ARGB, готовий для blit у канвас.
+struct MinimapBuf {
+    w: u32,
+    h: u32,
+    buf: Vec<u32>,
+}
+
+/// Малює міні-карту в правий нижній кут канваса: буфер, біла рамка,
+/// маркер в'юпорта (червоний). Позиція того ж канваса, що й HUD.
+fn draw_minimap(canvas: &mut Canvas, mm: &MinimapBuf, zoom: i8, cam_x: u32, cam_y: u32) {
+    let (w, h) = (mm.w, mm.h);
+    let (cw, ch) = (canvas.width(), canvas.height());
+    let (x, y) = (cw as i32 - w as i32 - 8, ch as i32 - h as i32 - 8);
+    canvas.blit(x, y, w, h, &mm.buf);
+    // Біла рамка навколо.
+    canvas.fill_rect(x - 2, y - 2, w + 4, 1, 0xFFFF_FFFF);
+    canvas.fill_rect(x - 2, y + h as i32 + 1, w + 4, 1, 0xFFFF_FFFF);
+    canvas.fill_rect(x - 2, y - 2, 1, h + 4, 0xFFFF_FFFF);
+    canvas.fill_rect(x + w as i32 + 1, y - 2, 1, h + 4, 0xFFFF_FFFF);
+    // Маркер видимого в'юпорта: світові px → міні-карта (128 px мапи = 1 px).
+    let (vwp, vhp) = if zoom >= 0 {
+        (cw >> zoom, ch >> zoom)
+    } else {
+        (cw << -zoom, ch << -zoom)
+    };
+    let (mx0, my0) = (
+        x + (cam_x as u64 * 32 / 128) as i32,
+        y + (cam_y as u64 * 32 / 128) as i32,
+    );
+    let (mw, mh) = (
+        (vwp as u64 / 128).clamp(1, w as u64) as u32,
+        (vhp as u64 / 128).clamp(1, h as u64) as u32,
+    );
+    canvas.fill_rect(mx0, my0, mw, 1, 0xFFFF_3030);
+    canvas.fill_rect(mx0, my0 + mh as i32 - 1, mw, 1, 0xFFFF_3030);
+    canvas.fill_rect(mx0, my0, 1, mh, 0xFFFF_3030);
+    canvas.fill_rect(mx0 + mw as i32 - 1, my0, 1, mh, 0xFFFF_3030);
 }
 
 impl AppState {
@@ -490,7 +537,20 @@ impl AppState {
         };
         let map_ref: &MapData = &self.map;
         let zoom = self.zoom;
+        let cam_x = self.cam_x;
+        let cam_y = self.cam_y;
         let view = self.view_for(w, h);
+
+        // Фонова міні-карта: забрати готовий кадр (якщо є).
+        if let Some(rx) = self.minimap_rx.take() {
+            match rx.try_recv() {
+                Ok(mm) => self.minimap = Some(mm),
+                Err(mpsc::TryRecvError::Empty) => self.minimap_rx = Some(rx),
+                Err(_) => {} // канал закрито (помилка збірки) — назавжди без міні-карти
+            }
+        }
+        let mm_ref = self.minimap.as_ref();
+        let show_mm = self.show_minimap;
 
         // Підготувати HUD-дані ДО мутабельного borrow поверхні.
         let font_ptr: *const BitmapFont = self.hud_font().map_or(std::ptr::null(), |f| f);
@@ -511,6 +571,20 @@ impl AppState {
                 "вибір"
             };
             line.push_str(&format!("  |  {sel} {prov} ({name}) @ ({bx},{by})"));
+        }
+        // Панель інфо вибраної провінції (2-й рядок).
+        let mut line2 = String::new();
+        if let (Some(world), Some((_, _, prov))) = (&self.world, self.selected) {
+            let name = self.province_name(prov);
+            let owner = world
+                .provinces
+                .iter()
+                .find(|p| p.id == prov)
+                .and_then(|p| p.owner)
+                .and_then(|o| world.countries.get(o))
+                .map(|c| c.tag.clone())
+                .unwrap_or_else(|| dh_format::Tag("—".to_string()));
+            line2 = format!("вибір: {name} (id {prov}) | власник {}", owner.0);
         }
         let style = TextStyle {
             color: [230, 230, 230],
@@ -533,9 +607,20 @@ impl AppState {
                 } else {
                     g.set_province_frames(&[])?;
                 }
+                let hi = match self.selected {
+                    Some((_, _, prov)) => map_render::prov_bbox_screen(map_ref, zoom, view, prov),
+                    None => None,
+                };
+                g.set_highlight_rect(hi)?;
                 if !font_ptr.is_null() {
                     let font_ref: &BitmapFont = unsafe { &*font_ptr };
                     text::draw(g.hud(), font_ref, line.as_bytes(), 6, 3, &style);
+                    if !line2.is_empty() {
+                        text::draw(g.hud(), font_ref, line2.as_bytes(), 6, 18, &style);
+                    }
+                }
+                if let (Some(mm), true) = (mm_ref, show_mm) {
+                    draw_minimap(g.hud(), mm, zoom, cam_x, cam_y);
                 }
                 g.present()?;
             }
@@ -553,6 +638,24 @@ impl AppState {
                     // unsafe: font_ptr вказує в self.fonts, яке живе довше за borrow
                     let font_ref: &BitmapFont = unsafe { &*font_ptr };
                     text::draw(&mut **c, font_ref, line.as_bytes(), 6, 3, &style);
+                    if !line2.is_empty() {
+                        text::draw(&mut **c, font_ref, line2.as_bytes(), 6, 18, &style);
+                    }
+                }
+                // Підсвітка вибраної провінції (жовта рамка, як у GPU-шляху).
+                if let Some((_, _, prov)) = self.selected {
+                    if let Some((x1, y1, x2, y2)) =
+                        map_render::prov_bbox_screen(map_ref, zoom, view, prov)
+                    {
+                        let (wq, hq) = ((x2 - x1).max(0) as u32, (y2 - y1).max(0) as u32);
+                        c.fill_rect(x1, y1, wq, 1, 0xFFFF_D133);
+                        c.fill_rect(x1, y2 - 1, wq, 1, 0xFFFF_D133);
+                        c.fill_rect(x1, y1, 1, hq, 0xFFFF_D133);
+                        c.fill_rect(x2 - 1, y1, 1, hq, 0xFFFF_D133);
+                    }
+                }
+                if let (Some(mm), true) = (mm_ref, show_mm) {
+                    draw_minimap(&mut **c, mm, zoom, cam_x, cam_y);
                 }
                 c.present()?;
             }
@@ -610,6 +713,7 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
     use winit::window::Window;
 
     let (map, prov_csv, palette, fonts) = load_static(paths)?;
+    let map = Arc::new(map);
     log::info!(
         "мапа {}×{} (провінцій: {}), Province.csv: {} записів, шрифтів: {}",
         map.map_w,
@@ -794,6 +898,17 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
                                     }
                                 );
                             }
+                            KeyCode::KeyM => {
+                                self.0.show_minimap = !self.0.show_minimap;
+                                log::info!(
+                                    "міні-карта: {}",
+                                    if self.0.show_minimap {
+                                        "увімкнено"
+                                    } else {
+                                        "вимкнено"
+                                    }
+                                );
+                            }
                             _ => {
                                 self.0.keys_down.insert(code);
                             }
@@ -890,6 +1005,33 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
         );
     }
 
+    // Міні-карта: збираємо у фоновому потоці (усі 5265 тайлів L4 ~ секунда),
+    // щоб не затримувати старт вікна.
+    let (mm_tx, mm_rx) = mpsc::channel();
+    {
+        let map = map.clone();
+        let colors = prov_colors.clone();
+        std::thread::spawn(move || {
+            let t0 = std::time::Instant::now();
+            match dh_render::minimap::build_minimap(&map, &colors) {
+                Ok(buf) => {
+                    log::info!(
+                        "міні-карта: {}×{} зібрана за {:?}",
+                        dh_render::minimap::MINIMAP_W,
+                        dh_render::minimap::MINIMAP_H,
+                        t0.elapsed()
+                    );
+                    let _ = mm_tx.send(MinimapBuf {
+                        w: dh_render::minimap::MINIMAP_W,
+                        h: dh_render::minimap::MINIMAP_H,
+                        buf,
+                    });
+                }
+                Err(e) => log::warn!("міні-карта не зібрана: {e}"),
+            }
+        });
+    }
+
     let mut app = App(AppState {
         cli: cli.clone(),
         map,
@@ -904,6 +1046,9 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
         cam_y: 0,
         zoom: 0,
         show_provinces: std::env::var("DH_FRAMES").is_ok(),
+        minimap: None,
+        show_minimap: std::env::var("DH_MINIMAP").is_ok(),
+        minimap_rx: Some(mm_rx),
         hover: None,
         selected: None,
         last_frame: Instant::now(),

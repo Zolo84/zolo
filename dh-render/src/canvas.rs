@@ -93,6 +93,30 @@ impl Canvas {
         self.buf[(y * self.width + x) as usize] = color.into().0;
     }
 
+    /// Копіює прямокутник ARGB-буфера на канвас (без змішування, з кліпінгом).
+    /// `buf` має містити щонайменше `w·h` пікселів.
+    pub fn blit(&mut self, x: i32, y: i32, w: u32, h: u32, buf: &[u32]) {
+        if buf.len() < w as usize * h as usize {
+            return;
+        }
+        let (cw, ch) = (self.width as i32, self.height as i32);
+        for row in 0..h as i32 {
+            let dy = y + row;
+            if dy < 0 || dy >= ch {
+                continue;
+            }
+            let dx0 = x.max(0);
+            let dx1 = (x + w as i32).min(cw);
+            if dx1 <= dx0 {
+                continue;
+            }
+            let src = (row * w as i32 + (dx0 - x)) as usize;
+            let dst = (dy * cw + dx0) as usize;
+            let n = (dx1 - dx0) as usize;
+            self.buf[dst..dst + n].copy_from_slice(&buf[src..src + n]);
+        }
+    }
+
     /// Заливає прямокутник `(x, y) × (w, h)`; частини поза межами відсікаються.
     pub fn fill_rect(&mut self, x: i32, y: i32, w: u32, h: u32, color: impl Into<Color>) {
         if w == 0 || h == 0 {

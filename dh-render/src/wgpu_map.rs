@@ -230,7 +230,8 @@ fn fs_hud(in: MapVsOut) -> @location(0) vec4f {
 }
 "#;
 
-/// Рамки провінцій: список сегментів у NDC (вершини з CPU), колір білий.
+/// Рамки провінцій: список сегментів у NDC (вершини з CPU), колір білий;
+/// `fs_highlight` — жовта підсвітка вибраної провінції (той самий vs_frames).
 const SHADER_FRAMES: &str = r#"
 @vertex
 fn vs_frames(@location(0) pos: vec2f) -> @builtin(position) vec4f {
@@ -240,6 +241,11 @@ fn vs_frames(@location(0) pos: vec2f) -> @builtin(position) vec4f {
 @fragment
 fn fs_frames() -> @location(0) vec4f {
     return vec4f(1.0, 1.0, 1.0, 1.0);
+}
+
+@fragment
+fn fs_highlight() -> @location(0) vec4f {
+    return vec4f(1.0, 0.82, 0.2, 1.0);
 }
 "#;
 
@@ -408,6 +414,10 @@ pub struct GpuRenderer<'a> {
     frames_vb: Option<wgpu::Buffer>,
     frames_count: u32,
     pipeline_frames: wgpu::RenderPipeline,
+    /// Підсвітка вибраної провінції (жовтий, [`Self::set_highlight_rect`]).
+    highlight_vb: Option<wgpu::Buffer>,
+    highlight_count: u32,
+    pipeline_highlight: wgpu::RenderPipeline,
 }
 
 impl<'a> GpuRenderer<'a> {
@@ -712,6 +722,50 @@ impl<'a> GpuRenderer<'a> {
             cache: None,
         });
 
+        // Піплайн підсвітки: типовий vs_frames + жовтий fs_highlight.
+        let pipeline_highlight = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("highlight pipeline"),
+            layout: Some(
+                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("highlight pl"),
+                    bind_group_layouts: &[],
+                    immediate_size: 0,
+                }),
+            ),
+            vertex: wgpu::VertexState {
+                module: &shader_frames,
+                entry_point: Some("vs_frames"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: 8,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x2,
+                        offset: 0,
+                        shader_location: 0,
+                    }],
+                })],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader_frames,
+                entry_point: Some("fs_highlight"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: fmt,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::LineList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         Ok(GpuRenderer {
             instance,
             surface,
@@ -749,6 +803,9 @@ impl<'a> GpuRenderer<'a> {
             frames_vb: None,
             frames_count: 0,
             pipeline_frames,
+            highlight_vb: None,
+            highlight_count: 0,
+            pipeline_highlight,
         })
     }
 
@@ -1028,39 +1085,85 @@ impl<'a> GpuRenderer<'a> {
     /// конвертує в NDC-сегменти й заливає vertex-буфер. Порожній список —
     /// вимикає прохід.
     pub fn set_province_frames(&mut self, rects: &[(i32, i32, i32, i32)]) -> anyhow::Result<()> {
-        let (w, h) = self.window_size();
-        let (w, h) = (w.max(1) as f32, h.max(1) as f32);
-        let mut verts: Vec<f32> = Vec::with_capacity(rects.len() * 16);
-        let nx = |x: i32| x as f32 / w * 2.0 - 1.0;
-        let ny = |y: i32| 1.0 - y as f32 / h * 2.0;
-        for &(x1, y1, x2, y2) in rects {
-            // 4 сегменти (із включенням зовнішніх країв, як у CPU-шляху).
-            let (x1, y1, x2, y2) = (nx(x1), ny(y1), nx(x2), ny(y2));
-            verts.extend_from_slice(&[x1, y1, x2, y1]); // верх
-            verts.extend_from_slice(&[x2, y1, x2, y2]); // право
-            verts.extend_from_slice(&[x2, y2, x1, y2]); // низ
-            verts.extend_from_slice(&[x1, y2, x1, y1]); // ліво
-        }
+        let verts = self.rects_to_ndc_lines(rects);
         self.frames_count = (verts.len() / 2) as u32;
         if verts.is_empty() {
             return Ok(());
         }
+        let (device, queue) = (&self.device, &self.queue);
+        Self::upload_line_buffer(device, queue, &mut self.frames_vb, "frames vb", &verts)
+    }
+
+    /// Жовта підсвітка прямокутника (вибрана провінція); None — вимкнути.
+    pub fn set_highlight_rect(&mut self, rect: Option<(i32, i32, i32, i32)>) -> anyhow::Result<()> {
+        let verts = match rect {
+            Some(r) => {
+                let mut verts = Vec::with_capacity(8);
+                self.push_rect_ndc(&mut verts, r);
+                verts
+            }
+            None => Vec::new(),
+        };
+        self.highlight_count = (verts.len() / 2) as u32;
+        if verts.is_empty() {
+            return Ok(());
+        }
+        let (device, queue) = (&self.device, &self.queue);
+        Self::upload_line_buffer(
+            device,
+            queue,
+            &mut self.highlight_vb,
+            "highlight vb",
+            &verts,
+        )
+    }
+
+    /// Прямокутники (екранні пікселі) → сегменти в NDC: 4 лінії на прямокутник.
+    fn rects_to_ndc_lines(&self, rects: &[(i32, i32, i32, i32)]) -> Vec<f32> {
+        let mut verts = Vec::with_capacity(rects.len() * 16);
+        for &r in rects {
+            self.push_rect_ndc(&mut verts, r);
+        }
+        verts
+    }
+
+    fn push_rect_ndc(&self, verts: &mut Vec<f32>, (x1, y1, x2, y2): (i32, i32, i32, i32)) {
+        let (w, h) = self.window_size();
+        let (w, h) = (w.max(1) as f32, h.max(1) as f32);
+        let nx = |x: i32| x as f32 / w * 2.0 - 1.0;
+        let ny = |y: i32| 1.0 - y as f32 / h * 2.0;
+        let (x1, y1, x2, y2) = (nx(x1), ny(y1), nx(x2), ny(y2));
+        verts.extend_from_slice(&[x1, y1, x2, y1]); // верх
+        verts.extend_from_slice(&[x2, y1, x2, y2]); // право
+        verts.extend_from_slice(&[x2, y2, x1, y2]); // низ
+        verts.extend_from_slice(&[x1, y2, x1, y1]); // ліво
+    }
+
+    /// Заливає (або пересоздає) vertex-буфер ліній із f32-пар. Без `self`:
+    /// device/queue передаються окремо, щоб не конфліктувати з полем-буфером.
+    fn upload_line_buffer(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        slot: &mut Option<wgpu::Buffer>,
+        label: &str,
+        verts: &[f32],
+    ) -> anyhow::Result<()> {
         let bytes: Vec<u8> = verts.iter().flat_map(|v| v.to_le_bytes()).collect();
         let need = bytes.len() as u64;
-        match self.frames_vb.as_ref() {
+        match slot.as_ref() {
             Some(b) if b.size() >= need => {
-                self.queue.write_buffer(b, 0, &bytes);
+                queue.write_buffer(b, 0, &bytes);
             }
             _ => {
                 let capacity = need.next_power_of_two().max(4096);
-                let vb = self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("frames vb"),
+                let vb = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(label),
                     size: capacity,
                     usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
-                self.queue.write_buffer(&vb, 0, &bytes);
-                self.frames_vb = Some(vb);
+                queue.write_buffer(&vb, 0, &bytes);
+                *slot = Some(vb);
             }
         }
         Ok(())
@@ -1376,6 +1479,13 @@ impl<'a> GpuRenderer<'a> {
                     rpass.set_pipeline(&self.pipeline_frames);
                     rpass.set_vertex_buffer(0, vb.slice(..));
                     rpass.draw(0..self.frames_count, 0..1);
+                }
+            }
+            if self.highlight_count > 0 {
+                if let Some(vb) = self.highlight_vb.as_ref() {
+                    rpass.set_pipeline(&self.pipeline_highlight);
+                    rpass.set_vertex_buffer(0, vb.slice(..));
+                    rpass.draw(0..self.highlight_count, 0..1);
                 }
             }
             if with_hud {

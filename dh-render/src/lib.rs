@@ -2,6 +2,7 @@
 
 pub mod canvas;
 pub mod map_render;
+pub mod minimap;
 pub mod text;
 pub mod wgpu_canvas;
 pub mod wgpu_map;

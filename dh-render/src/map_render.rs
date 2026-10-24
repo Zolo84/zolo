@@ -634,6 +634,26 @@ pub fn province_frames_screen(
     zoom: i8,
     view: Viewport,
 ) -> Vec<(i32, i32, i32, i32)> {
+    let mut out = Vec::new();
+    for prov in 1..map.bounds.len() {
+        // bounds[0] = розмір мапи, не провінція.
+        if let Some(r) = prov_bbox_screen(map, zoom, view, prov as u16) {
+            out.push(r);
+        }
+    }
+    out
+}
+
+/// Екранний прямокутник boundbox однієї провінції `(x1, y1, x2, y2)` (зовнішні
+/// краї) або None, якщо провінція не існує або не видима у в'юпорті. Використовується
+/// для підсвітки вибраної провінції (той самий обхід, що `province_frames_screen`).
+pub fn prov_bbox_screen(
+    map: &MapData,
+    zoom: i8,
+    view: Viewport,
+    prov: u16,
+) -> Option<(i32, i32, i32, i32)> {
+    let b = map.bounds.get(prov as usize)?;
     let to_screen = |v: i64| -> i32 {
         if zoom >= 0 {
             (v << zoom) as i32
@@ -646,22 +666,15 @@ pub fn province_frames_screen(
     let (vw, vh) = view.screen_size(zoom);
     let vx1 = vx0 + vw as i64;
     let vy1 = vy0 + vh as i64;
-
-    let mut out = Vec::new();
-    for prov in 1..map.bounds.len() {
-        // bounds[0] = розмір мапи, не провінція.
-        let b = map.bounds[prov];
-        let (bx1, by1, bx2, by2) = (b.x1 as i64, b.y1 as i64, b.x2 as i64, b.y2 as i64);
-        if bx2 < vx0 || by2 < vy0 || bx1 > vx1 || by1 > vy1 {
-            continue; // не видима у в'юпорті
-        }
-        let sx1 = to_screen(bx1 - vx0);
-        let sy1 = to_screen(by1 - vy0);
-        let sx2 = to_screen(bx2 - vx0) + 1;
-        let sy2 = to_screen(by2 - vy0) + 1;
-        out.push((sx1, sy1, sx2, sy2));
+    let (bx1, by1, bx2, by2) = (b.x1 as i64, b.y1 as i64, b.x2 as i64, b.y2 as i64);
+    if bx2 < vx0 || by2 < vy0 || bx1 > vx1 || by1 > vy1 {
+        return None; // не видима у в'юпорті
     }
-    out
+    let sx1 = to_screen(bx1 - vx0);
+    let sy1 = to_screen(by1 - vy0);
+    let sx2 = to_screen(bx2 - vx0) + 1;
+    let sy2 = to_screen(by2 - vy0) + 1;
+    Some((sx1, sy1, sx2, sy2))
 }
 
 #[cfg(test)]
@@ -919,6 +932,32 @@ mod tests {
             frames.iter().any(|&(x1, y1, _, _)| x1 == 186 && y1 == 316),
             "рамка провінції 1: {frames:?}"
         );
+        // Міні-карта: семпл (mx,my) бере світлопіксель L4 (mx·16, my·16) =
+        // map px (mx·128, my·128). Самоузгодженість: колір семпла == провінція з
+        // L1 (pick_province) у тій самій точці мапи.
+        use crate::minimap;
+        let mut mm_colors = vec![minimap::SEA_COLOR; 3000];
+        mm_colors[1] = 0xFFFF_0000;
+        let mm = minimap::build_minimap(&map, &mm_colors).expect("міні-карта");
+        assert_eq!(mm.len(), (minimap::MINIMAP_W * minimap::MINIMAP_H) as usize);
+        let wide = Viewport::new(0, 0, 936, 360);
+        for &(mx, my) in &[(102u32, 5u32), (103, 5)] {
+            let (wx, wy) = (mx * 128, my * 128);
+            let prov = pick_province(&map, 0, wide, wx, wy)
+                .map(|t| t.2)
+                .unwrap_or(0);
+            let expect = mm_colors
+                .get(prov as usize)
+                .copied()
+                .unwrap_or(minimap::SEA_COLOR);
+            assert_eq!(
+                mm[(my * minimap::MINIMAP_W + mx) as usize],
+                expect,
+                "семпл ({mx},{my}): світлопіксель L4 ({},{}), map px ({wx},{wy}), пров {prov}",
+                mx * 16,
+                my * 16
+            );
+        }
 
         // Рамки провінцій: лівий край рамки bbox пров. 1 (x=186, товщина 1) і
         // верхній (y=316..317) — видимі в канвасі.
