@@ -7,6 +7,7 @@
 
 use crate::canvas::{Canvas, Color};
 use dh_format::map::{ATLAS_W, BLOCKS_X, BLOCKS_Y, TILE_PX, TILE_SLOTS, MapData};
+use dh_format::map_color::GameColorModel;
 use dh_format::palette::TerrainPalettes;
 use dh_format::ProvinceId;
 
@@ -119,6 +120,11 @@ pub struct MapRenderer<'a> {
     /// Палітри місцевості (TerrainPalettes::load): колір тайла =
     /// palettes[терен блока][індекс пікселя у tiles_indices].
     pub terrain_palettes: Option<&'a TerrainPalettes>,
+    /// Точна модель кольору гри (палітра 0xA44C34 + LUT 0xAA41CB + шкали
+    /// провінцій): колір пікселя = palette565[(LUT[light-off] << 6) | scale].
+    /// Коли встановлено — використовується замість [`prov_colors`] та
+    /// [`shade`], тобто політична карта рендериться точно як в оригіналі.
+    pub color_model: Option<&'a GameColorModel>,
 }
 
 impl<'a> MapRenderer<'a> {
@@ -132,6 +138,7 @@ impl<'a> MapRenderer<'a> {
             prov_colors: None,
             prov_terrain: None,
             terrain_palettes: None,
+            color_model: None,
         }
     }
 
@@ -208,8 +215,22 @@ impl<'a> MapRenderer<'a> {
                         for py in 0..TILE_PX {
                             for px in 0..TILE_PX {
                                 let c = light_idx(bx, by, px, py, lshift);
-                                let base = self.prov_color(ti.prov_ids[c]);
-                                let color = shade((base >> 16) as u8, (base >> 8) as u8, base as u8, Some(ti.light_vals[c] as u32));
+                                let color = match self.color_model {
+                                    Some(m) => {
+                                        let [r, g, b] =
+                                            m.color_exact(ti.prov_ids[c] as usize, ti.light_vals[c]);
+                                        (r as u32) << 16 | (g as u32) << 8 | b as u32
+                                    }
+                                    None => {
+                                        let base = self.prov_color(ti.prov_ids[c]);
+                                        shade(
+                                            (base >> 16) as u8,
+                                            (base >> 8) as u8,
+                                            base as u8,
+                                            Some(ti.light_vals[c] as u32),
+                                        )
+                                    }
+                                };
                                 put_block_px(canvas, scale, sx, sy, px, py, color);
                             }
                         }

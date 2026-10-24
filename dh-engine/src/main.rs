@@ -22,9 +22,36 @@ use dh_core::time::{GameTime, TimeEvent};
 use dh_core::world::{ProvinceState, World};
 use dh_format::fonts::BitmapFont;
 use dh_format::map::{load as load_map, MapData};
+use dh_format::map_color::GameColorModel;
 use dh_format::palette::Palette;
 use dh_format::scenario::{load_scenario, Scenario};
 use dh_format::{GamePaths, ProvinceCsv};
+
+/// Завантажує точну модель кольору гри (палітра/LUT/шкали, dh-format/data).
+/// None — дані не знайдено (стара логіка prov_colors + shade).
+fn load_color_model() -> Option<GameColorModel> {
+    const CANDIDATES: &[&str] = &[
+        // абсолютний шлях у workspace (збирається з dh-engine)
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../dh-format/data"),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../dh-format/data"),
+        "dh-format/data",
+        "../dh-format/data",
+    ];
+    for c in CANDIDATES {
+        let p = std::path::Path::new(c);
+        if p.join("palette565.bin").is_file() {
+            match GameColorModel::load(p) {
+                Ok(m) => {
+                    log::info!("точна модель кольору: {c}");
+                    return Some(m);
+                }
+                Err(e) => log::warn!("модель кольору {c}: {e:#}"),
+            }
+        }
+    }
+    log::warn!("palette565.bin не знайдено — кольори приблизні (prov_colors+shade)");
+    None
+}
 
 #[derive(Parser, Debug, Clone)]
 #[command(
@@ -273,6 +300,9 @@ struct AppState {
     prov_terrain: Vec<u8>,
     /// Палітри місцевості для індексного атласа tiles.bmp.
     terrain_palettes: dh_format::palette::TerrainPalettes,
+    /// Точна модель кольору гри (палітра 0xA44C34 + LUT 0xAA41CB + шкали):
+    /// з dh-format/data. None, якщо дані не знайдено (тоді prov_colors/shade).
+    color_model: Option<dh_format::map_color::GameColorModel>,
 }
 
 impl AppState {
@@ -328,6 +358,7 @@ impl AppState {
         renderer.prov_colors = Some(&self.prov_colors);
         renderer.prov_terrain = Some(&self.prov_terrain);
         renderer.terrain_palettes = Some(&self.terrain_palettes);
+        renderer.color_model = self.color_model.as_ref();
 
         // Підготувати HUD-дані ДО мутабельного borrow поверхні.
         let font_ptr: *const BitmapFont = self.hud_font().map_or(std::ptr::null(), |f| f);
@@ -606,6 +637,7 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
         prov_colors,
         prov_terrain,
         terrain_palettes,
+        color_model: load_color_model(),
     });
 
     let event_loop = EventLoop::new().context("winit: event loop")?;

@@ -12,6 +12,7 @@ pub mod scenario; // сценарії .eug
 pub mod savegame; // сейви .eug + bzip2
 pub mod fonts;    // бітмап-шрифти (RLE-гліфи)
 pub mod palette;  // палітри (.act, *_palette.bmp)
+pub mod map_color; // точна модель кольору політичної карти (палітра+LUT+scale)
 
 pub use dates::*;
 

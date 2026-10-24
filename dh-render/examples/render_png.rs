@@ -103,6 +103,13 @@ fn main() -> anyhow::Result<()> {
     let mut r = dh_render::map_render::MapRenderer::new(&map, 0, view);
     r.prov_colors = Some(&prov_colors);
 
+    // Точна модель кольору (палітра 0xA44C34 + LUT): dh-format/data.
+    let color_model = dh_format::map_color::GameColorModel::load(
+        &PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../dh-format/data")),
+    )
+    .map_err(|e| anyhow::anyhow!("color model: {e:#}"))?;
+    r.color_model = Some(&color_model);
+
     // Палітри місцевості + таблиця терену провінцій: тайли атласа — індексні.
     let terrain_palettes = dh_format::palette::TerrainPalettes::load(&paths)?;
     let mut prov_terrain = vec![0u8; 3000];
