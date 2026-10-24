@@ -27,6 +27,17 @@ use dh_sim::{Simulation, World as SimWorld};
 /// Seed ихнього dh-tool (детермінованість як у референсних прогонах).
 const SIM_SEED: u64 = 0xD412_0001;
 
+/// Одна стопка юнітів у провінції (для лічильників на мапі).
+#[derive(Debug, Clone)]
+pub struct UnitStack {
+    /// Провінція (id з Province.csv).
+    pub prov: u32,
+    /// Тег власника (верхній регістр).
+    pub tag: String,
+    /// Кількість дивізій у стопці.
+    pub divisions: usize,
+}
+
 pub struct SimLink {
     /// Їхня симуляція (світ + системи + RNG).
     pub sim: Simulation,
@@ -75,6 +86,23 @@ impl SimLink {
         sim.add_system(dh_sim::Engage);
         sim.add_system(dh_sim::Combat::new(ctx, &sc));
         Ok(Self { sim })
+    }
+
+    /// Стопки юнітів: згруповані за (локація, власник) — для шару лічильників.
+    pub fn unit_stacks(&self) -> Vec<UnitStack> {
+        let mut acc: std::collections::BTreeMap<(u32, &str), usize> = Default::default();
+        for u in &self.sim.world.units {
+            if let Some(loc) = u.unit.location {
+                *acc.entry((loc, u.owner.as_str())).or_default() += u.unit.divisions.len();
+            }
+        }
+        acc.into_iter()
+            .map(|((prov, tag), divisions)| UnitStack {
+                prov,
+                tag: tag.to_owned(),
+                divisions,
+            })
+            .collect()
     }
 
     /// Один ігровий день: 24 погодинні тіки їхньої симуляції.

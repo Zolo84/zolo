@@ -358,6 +358,37 @@ struct AppState {
     annex_pending: Option<(String, Instant)>,
     /// Симуляція dh-sim (гілка claude): юніти, рух, бої, постачання, погода.
     sim_link: Option<sim_link::SimLink>,
+    /// Стопки юнітів для лічильників (оновлюється після доби симуляції).
+    unit_stacks: Vec<sim_link::UnitStack>,
+}
+
+/// Один лічильник юнітів: заливка кольором країни-власника, чорна рамка,
+/// біле число дивізій у центрі. Перший прохід (оригінальна графіка — TODO).
+fn draw_unit_counter(
+    canvas: &mut Canvas,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    color: u32,
+    count: &str,
+    font: &BitmapFont,
+    style: &TextStyle,
+) {
+    canvas.fill_rect(x, y, w as u32, h as u32, color);
+    canvas.fill_rect(x, y, w as u32, 1, 0xFF00_0000u32);
+    canvas.fill_rect(x, y + h - 1, w as u32, 1, 0xFF00_0000u32);
+    canvas.fill_rect(x, y, 1, h as u32, 0xFF00_0000u32);
+    canvas.fill_rect(x + w - 1, y, 1, h as u32, 0xFF00_0000u32);
+    let (tw, th) = dh_render::text::measure(font, count.as_bytes(), 1);
+    dh_render::text::draw(
+        canvas,
+        font,
+        count.as_bytes(),
+        x + (w - tw as i32) / 2,
+        y + (h - th as i32) / 2,
+        style,
+    );
 }
 
 /// Зібрана міні-карта: буфер ARGB, готовий для blit у канвас.
@@ -437,6 +468,48 @@ impl AppState {
             }
         }
         h
+    }
+
+    /// Оновити стопки юнітів з симуляції (дешево: ~750 юнітів).
+    fn refresh_unit_stacks(&mut self) {
+        if let Some(link) = &self.sim_link {
+            self.unit_stacks = link.unit_stacks();
+        }
+    }
+
+    /// Підготовка лічильників юнітів ДО мутабельного borrow поверхні:
+    /// (x, y лівого верхнього кута, ARGB колір країни, текст-кількість).
+    /// Лічильник — ПЕРШИЙ ПРОХІД: колір країни + число дивізій у центрі bbox
+    /// провінції. Оригінальний лічильник (hoi_counter_strip.bmp, shields,
+    /// спрайти .spr) і позиціювання в провінції — окремий RE-крок (TODO).
+    fn prepare_unit_counters(
+        &self,
+        zoom: i8,
+        view: Viewport,
+    ) -> Vec<(i32, i32, i32, i32, u32, String)> {
+        let Some(font) = self.hud_font() else {
+            return Vec::new();
+        };
+        let mut out = Vec::with_capacity(self.unit_stacks.len());
+        for st in &self.unit_stacks {
+            let Ok(prov) = u16::try_from(st.prov) else {
+                continue;
+            };
+            let Some((x1, y1, x2, y2)) = map_render::prov_bbox_screen(&self.map, zoom, view, prov)
+            else {
+                continue;
+            };
+            let cx = (x1 + x2) / 2;
+            let cy = (y1 + y2) / 2;
+            let (r, g, b) = self.country_db.color_of(&dh_format::Tag(st.tag.clone()));
+            let color = 0xFF00_0000 | ((r as u32) << 16) | ((g as u32) << 8) | b as u32;
+            let count = st.divisions.to_string();
+            let (tw, th) = dh_render::text::measure(font, count.as_bytes(), 1);
+            let w = 26i32.max(tw as i32 + 6);
+            let h = 20i32.max(th as i32 + 4);
+            out.push((cx - w / 2, cy - h / 2, w, h, color, count));
+        }
+        out
     }
 
     /// Аннексія країни `tag` гравцем (повертає кількість провінцій).
@@ -725,10 +798,28 @@ impl AppState {
                 .map(|c| c.tag.clone())
                 .unwrap_or_else(|| dh_format::Tag("—".to_string()));
             line2 = format!("вибір: {name} (id {prov}) | власник {}", owner.0);
+            let stacks: Vec<String> = self
+                .unit_stacks
+                .iter()
+                .filter(|s| s.prov as u16 == prov)
+                .map(|s| format!("{}×{}", s.tag, s.divisions))
+                .collect();
+            if !stacks.is_empty() {
+                line2.push_str(&format!(" | юніти: {}", stacks.join(", ")));
+            }
         }
         let style = TextStyle {
             color: [230, 230, 230],
             shadow: true,
+            scale: 1,
+            align: TextAlign::Left,
+        };
+
+        // Лічильники юнітів (з dh-sim) — підготувати до borrow поверхні.
+        let counters = self.prepare_unit_counters(zoom, view);
+        let unit_style = TextStyle {
+            color: [255, 255, 255],
+            shadow: false,
             scale: 1,
             align: TextAlign::Left,
         };
@@ -761,6 +852,20 @@ impl AppState {
                 }
                 if !font_ptr.is_null() {
                     let font_ref: &BitmapFont = unsafe { &*font_ptr };
+                    // Лічильники юнітів — під текстовими рядками HUD.
+                    for (x, y, w, h, color, count) in &counters {
+                        draw_unit_counter(
+                            g.hud(),
+                            *x,
+                            *y,
+                            *w,
+                            *h,
+                            *color,
+                            count,
+                            font_ref,
+                            &unit_style,
+                        );
+                    }
                     text::draw(g.hud(), font_ref, line.as_bytes(), 6, 3, &style);
                     if !line2.is_empty() {
                         text::draw(g.hud(), font_ref, line2.as_bytes(), 6, 18, &style);
@@ -793,6 +898,19 @@ impl AppState {
                 if !font_ptr.is_null() {
                     // unsafe: font_ptr вказує в self.fonts, яке живе довше за borrow
                     let font_ref: &BitmapFont = unsafe { &*font_ptr };
+                    for (x, y, w, h, color, count) in &counters {
+                        draw_unit_counter(
+                            &mut **c,
+                            *x,
+                            *y,
+                            *w,
+                            *h,
+                            *color,
+                            count,
+                            font_ref,
+                            &unit_style,
+                        );
+                    }
                     text::draw(&mut **c, font_ref, line.as_bytes(), 6, 3, &style);
                     if !line2.is_empty() {
                         text::draw(&mut **c, font_ref, line2.as_bytes(), 6, 18, &style);
@@ -855,6 +973,8 @@ impl AppState {
             }
         }
 
+        // Стопки юнітів з симуляції — раз на кадр (дешево, ~750 юнітів).
+        self.refresh_unit_stacks();
         // Рантайм-політика: тестова аннексія з оточення (DH_ANNEX, DH_ANNEX_TICK).
         if let Some((tag, t)) = &self.annex_pending {
             if Instant::now() >= *t {
@@ -1314,6 +1434,10 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
         img
     };
 
+    let unit_stacks = sim_link
+        .as_ref()
+        .map(|l| l.unit_stacks())
+        .unwrap_or_default();
     let mut app = App(AppState {
         cli: cli.clone(),
         map,
@@ -1324,8 +1448,14 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
         game_time,
         window: None,
         surface: None,
-        cam_x: 300, // старт: Північна Атлантика (Ісландія ~ блок 409,22)
-        cam_y: 0,
+        cam_x: std::env::var("DH_CAM")
+            .ok()
+            .and_then(|s| s.split(',').next()?.parse().ok())
+            .unwrap_or(300), // старт: Північна Атлантика (Ісландія ~ блок 409,22)
+        cam_y: std::env::var("DH_CAM")
+            .ok()
+            .and_then(|s| s.split(',').nth(1)?.parse().ok())
+            .unwrap_or(0),
         zoom: 0,
         show_provinces: std::env::var("DH_FRAMES").is_ok(),
         minimap: None,
@@ -1355,6 +1485,7 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
             (tag, Instant::now() + delay)
         }),
         sim_link,
+        unit_stacks,
     });
 
     let event_loop = EventLoop::new().context("winit: event loop")?;
