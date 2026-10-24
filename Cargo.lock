@@ -507,6 +507,7 @@ dependencies = [
  "dh-core",
  "dh-format",
  "dh-render",
+ "image",
  "log",
  "simplelog",
  "softbuffer",

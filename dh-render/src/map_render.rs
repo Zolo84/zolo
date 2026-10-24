@@ -125,6 +125,12 @@ pub struct MapRenderer<'a> {
     /// Коли встановлено — використовується замість [`prov_colors`] та
     /// [`shade`], тобто політична карта рендериться точно як в оригіналі.
     pub color_model: Option<&'a GameColorModel>,
+    /// Шкали провінцій (індекс = ProvinceId): байт scale політичної карти, як
+    /// його обчислює гра (FUN_004dcb20 case 0 → FUN_004e8a40):
+    /// власник → номер кольору country.csv (FUN_004aee40); вода → 23|0x20;
+    /// без власника → 2|0x20; біт 0x20 = «не видима гравцеві» (темна колонка).
+    /// Коли разом із [`color_model`] — рендер політичної карти без дампів.
+    pub prov_scales: Option<&'a [u8]>,
 }
 
 impl<'a> MapRenderer<'a> {
@@ -139,12 +145,19 @@ impl<'a> MapRenderer<'a> {
             prov_terrain: None,
             terrain_palettes: None,
             color_model: None,
+            prov_scales: None,
         }
     }
 
     /// Зручність-білдер: увімкнути рамки провінцій.
     pub fn with_provinces(mut self, on: bool) -> Self {
         self.show_provinces = on;
+        self
+    }
+
+    /// Зручність-білдер: шкали провінцій з власників (політична карта як у грі).
+    pub fn with_province_scales(mut self, scales: &'a [u8]) -> Self {
+        self.prov_scales = Some(scales);
         self
     }
 
@@ -215,13 +228,25 @@ impl<'a> MapRenderer<'a> {
                         for py in 0..TILE_PX {
                             for px in 0..TILE_PX {
                                 let c = light_idx(bx, by, px, py, lshift);
-                                let color = match self.color_model {
-                                    Some(m) => {
+                                let color = match (self.color_model, self.prov_scales) {
+                                    (Some(m), Some(scales)) => {
+                                        // Політична карта як у грі: шкала з
+                                        // власника (FUN_004dcb20). Незнайома
+                                        // провінція → вода (23|0x20), як для
+                                        // блоків поза мапою.
+                                        let s = scales
+                                            .get(ti.prov_ids[c] as usize)
+                                            .copied()
+                                            .unwrap_or(crate::WATER_SCALE_DARK);
+                                        let [r, g, b] = m.color_scale(s, ti.light_vals[c]);
+                                        (r as u32) << 16 | (g as u32) << 8 | b as u32
+                                    }
+                                    (Some(m), None) => {
                                         let [r, g, b] =
                                             m.color_exact(ti.prov_ids[c] as usize, ti.light_vals[c]);
                                         (r as u32) << 16 | (g as u32) << 8 | b as u32
                                     }
-                                    None => {
+                                    (None, _) => {
                                         let base = self.prov_color(ti.prov_ids[c]);
                                         shade(
                                             (base >> 16) as u8,

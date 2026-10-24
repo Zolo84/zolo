@@ -27,9 +27,25 @@ use dh_format::palette::Palette;
 use dh_format::scenario::{load_scenario, Scenario};
 use dh_format::{GamePaths, ProvinceCsv};
 
-/// Завантажує точну модель кольору гри (палітра/LUT/шкали, dh-format/data).
+/// Завантажує точну модель кольору гри:
+/// 1) палітра будується з ФАЙЛУ ГРИ `map/Map_1/colorscales.csv` (from_game);
+/// 2) резерв — дамп пам'яті (dh-format/data: палітра+LUT+шкали).
+fn load_color_model(paths: &GamePaths) -> Option<GameColorModel> {
+    // 1) Файли гри: палітра з colorscales.csv, LUT — формула clamp(i+47,4,127).
+    match GameColorModel::from_game(paths) {
+        Ok(m) => {
+            log::info!("модель кольору: палітра з файлів гри (map/Map_1/colorscales.csv)");
+            return Some(m);
+        }
+        Err(e) => log::warn!("colorscales.csv гри: {e:#}"),
+    }
+    // 2) Резерв: дамп живої гри (data/).
+    load_color_model_dump()
+}
+
+/// Дамп-модель (палітра/LUT/шкали провінцій, dh-format/data).
 /// None — дані не знайдено (стара логіка prov_colors + shade).
-fn load_color_model() -> Option<GameColorModel> {
+fn load_color_model_dump() -> Option<GameColorModel> {
     const CANDIDATES: &[&str] = &[
         // абсолютний шлях у workspace (збирається з dh-engine)
         concat!(env!("CARGO_MANIFEST_DIR"), "/../dh-format/data"),
@@ -79,6 +95,11 @@ struct Cli {
     /// Швидкість гри 0..7 (0 — найповільніша: 500 мс/день; 7 — найшвидша: 2 мс/день).
     #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u8).range(0..=7))]
     speed: u8,
+
+    /// Тег країни-гравця: її провінції — світлі (без біта 0x20), решта — темні
+    /// (як туман війни у FUN_00654700/FUN_004e8a40). За замовчуванням POL (1933).
+    #[arg(long, default_value = "POL")]
+    player: String,
 
     /// Без вікна: завантаження + 1000 денних тіків, друк дати й кінець.
     #[arg(long)]
@@ -303,6 +324,10 @@ struct AppState {
     /// Точна модель кольору гри (палітра 0xA44C34 + LUT 0xAA41CB + шкали):
     /// з dh-format/data. None, якщо дані не знайдено (тоді prov_colors/shade).
     color_model: Option<dh_format::map_color::GameColorModel>,
+    /// Шкали провінцій політичної карти з ВЛАСНИКІВ (FUN_004dcb20): байт на
+    /// провінцію (23|0x20 вода, 2|0x20 нічия, номер кольору країни | 0x20
+    /// для не-гравця). Разом із `color_model` дає точний рендер без дампів.
+    prov_scales: Vec<u8>,
 }
 
 impl AppState {
@@ -341,6 +366,57 @@ impl AppState {
         colors
     }
 
+    /// Шкали провінцій для точної політичної карти (як у грі, FUN_004dcb20 case 0):
+    /// - вода (`Terrain::Ocean/Water`) → `WATER_BLOCK | DARK_FLAG` (23|0x20 = 55);
+    /// - без власника → `NO_OWNER_BLOCK | DARK_FLAG` (2|0x20 = 34);
+    /// - з власником → номер кольору country.csv (FUN_004aee40) | 0x20, якщо
+    ///   власник ≠ країна-гравець (темна половина палітри — «не видиме»).
+    fn build_province_scales(
+        prov_csv: &[ProvinceCsv],
+        world: Option<&World>,
+        country_db: &dh_format::db::CountryDb,
+        player_tag: &str,
+    ) -> Vec<u8> {
+        use dh_format::colorscale::{color_number, DARK_FLAG, NO_OWNER_BLOCK, WATER_BLOCK};
+        let mut scales = vec![WATER_BLOCK | DARK_FLAG; 3000];
+        // PROV0 (id 0): за дампом живої гри — 34 (2|0x20, «нічия+темна»);
+        // пікселів на мапі не має (лише «Embarked»), але тримаємо як у грі.
+        scales[0] = NO_OWNER_BLOCK | DARK_FLAG;
+        for p in prov_csv {
+            if p.id == 0 {
+                continue;
+            }
+            scales[p.id as usize] = if matches!(
+                p.terrain,
+                dh_format::Terrain::Ocean | dh_format::Terrain::Water
+            ) {
+                WATER_BLOCK | DARK_FLAG
+            } else {
+                NO_OWNER_BLOCK | DARK_FLAG
+            };
+        }
+        if let Some(world) = world {
+            for prov in &world.provinces {
+                let Some(owner) = prov.owner else { continue };
+                let Some(country) = world.countries.get(owner) else {
+                    continue;
+                };
+                let name = country_db
+                    .colors
+                    .get(country.tag.as_str())
+                    .map(String::as_str)
+                    .unwrap_or("White");
+                let dark = if country.tag.as_str().eq_ignore_ascii_case(player_tag) {
+                    0
+                } else {
+                    DARK_FLAG
+                };
+                scales[prov.id as usize] = color_number(name) | dark;
+            }
+        }
+        scales
+    }
+
     fn render_frame(&mut self) -> Result<()> {
         // Роздільні borrows: map/fonts — іммутабельні поля, surface — мутабельне.
         let (w, h, map_ok) = match self.surface.as_ref() {
@@ -359,6 +435,7 @@ impl AppState {
         renderer.prov_terrain = Some(&self.prov_terrain);
         renderer.terrain_palettes = Some(&self.terrain_palettes);
         renderer.color_model = self.color_model.as_ref();
+        renderer.prov_scales = Some(&self.prov_scales);
 
         // Підготувати HUD-дані ДО мутабельного borrow поверхні.
         let font_ptr: *const BitmapFont = self.hud_font().map_or(std::ptr::null(), |f| f);
@@ -619,6 +696,27 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
         }
     };
 
+    // Шкали з власників — точна політична карта (FUN_004dcb20 case 0).
+    let prov_scales =
+        AppState::build_province_scales(&prov_csv, world.as_ref(), &country_db, &cli.player);
+    {
+        use dh_format::colorscale::DARK_FLAG;
+        let bright = prov_scales
+            .iter()
+            .filter(|&&s| s & DARK_FLAG == 0)
+            .count();
+        let water = prov_scales
+            .iter()
+            .filter(|&&s| s == 23 | DARK_FLAG)
+            .count();
+        log::info!(
+            "шкали провінцій: {} світлих (гравець {}), {} морських (55), решта темні",
+            bright,
+            cli.player,
+            water
+        );
+    }
+
     let mut app = App(AppState {
         cli: cli.clone(),
         map,
@@ -637,7 +735,8 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
         prov_colors,
         prov_terrain,
         terrain_palettes,
-        color_model: load_color_model(),
+        color_model: load_color_model(paths),
+        prov_scales,
     });
 
     let event_loop = EventLoop::new().context("winit: event loop")?;

@@ -40,7 +40,10 @@ impl CountryDb {
     }
 
     /// Колір країни RGB за назвою кольору з country.csv — ВБУДОВАНА палітра exe
-    /// (FUN_0044a740 / country_color), не colorscales.csv!
+    /// (FUN_0044a740 / country_color). Це 8-бітні «еталонні» значення для UI
+    /// (прапорці/легенди), НЕ фінальні пікселі карти: рендер політичної карти
+    /// йде через runtime-палітру з colorscales.csv ([`crate::colorscale`])
+    /// з номером блоку з FUN_004aee40 (див. [`crate::colorscale::color_number`]).
     pub fn color_of(&self, tag: &Tag) -> (u8, u8, u8) {
         let name = self.colors.get(tag.as_str());
         match name {
@@ -112,8 +115,12 @@ pub fn country_color(name: &str) -> (u8, u8, u8) {
 }
 
 /// colorscales.csv: назва кольору → базовий RGB (градієнт index=0).
-/// RE: файл map/Map_1/colorscales.csv. Це НЕ колір країн (ті — у вбудованій
-/// палітрі COUNTRY_PALETTE); використовується для градієнтів UI/діаграм.
+/// RE: файл map/Map_1/colorscales.csv — ЦЕ джерело кольорів політичної карти:
+/// гра будує з нього runtime-палітру 8192×RGB565 (FUN_004ddcd0 читає шкали →
+/// FUN_004d7db0 генерує). Авторитетна реалізація — модуль [`crate::colorscale`]
+/// (`ColorScales::build_palette`); цей хелпер лишається для швидкого доступу до
+/// базових значень блоку (перевірки/інструменти). УВАГА: `map/colorscales.csv`
+/// (без `Map_1`) — застарілий HoI2-файл, гра його для рендера НЕ використовує.
 #[derive(Debug, Clone, Default)]
 pub struct ColorScales {
     pub colors: HashMap<String, (u8, u8, u8)>,

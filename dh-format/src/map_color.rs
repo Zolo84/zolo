@@ -48,6 +48,28 @@ pub struct GameColorModel {
 }
 
 impl GameColorModel {
+    /// Модель із ФАЙЛІВ ГРИ (без дампів пам'яті):
+    /// - палітра 8192×RGB565 будується з `map/Map_1/colorscales.csv`
+    ///   ([`crate::colorscale::ColorScales::build_palette`]);
+    /// - LUT генерується за формулою `LUT[i] = clamp(i + 47, 4, 127)`
+    ///   (RE-colors.md §3: таблиця 0xAA41CB);
+    /// - шкали провінцій тут порожні — рендерер передає їх окремо
+    ///   (MapRenderer::prov_scales), бо шкала залежить від ВЛАСНИКА
+    ///   (FUN_004dcb20 case 0), а не від самої провінції.
+    pub fn from_game(paths: &crate::GamePaths) -> anyhow::Result<Self> {
+        let scales = crate::colorscale::ColorScales::load_from_game(paths)?;
+        let palette = scales.build_palette();
+        let mut lut = Vec::with_capacity(320);
+        for i in -64i32..=255 {
+            lut.push((i + 47).clamp(4, 127) as u8);
+        }
+        Ok(Self {
+            palette,
+            lut,
+            prov: Vec::new(),
+        })
+    }
+
     /// Завантаження з файлів даних, згенерованих із дампу пам'яті гри.
     pub fn load(data_dir: &Path) -> anyhow::Result<Self> {
         let pal = std::fs::read(data_dir.join("palette565.bin"))
@@ -127,6 +149,16 @@ impl GameColorModel {
     #[inline]
     pub fn water_color(&self, light: u8) -> [u8; 3] {
         self.color_raw(light as i32 - 15, WATER_SCALE)
+    }
+
+    /// Колір за шкалою з політичної карти гри (FUN_004dcb20 → FUN_004e8a40):
+    /// `колір = palette[(LUT[light − off] << 6) | scale]`, off стабільно 15.
+    /// Шкала береться із зовнішньої таблиці (власник → номер кольору з
+    /// country.csv; вода = 23|0x20; без власника = 2|0x20) — див.
+    /// [`crate::colorscale`] та MapRenderer::prov_scales.
+    #[inline]
+    pub fn color_scale(&self, scale: u8, light: u8) -> [u8; 3] {
+        self.color_raw(light as i32 - 15, scale)
     }
 
     /// Колір за чистим LUT-індексом (для налагодження/тестів).
