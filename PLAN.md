@@ -216,6 +216,31 @@ UI/рендер-пункту: звірка зі скріншотом оригі�
   фінальний вдалий: /tmp/ui-fin2.png (океан (110) + topbar (188), GPU).
 
 
+## Вендорена гілка Claude (vendor/claude — НЕ РЕДАГУВАТИ)
+
+2026-10-24: `git subtree add --prefix=vendor/claude` гілки
+`claude/game-reverse-engineering-rust-mgp4aq` (Zolo84/zolo, 35 комітів — історія
+збережена, другий батько merge-коміта). Вкладений Cargo-workspace без жодних
+правок: crates dh-text/dh-vfs/dh-data/dh-map/dh-sim/dh-tool + docs/ (специфікації
+руху, бою, постачання/ESE, погоди, ORG — ревершені з exe, зі незалежними перевірками).
+
+- **ПРАВИЛО:** у `vendor/claude/` нічого не міняти. Читати/запускати — так;
+  наші зміни — тільки у власних крейтах або нових файлах поза vendor/.
+- Їхні манифести на `*.workspace = true` → крейти живуть тільки в своєму
+  workspace; path-deps з наших крейтів неможливі без правок. Тому наша
+  інтеграція поки — виклик їхніх інструментів і читання їхніх spec-доків.
+- Збірка/тести: `cd vendor/claude && DH_GAME_DIR=<гра> cargo test --workspace`
+  (122 тести, 0 провалено, включно з реальними файлами гри — 2026-10-24).
+- Їхній CLI: `cargo run -p dh-tool -- scenarios <гра> --mod <мод>` (працює з
+  нашим Steam-каталогом), map/sim/march/probe — див. vendor/claude/README.md.
+- Оновлення вендора: `git fetch github && git subtree pull --prefix=vendor/claude
+  github/claude/game-reverse-engineering-rust-mgp4aq` (без --squash).
+- Що в них уже є, чого немає в нас: юніти/дивізії зі сценарію, рух (A* +
+  погодинний марш), погодинний бій (генерали, ліміти, окопи), постачання/ESE,
+  запаси припасів/пального, погода (фронти/сезони), ORG, дипломатія зі
+  сценаріїв, misc.txt за позиціями. Чого в них немає: рендер (тільки PNG),
+  шрифти, UI, HUD — тобто все, що зроблено в нас.
+
 ## Крейти
 
 ```
