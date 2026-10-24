@@ -323,15 +323,21 @@ fn texture_r32(
 }
 
 /// Canvas ARGB8888 → RGBA8-байти (для HUD-завантаження).
+/// Alpha = 255 ЛИШЕ там, де є пікселі (канвас прозорий за замовчуванням):
+/// інакше порожній HUD-квад із alpha=255 був би непрозорим чорним
+/// прямокутником ПОВЕРХ мапи (src-over бленд у HUD-проході).
 fn canvas_to_rgba(c: &Canvas) -> Vec<u8> {
     let w = c.width() as usize;
     let h = c.height() as usize;
     let mut rgba = vec![0u8; w * h * 4];
     for (i, &px) in c.buf().iter().take(w * h).enumerate() {
-        rgba[i * 4] = ((px >> 16) & 0xFF) as u8;
-        rgba[i * 4 + 1] = ((px >> 8) & 0xFF) as u8;
-        rgba[i * 4 + 2] = (px & 0xFF) as u8;
-        rgba[i * 4 + 3] = 0xFF;
+        if px != 0 {
+            rgba[i * 4] = ((px >> 16) & 0xFF) as u8;
+            rgba[i * 4 + 1] = ((px >> 8) & 0xFF) as u8;
+            rgba[i * 4 + 2] = (px & 0xFF) as u8;
+            rgba[i * 4 + 3] = 0xFF;
+        }
+        // px == 0 → прозорий (всі канали 0, alpha 0)
     }
     rgba
 }
@@ -758,8 +764,14 @@ impl<'a> GpuRenderer<'a> {
         let mut config = surface
             .get_default_config(&adapter, width.max(1), height.max(1))
             .context("gpu: surface config")?;
-        // Не-sRGB: ми постачаємо кінцеві значення пікселів без гамма-перетворень.
-        config.format = wgpu::TextureFormat::Rgba8Unorm;
+        // Формат поверхні НЕ форсуємо: деякі WSI (особливо Vulkan) не
+        // підтримують Rgba8Unorm і дають порожній/чорний кадр. Беремо те,
+        // що реально підтримує поверхня (як робив старий WgpuCanvas);
+        // піплайни створюються під цей формат у assemble.
+        eprintln!(
+            "[gpu] config: формат {:?}, present_mode {:?}, alpha {:?}, розмір {}x{}",
+            config.format, config.present_mode, config.alpha_mode, config.width, config.height
+        );
         config.width = width.max(1);
         config.height = height.max(1);
         surface.configure(&device, &config);
@@ -1269,11 +1281,14 @@ impl<'a> GpuRenderer<'a> {
         let frame = match self.surface.as_ref().unwrap().get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-            wgpu::CurrentSurfaceTexture::Timeout
-            | wgpu::CurrentSurfaceTexture::Occluded
-            | wgpu::CurrentSurfaceTexture::Outdated
-            | wgpu::CurrentSurfaceTexture::Lost
-            | wgpu::CurrentSurfaceTexture::Validation => {
+            other => {
+                // Діагностика (тимчасова): перші 10 невдалих спроб.
+                use std::sync::atomic::{AtomicU32, Ordering};
+                static FAILS: AtomicU32 = AtomicU32::new(0);
+                let n = FAILS.fetch_add(1, Ordering::Relaxed);
+                if n < 10 {
+                    eprintln!("[gpu] поверхня недоступна ({n}): {other:?}");
+                }
                 return Ok(()); // поверхня тимчасово недоступна — пропускаємо кадр
             }
         };
