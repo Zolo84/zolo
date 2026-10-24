@@ -57,6 +57,23 @@ pub struct Params {
     pub logistics_wizard_ese: f32, // combat[161]
     /// Land speed factor out of supply (land-movement.md §3.1).
     pub out_of_supply_speed: f32, // combat[208]
+    /// Friendly-province ORG regain: `min(2 · infra + bonus, cap)`
+    /// (organisation.md §2, old logic).
+    pub org_friendly_bonus: f32, // combat[165]
+    pub org_friendly_cap: f32,          // combat[166]
+    /// The newer ORG regain rules (`combat[167]` exactly 1).
+    pub new_org_logic: bool, // combat[167]
+    pub org_morale: f32,                // combat[168]
+    /// ORG regain factor by weather 0..=6 under the newer rules.
+    pub org_weather: [f32; 7], // combat[169..=175]
+    /// Newer rules, land: base, no fuel, no supplies, low-ORG boost,
+    /// friendly territory, on a transport, moving, retreating.
+    pub org_land: [f32; 8], // combat[188..=195]
+    /// Supply distance factor of ORG regain.
+    pub supply_distance: f32, // economy[87]
+    pub country_supply_distance: f32,   // country[10]
+    /// Hourly ORG of rebels.
+    pub rebel_org: f32, // mod[21]
     /// Command limits by leader rank 0..=3; every lower rank counts as 3.
     pub land_command_limit: [u32; 4], // combat[39..=42]
     pub air_command_limit: [u32; 4],    // combat[43..=46]
@@ -128,6 +145,15 @@ impl Default for Params {
             leader_move_similar: 0.025,
             logistics_wizard_ese: 0.1,
             out_of_supply_speed: 0.1,
+            org_friendly_bonus: 0.0,
+            org_friendly_cap: 1.2,
+            new_org_logic: false,
+            org_morale: 0.01,
+            org_weather: [1.0, 1.0, 1.0, 0.8, 0.8, 0.6, 0.7],
+            org_land: [1.0, 1.0, 1.0, 3.0, 1.3, 0.0, 0.0, 1.0],
+            supply_distance: 1.0,
+            country_supply_distance: 1.0,
+            rebel_org: 0.2,
             land_command_limit: [12, 9, 3, 1],
             air_command_limit: [24, 16, 8, 4],
             naval_command_limit: [30, 18, 12, 6],
@@ -251,6 +277,21 @@ impl Params {
             f("country", n, v);
         }
         f("mission", 73, &mut p.amphibious_assault);
+        f("combat", 165, &mut p.org_friendly_bonus);
+        f("combat", 166, &mut p.org_friendly_cap);
+        if let Some(x) = misc.get("combat", 167) {
+            p.new_org_logic = x == 1.0;
+        }
+        f("combat", 168, &mut p.org_morale);
+        for (w, v) in p.org_weather.iter_mut().enumerate() {
+            f("combat", 169 + w, v);
+        }
+        for (k, v) in p.org_land.iter_mut().enumerate() {
+            f("combat", 188 + k, v);
+        }
+        f("economy", 87, &mut p.supply_distance);
+        f("country", 10, &mut p.country_supply_distance);
+        f("mod", 21, &mut p.rebel_org);
         p
     }
 }

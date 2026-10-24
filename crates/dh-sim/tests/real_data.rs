@@ -837,3 +837,70 @@ fn winter_attrition_in_enemy_territory() {
         assert!((after - expected).abs() < 1e-4, "{after} vs {expected}");
     }
 }
+
+/// Old (vanilla) ORG rules on the 1936 map: VIII. Armeekorps at 5 ORG in
+/// Berlin regains a tenth of
+/// `ESE · (1 + m) · min(2 · infra, 1.2) · 3 + m` per hour, `m` being
+/// `(morale − 30) / 100`; it climbs back to its maximum, and on the march
+/// it loses 0.02 an hour.
+#[test]
+fn organisation_recovers_at_home_and_wears_on_the_march() {
+    use dh_sim::OrgRegain;
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let ctx = Arc::new(ctx);
+    let (mut world, _) = World::from_scenario(&scenario);
+    let corps = world
+        .units
+        .iter()
+        .position(|u| u.unit.name == "VIII. Armeekorps")
+        .unwrap();
+    for d in &mut world.units[corps].unit.divisions {
+        d.organisation = Some(5.0);
+    }
+    let infra = ctx.province(300).unwrap().infra;
+    let leader = world.stack_leader(corps).into_owned();
+    let hq = world.under_hq_influence(&ctx, corps);
+    let ese = world.stack_supply_efficiency(&ctx, corps, &leader, hq);
+    let expected: Vec<f32> = world.units[corps]
+        .unit
+        .divisions
+        .iter()
+        .map(|d| {
+            let s = ctx.units.division_stats(d).unwrap();
+            let m = (s.get("morale") as f32 - 30.0) * 0.01;
+            assert!(5.0 / s.get("defaultorganisation") < 0.25);
+            (ese * (1.0 + m) * (2.0 * infra).min(1.2) * 3.0 + m) * 0.1
+        })
+        .collect();
+    let mut sim = Simulation::new(world, 1);
+    sim.add_system(OrgRegain::new(ctx.clone()));
+    sim.tick();
+    for (d, r) in sim.world.units[corps].unit.divisions.iter().zip(&expected) {
+        let gained = d.organisation.unwrap() as f32 - 5.0;
+        assert!((gained - r).abs() < 1e-4, "{gained} vs {r}");
+        assert!(*r > 0.1, "{r}");
+    }
+    sim.run_hours(300);
+    for d in &sim.world.units[corps].unit.divisions {
+        assert_eq!(
+            d.organisation.unwrap() as f32,
+            sim.world.max_org(&ctx, d),
+            "back to full"
+        );
+    }
+    March::order(&ctx, &mut sim.world, corps, 299).unwrap(); // Potsdam, 21 h away
+    sim.add_system(March::new(ctx.clone()));
+    let full: Vec<f32> = sim.world.units[corps]
+        .unit
+        .divisions
+        .iter()
+        .map(|d| d.organisation.unwrap() as f32)
+        .collect();
+    sim.run_hours(5);
+    for (d, f) in sim.world.units[corps].unit.divisions.iter().zip(full) {
+        let lost = f - d.organisation.unwrap() as f32;
+        assert!((lost - 5.0 * 0.02).abs() < 1e-4, "{lost}");
+    }
+}

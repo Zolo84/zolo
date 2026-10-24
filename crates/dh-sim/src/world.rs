@@ -80,6 +80,9 @@ pub struct UnitState {
     /// Dig-in level of a land stack (land-combat.md §4.4): the scenario's
     /// `dig_in`, unclamped; 0 for other units.
     pub dig_in: f32,
+    /// The last friendly province the stack stood in (`+0x142`), from which
+    /// ORG regain measures the supply distance (organisation.md §2).
+    pub last_friendly: Option<u32>,
 }
 
 impl UnitState {
@@ -93,6 +96,7 @@ impl UnitState {
             depart: 0,
             arrive: 0,
             dig_in,
+            last_friendly: None,
         }
     }
 

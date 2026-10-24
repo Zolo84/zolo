@@ -11,7 +11,7 @@
 use crate::movement::MoveContext;
 use crate::{LeaderState, World};
 use dh_data::leaders::traits;
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeSet, HashSet, VecDeque};
 
 impl World {
     /// Whether a land stack of country `tag` in `province` is in supply.
@@ -47,6 +47,36 @@ impl World {
             }
         }
         false
+    }
+
+    /// Every province where land stacks of `tag` are in supply, worked out
+    /// once from the capital (the same test as [`World::in_supply`], searched
+    /// the other way); `None` when all are (no capital).
+    pub fn supply_network(&self, ctx: &MoveContext, tag: &str) -> Option<HashSet<u32>> {
+        let capital = self.countries.get(tag).and_then(|c| c.capital)?;
+        let mut seen = HashSet::new();
+        if self.controller.get(&capital).map(String::as_str) != Some(tag) {
+            return Some(seen);
+        }
+        let passable = |p: u32| {
+            ctx.province(p).is_some_and(|i| !i.is_water())
+                && self.controller.get(&p).is_some_and(|c| {
+                    c == tag || self.diplomacy.allied(tag, c) || self.has_access(tag, c)
+                })
+        };
+        seen.insert(capital);
+        let mut queue = VecDeque::from([capital]);
+        while let Some(p) = queue.pop_front() {
+            for link in ctx.adjacency.neighbours(p) {
+                if link.kind != dh_map::AdjKind::Impassable
+                    && passable(link.to)
+                    && seen.insert(link.to)
+                {
+                    queue.push_back(link.to);
+                }
+            }
+        }
+        Some(seen)
     }
 
     /// Supply efficiency of a land stack standing in `province` (spec §2):

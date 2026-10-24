@@ -319,6 +319,33 @@ impl World {
     /// Whether a stack is under HQ influence (`0x51C8C0`, §2.3.5): it is a
     /// real HQ itself, or its province or a neighbouring one holds a real HQ
     /// of the same owner (allies do not count).
+    /// `(owner, province)` of every HQ stack, for
+    /// [`World::under_hq_influence_near`] over many stacks.
+    pub fn hq_positions(&self) -> std::collections::HashSet<(String, u32)> {
+        (0..self.units.len())
+            .filter(|&i| self.is_hq(i))
+            .filter_map(|i| Some((self.units[i].owner.clone(), self.units[i].unit.location?)))
+            .collect()
+    }
+
+    /// [`World::under_hq_influence`] with the HQ positions worked out already.
+    pub fn under_hq_influence_near(
+        &self,
+        ctx: &MoveContext,
+        unit: usize,
+        hqs: &std::collections::HashSet<(String, u32)>,
+    ) -> bool {
+        if self.is_hq(unit) {
+            return true;
+        }
+        let u = &self.units[unit];
+        let Some(p) = u.unit.location else {
+            return false;
+        };
+        let has = |q: u32| hqs.contains(&(u.owner.clone(), q));
+        has(p) || ctx.regular_neighbours(p).any(|l| has(l.to))
+    }
+
     pub fn under_hq_influence(&self, ctx: &MoveContext, unit: usize) -> bool {
         if self.is_hq(unit) {
             return true;
