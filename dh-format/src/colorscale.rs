@@ -47,6 +47,52 @@ pub const NO_OWNER_BLOCK: u8 = 2;
 /// (FUN_004e8a40: прапорець +0x46E == 0 → scale |= 0x20).
 pub const DARK_FLAG: u8 = 0x20;
 
+/// Назва кольору типу місцевості — офіційна таблиця DH
+/// «Modding documentation/Map colors.txt» (Orange=Clear, DarkGray=Urban,
+/// Green=Forest, DarkGreen=Jungle, Yellow=Desert, LightGreen=Marsh,
+/// DarkOrange=Hills, Gray=Mountains, White=Snow, Brown=Mud). Назва → номер
+/// блоку colorscales.csv через [`color_number`]; море — блок water (23).
+pub fn terrain_color_name(t: crate::Terrain) -> &'static str {
+    match t {
+        crate::Terrain::Plains => "orange",
+        crate::Terrain::Urban => "darkgray",
+        crate::Terrain::Forest => "green",
+        crate::Terrain::Jungle => "darkgreen",
+        crate::Terrain::Desert => "yellow",
+        crate::Terrain::Marsh => "lightgreen",
+        crate::Terrain::Hills => "darkorange",
+        crate::Terrain::Mountain => "gray",
+        crate::Terrain::Subarctic => "white",
+        crate::Terrain::Ocean | crate::Terrain::Water => "water",
+        crate::Terrain::Unknown(_) => "black",
+    }
+}
+
+/// Шкала терен-режиму: байт на провінцію (номер блока colorscales.csv за
+/// типом місцевості, БЕЗ 0x20 — терен-режим показує все світлим), вода — 23.
+/// Політичний аналог — `build_province_scales` (власники країн).
+pub fn build_terrain_scales<I: IntoIterator<Item = (u16, crate::Terrain)>>(
+    provs: I,
+    max_id: usize,
+) -> Vec<u8> {
+    let mut scales = vec![WATER_BLOCK; max_id];
+    for (id, t) in provs {
+        if id == 0 {
+            continue;
+        }
+        let i = id as usize;
+        if i >= scales.len() {
+            continue;
+        }
+        if matches!(t, crate::Terrain::Ocean | crate::Terrain::Water) {
+            scales[i] = WATER_BLOCK;
+        } else {
+            scales[i] = color_number(terrain_color_name(t));
+        }
+    }
+    scales
+}
+
 /// Розв'язання шляху до каталогу мапи, як у [`crate::map::load`].
 pub fn resolve_map_dir(paths: &crate::GamePaths) -> PathBuf {
     let dir = paths.root.join("map/Map_1");
@@ -379,5 +425,42 @@ mod tests {
         println!("палітра: точних {exact}/{total}, ±1 крок=0x{near}/{total} ({pct}%)");
         assert!(pct >= 90, "замало збігів із дампом: {pct}%");
         Ok(())
+    }
+
+    /// Шкали терен-режиму: блоки colorscales за Map colors.txt, вода — 23.
+    #[test]
+    fn terrain_scales_match_map_colors_txt() {
+        use crate::Terrain;
+        let provs = [
+            (1u16, Terrain::Plains),
+            (2, Terrain::Hills),
+            (3, Terrain::Mountain),
+            (4, Terrain::Forest),
+            (5, Terrain::Jungle),
+            (6, Terrain::Desert),
+            (7, Terrain::Marsh),
+            (8, Terrain::Subarctic),
+            (9, Terrain::Urban),
+            (10, Terrain::Ocean),
+            (11, Terrain::Water),
+            (12, Terrain::Unknown(9)),
+        ];
+        let sc = super::build_terrain_scales(provs, 20);
+        assert_eq!(sc[1], 2, "Plains → orange"); // 2
+        assert_eq!(sc[2], 22, "Hills → darkorange"); // 22
+        assert_eq!(sc[3], 10, "Mountain → gray"); // 10
+        assert_eq!(sc[4], 1, "Forest → green"); // 1
+        assert_eq!(sc[5], 11, "Jungle → darkgreen"); // 11
+        assert_eq!(sc[6], 7, "Desert → yellow"); // 7
+        assert_eq!(sc[7], 17, "Marsh → lightgreen"); // 17
+        assert_eq!(sc[8], 14, "Subarctic → white"); // 14
+        assert_eq!(sc[9], 8, "Urban → darkgray"); // 8
+        assert_eq!(sc[10], WATER_BLOCK, "Ocean → water");
+        assert_eq!(sc[11], WATER_BLOCK, "Water → water");
+        // Невідомий терен → black (0); поза межею — вода.
+        assert_eq!(sc[12], 0);
+        assert_eq!(sc[19], WATER_BLOCK);
+        // Теренові шкали ніколи не мають темного біта.
+        assert!(sc.iter().all(|&s| s & DARK_FLAG == 0));
     }
 }

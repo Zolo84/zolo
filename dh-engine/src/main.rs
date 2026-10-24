@@ -372,6 +372,11 @@ struct AppState {
     /// провінцію (23|0x20 вода, 2|0x20 нічия, номер кольору країни | 0x20
     /// для не-гравця). Разом із `color_model` дає точний рендер без дампів.
     prov_scales: Vec<u8>,
+    /// Шкали терен-режиму: номер блока colorscales за типом місцевості
+    /// (Map colors.txt), без 0x20 — все світле.
+    terrain_scales: Vec<u8>,
+    /// Терен-режим карти (клавіша T, старт із DH_TERRAIN=1).
+    terrain_mode: bool,
     /// База країн (колір тегу) — для перебудови політичної карти в рантаймі.
     country_db: dh_format::db::CountryDb,
     /// Сигнатура власників/контролерів: якщо змінилась — політику перебудувати.
@@ -469,8 +474,85 @@ impl AppState {
         )
     }
 
+    /// Кольори провінцій для міні-карти в терен-режимі: базовий колір блока
+    /// colorscales (середнє світло 32), fallback — приблизний terrain_color.
+    fn build_terrain_colors(&self) -> Vec<u32> {
+        use dh_format::colorscale::{color_number, terrain_color_name, WATER_BLOCK};
+        let mut colors = vec![0xFF87_ACD8u32; 3000];
+        let pal = self.color_model.as_ref().map(|m| m.palette().to_vec());
+        for p in &self.prov_csv {
+            if p.id == 0 {
+                continue;
+            }
+            let rgb: [u8; 3] = match &pal {
+                Some(pal) => {
+                    let num = if matches!(
+                        p.terrain,
+                        dh_format::Terrain::Ocean | dh_format::Terrain::Water
+                    ) {
+                        WATER_BLOCK
+                    } else {
+                        color_number(terrain_color_name(p.terrain))
+                    };
+                    let idx = (num as usize) << 6 | 32;
+                    let v = pal.get(idx).copied().unwrap_or(0);
+                    dh_format::map_color::rgb565(v)
+                }
+                None => {
+                    let (r, g, b) = dh_format::province::terrain_color(p.terrain);
+                    [r, g, b]
+                }
+            };
+            colors[p.id as usize] =
+                0xFF00_0000 | ((rgb[0] as u32) << 16) | ((rgb[1] as u32) << 8) | rgb[2] as u32;
+        }
+        colors
+    }
+
+    /// Перебудова міні-карти у фоновому потоці з новими кольорами.
+    fn spawn_minimap(&mut self, colors: Vec<u32>) {
+        let map = self.map.clone();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(
+            move || match dh_render::minimap::build_minimap(&map, &colors) {
+                Ok(buf) => {
+                    let _ = tx.send(MinimapBuf {
+                        w: dh_render::minimap::MINIMAP_W,
+                        h: dh_render::minimap::MINIMAP_H,
+                        buf,
+                    });
+                }
+                Err(e) => log::warn!("міні-карта не перебудована: {e}"),
+            },
+        );
+        self.minimap_rx = Some(rx);
+    }
+
+    /// Перемикає терен/політичний режим: заливає активні шкали на GPU
+    /// і перебудовує міні-карту у фоні.
+    fn toggle_terrain_mode(&mut self) {
+        self.terrain_mode = !self.terrain_mode;
+        log::info!(
+            "терен-режим: {}",
+            if self.terrain_mode {
+                "увімкнено"
+            } else {
+                "вимкнено"
+            }
+        );
+        let (scales, colors) = if self.terrain_mode {
+            (self.terrain_scales.clone(), self.build_terrain_colors())
+        } else {
+            (self.prov_scales.clone(), self.prov_colors.clone())
+        };
+        if let Some(Renderer::Gpu(g)) = &mut self.surface {
+            let _ = g.set_scales(&scales);
+        }
+        self.spawn_minimap(colors);
+    }
+
     /// Перебудова політичної карти після зміни власників: кольори + шкали +
-    /// перезаливка на GPU + перебудова міні-карти у фоні.
+    /// перезаливка на GPU + перебудова міні-карти у фоні (якщо не терен-режим).
     fn rebuild_political(&mut self) {
         let Some(world) = &self.world else { return };
         self.prov_colors = Self::build_province_colors(&self.prov_csv, world, &self.country_db);
@@ -487,26 +569,14 @@ impl AppState {
             self.cli.player
         );
         self.prov_scales = scales;
+        if self.terrain_mode {
+            // Активний рендер — терен; політичні буфери оновлені для повернення.
+            return;
+        }
         if let Some(Renderer::Gpu(g)) = &mut self.surface {
             let _ = g.set_scales(&self.prov_scales);
         }
-        // Міні-карта: політичні кольори змінились — збираємо заново у фоні.
-        let map = self.map.clone();
-        let colors = self.prov_colors.clone();
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(
-            move || match dh_render::minimap::build_minimap(&map, &colors) {
-                Ok(buf) => {
-                    let _ = tx.send(MinimapBuf {
-                        w: dh_render::minimap::MINIMAP_W,
-                        h: dh_render::minimap::MINIMAP_H,
-                        buf,
-                    });
-                }
-                Err(e) => log::warn!("міні-карта не перебудована: {e}"),
-            },
-        );
-        self.minimap_rx = Some(rx);
+        self.spawn_minimap(self.prov_colors.clone());
     }
 
     fn hud_font(&self) -> Option<&BitmapFont> {
@@ -605,13 +675,12 @@ impl AppState {
             Some(s) => s.window_size(),
             None => return Ok(()),
         };
-        let map_ref: &MapData = &self.map;
         let zoom = self.zoom;
         let cam_x = self.cam_x;
         let cam_y = self.cam_y;
-        let view = self.view_for(w, h);
 
-        // Фонова міні-карта: забрати готовий кадр (якщо є).
+        // Фонова міні-карта: забрати готовий кадр (якщо є), інакше повернути
+        // приймач у поле. Робиться ДО borrow map/surface (методи — &mut self).
         if let Some(rx) = self.minimap_rx.take() {
             match rx.try_recv() {
                 Ok(mm) => self.minimap = Some(mm),
@@ -619,8 +688,16 @@ impl AppState {
                 Err(_) => {} // канал закрито (помилка збірки) — назавжди без міні-карти
             }
         }
+        // Терен-режим без замовленої міні-карти (старт із DH_TERRAIN): замовити.
+        if self.terrain_mode && self.minimap.is_none() && self.minimap_rx.is_none() {
+            let colors = self.build_terrain_colors();
+            self.spawn_minimap(colors);
+        }
         let mm_ref = self.minimap.as_ref();
         let show_mm = self.show_minimap;
+
+        let map_ref: &MapData = &self.map;
+        let view = self.view_for(w, h);
 
         // Підготувати HUD-дані ДО мутабельного borrow поверхні.
         let font_ptr: *const BitmapFont = self.hud_font().map_or(std::ptr::null(), |f| f);
@@ -697,11 +774,16 @@ impl AppState {
             Renderer::Soft(c) => {
                 let mut renderer =
                     MapRenderer::new(map_ref, zoom, view).with_provinces(self.show_provinces);
+                let scale_ref: &[u8] = if self.terrain_mode {
+                    &self.terrain_scales
+                } else {
+                    &self.prov_scales
+                };
                 renderer.prov_colors = Some(&self.prov_colors);
                 renderer.prov_terrain = Some(&self.prov_terrain);
                 renderer.terrain_palettes = Some(&self.terrain_palettes);
                 renderer.color_model = self.color_model.as_ref();
-                renderer.prov_scales = Some(&self.prov_scales);
+                renderer.prov_scales = Some(scale_ref);
                 renderer.render(&mut **c);
 
                 if !font_ptr.is_null() {
@@ -906,7 +988,12 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
                     )
                 });
                 g.set_color_model(cm).expect("палітра на GPU");
-                g.set_scales(&self.0.prov_scales);
+                let active_scales = if self.0.terrain_mode {
+                    &self.0.terrain_scales
+                } else {
+                    &self.0.prov_scales
+                };
+                g.set_scales(active_scales);
                 // GpuRenderer позичає &Window — протягом життя App вікно живе.
                 Renderer::Gpu(unsafe {
                     std::mem::transmute::<GpuRenderer<'_>, GpuRenderer<'static>>(g)
@@ -999,6 +1086,10 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
                                         "вимкнено"
                                     }
                                 );
+                            }
+                            KeyCode::KeyT => {
+                                // Терен/політичний режим карти.
+                                self.0.toggle_terrain_mode();
                             }
                             KeyCode::KeyN => {
                                 // Аннексія країни під курсором/вибором гравцем.
@@ -1107,6 +1198,11 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
     // Шкали з власників — точна політична карта (FUN_004dcb20 case 0).
     let prov_scales =
         AppState::build_province_scales(&prov_csv, world.as_ref(), &country_db, &cli.player);
+    // Шкали терен-режиму: колір за типом місцевості (Map colors.txt).
+    let terrain_scales = dh_format::colorscale::build_terrain_scales(
+        prov_csv.iter().map(|p| (p.id, p.terrain)),
+        3000,
+    );
     {
         use dh_format::colorscale::DARK_FLAG;
         let bright = prov_scales.iter().filter(|&&s| s & DARK_FLAG == 0).count();
@@ -1118,11 +1214,22 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
             water
         );
     }
+    let terrain_count = terrain_scales
+        .iter()
+        .filter(|&&s| s != dh_format::colorscale::WATER_BLOCK)
+        .count();
+    log::info!(
+        "терен-шкали: {} сухопутних провінцій (блоки colorscales за Map colors.txt)",
+        terrain_count
+    );
 
     // Міні-карта: збираємо у фоновому потоці (усі 5265 тайлів L4 ~ секунда),
-    // щоб не затримувати старт вікна.
-    let (mm_tx, mm_rx) = mpsc::channel();
-    {
+    // щоб не затримувати старт вікна. У терен-режимі перший кадр замовить
+    // теренові кольори сам.
+    let mm_rx = if std::env::var("DH_TERRAIN").is_ok() {
+        None
+    } else {
+        let (mm_tx, mm_rx) = mpsc::channel();
         let map = map.clone();
         let colors = prov_colors.clone();
         std::thread::spawn(move || {
@@ -1144,7 +1251,8 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
                 Err(e) => log::warn!("міні-карта не зібрана: {e}"),
             }
         });
-    }
+        Some(mm_rx)
+    };
 
     let mut app = App(AppState {
         cli: cli.clone(),
@@ -1162,7 +1270,7 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
         show_provinces: std::env::var("DH_FRAMES").is_ok(),
         minimap: None,
         show_minimap: std::env::var("DH_MINIMAP").is_ok(),
-        minimap_rx: Some(mm_rx),
+        minimap_rx: mm_rx,
         hover: None,
         selected: None,
         last_frame: Instant::now(),
@@ -1172,6 +1280,8 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
         terrain_palettes,
         color_model: load_color_model(paths),
         prov_scales,
+        terrain_scales,
+        terrain_mode: std::env::var("DH_TERRAIN").is_ok(),
         country_db: country_db.clone(),
         last_political_sig: 0,
         annex_pending: std::env::var("DH_ANNEX").ok().map(|tag| {
