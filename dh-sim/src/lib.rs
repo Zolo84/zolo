@@ -113,9 +113,11 @@ mod tests {
         sim.add_system(DayCounter(0));
         sim.run_hours(23);
         assert!(sim.world.flags.is_empty());
-        sim.run_days(366);
+        // Рік = 360 діб (Paradox HTD, RE-tick.md §3): опівночі 1937-01-01 —
+        // рівно через рік.
+        sim.run_days(360);
         assert_eq!(sim.date().to_string(), "1937-01-01 23:00");
-        assert!(sim.world.flags.contains("day366"));
-        assert!(!sim.world.flags.contains("day367"));
+        assert!(sim.world.flags.contains("day360"));
+        assert!(!sim.world.flags.contains("day361"));
     }
 }

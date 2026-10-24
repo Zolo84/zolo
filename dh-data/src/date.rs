@@ -1,4 +1,10 @@
-//! In-game calendar. The engine advances in one-hour ticks on the Gregorian calendar.
+//! In-game calendar. The engine advances in one-hour ticks on the Paradox
+//! calendar: **1 year = 360 days, 1 month = 30 days** (RE-tick.md §3: ділення
+//! «загального часу в годинах» на 8640/720/24 — 8640 год = рік, 720 = місяць;
+//! автозбереження FUN_0064c3b0: місяць `% 0xc`). Раніше календар був
+//! григоріанським (високосні роки, місяці 28–31) — це давало дрейф ~5 днів/рік
+//! проти оригіналу; 2026-10-24 переведено на 360 днів, щоб дата sim сходилась
+//! з датою рендера (dh_format::GameDate) і з HUD оригіналу.
 
 use dh_text::Block;
 use std::fmt;
@@ -93,7 +99,7 @@ impl GameDate {
 
     pub fn next_day(mut self) -> Self {
         self.day += 1;
-        if self.day > days_in_month(self.year, self.month) {
+        if self.day > 30 {
             self.day = 1;
             self.month += 1;
             if self.month > 12 {
@@ -116,17 +122,12 @@ pub fn month_from_name(name: &str) -> Option<u8> {
         .map(|i| i as u8 + 1)
 }
 
-pub fn is_leap(year: i32) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+pub fn is_leap(_year: i32) -> bool {
+    false // 360-денний календар: високосних років нема (RE-tick.md §3)
 }
 
-pub fn days_in_month(year: i32, month: u8) -> u8 {
-    match month {
-        2 if is_leap(year) => 29,
-        2 => 28,
-        4 | 6 | 9 | 11 => 30,
-        _ => 31,
-    }
+pub fn days_in_month(_year: i32, _month: u8) -> u8 {
+    30 // усі місяці по 30 днів (Paradox HTD, RE-tick.md §3)
 }
 
 impl fmt::Display for GameDate {
@@ -155,17 +156,27 @@ mod tests {
     }
 
     #[test]
-    fn calendar_arithmetic() {
+    fn calendar_arithmetic_360() {
+        // 360-денний календар (RE-tick.md §3): усі місяці по 30 днів,
+        // 30 лютого валідний, високосних нема.
         let d = GameDate::new(1940, 2, 28).add_hours(24);
         assert_eq!(d, GameDate::new(1940, 2, 29));
         assert_eq!(
-            GameDate::new(1939, 12, 31).add_hours(25).to_string(),
+            GameDate::new(1939, 12, 30).add_hours(25).to_string(),
             "1940-01-01 01:00"
         );
         assert_eq!(
             GameDate::parse_dotted("1914.6.28"),
             Some(GameDate::new(1914, 6, 28))
         );
-        assert_eq!(GameDate::parse_dotted("1914.2.30"), None);
+        assert_eq!(
+            GameDate::parse_dotted("1914.2.30"),
+            Some(GameDate::new(1914, 2, 30))
+        );
+        assert_eq!(GameDate::parse_dotted("1914.2.31"), None);
+        // Рік = рівно 360 годин×24: 360 днів від 1.1 → 1.1 наступного року.
+        let start = GameDate::new(1933, 1, 1);
+        let end = start.add_hours(360 * 24);
+        assert_eq!(end, GameDate::new(1934, 1, 1));
     }
 }

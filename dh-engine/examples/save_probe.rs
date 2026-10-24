@@ -8,7 +8,6 @@ mod sim_link;
 use anyhow::Result;
 use dh_core::time::{GameTime, TimeEvent};
 use dh_core::world::build_world;
-use dh_format::scenario::load_from_install;
 
 fn main() -> Result<()> {
     let paths = dh_format::GamePaths::from_steam()?;

@@ -965,12 +965,12 @@ event = {
             db.events.len(),
             db.files.first().map(String::as_str).unwrap_or("?")
         );
-        // У 70 файлах 1933 — 560 event-блоків (385 у моді + 176 у 7 AI-файлах;
-        // VFS дає регістронезалежні шляхи — у .eug `AI_GER.txt`, на диску
-        // `ai_ger.txt`).
+        // У 70 файлах 1933 — 566 event-блоків (385 у моді + 176 у 7 AI-файлах
+        // + 6 з порожніми command = {}, які раніше впивали; VFS дає
+        // регістронезалежні шляхи — у .eug `AI_GER.txt`, на диску `ai_ger.txt`).
         assert_eq!(files.len(), 70, "1933.eug перелічує event-файлів");
         assert_eq!(db.files.len(), 70, "усі файли прочитано (VFS мод/база)");
-        assert_eq!(db.events.len(), 560, "подій у файлах 1933");
+        assert_eq!(db.events.len(), 566, "подій у файлах 1933");
         // queued_events сценарію мають бути в базі.
         for id in [1330110051u64, 1330110043, 1330120019, 1330110046] {
             assert!(db.events.contains_key(&id), "немає події {id}");
