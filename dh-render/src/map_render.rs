@@ -504,32 +504,13 @@ impl<'a> MapRenderer<'a> {
     /// Тонка рамка навколо boundbox кожної провінції, що перетинає в'юпорт.
     /// «Підсвітлення» = фіксований колір рамки; TODO: звірити з оригінальним виділенням.
     fn draw_province_frames(&self, canvas: &mut Canvas) {
-        let vx0 = self.view.x as i64 * TILE_PX as i64;
-        let vy0 = self.view.y as i64 * TILE_PX as i64;
-        let (vw, vh) = self.view.screen_size(self.zoom);
-        let vx1 = vx0 + vw as i64;
-        let vy1 = vy0 + vh as i64;
-        // Товщина рамки: 1 екранний піксель (на зум-ауті — теж 1).
-        let t = 1i64;
-
-        for prov in 1..self.map.bounds.len() {
-            // bounds[0] = розмір мапи, не провінція.
-            let b = self.map.bounds[prov];
-            let (bx1, by1, bx2, by2) = (b.x1 as i64, b.y1 as i64, b.x2 as i64, b.y2 as i64);
-            if bx2 < vx0 || by2 < vy0 || bx1 > vx1 || by1 > vy1 {
-                continue; // не видима у в'юпорті
-            }
-            let sx1 = self.map_to_screen(bx1 - vx0) as i32;
-            let sy1 = self.map_to_screen(by1 - vy0) as i32;
-            let sx2 = self.map_to_screen(bx2 - vx0) as i32 + t as i32;
-            let sy2 = self.map_to_screen(by2 - vy0) as i32 + t as i32;
-            let w = (sx2 - sx1).max(0) as u32;
-            let h = (sy2 - sy1).max(0) as u32;
+        for (sx1, sy1, sx2, sy2) in province_frames_screen(self.map, self.zoom, self.view) {
+            let (w, h) = ((sx2 - sx1).max(0) as u32, (sy2 - sy1).max(0) as u32);
             // Рамка = 4 смуги (fill_rect сам кліпить до канваса).
-            canvas.fill_rect(sx1, sy1, w, t as u32, PROV_FRAME_COLOR);
-            canvas.fill_rect(sx1, sy2 - t as i32, w, t as u32, PROV_FRAME_COLOR);
-            canvas.fill_rect(sx1, sy1, t as u32, h, PROV_FRAME_COLOR);
-            canvas.fill_rect(sx2 - t as i32, sy1, t as u32, h, PROV_FRAME_COLOR);
+            canvas.fill_rect(sx1, sy1, w, 1, PROV_FRAME_COLOR);
+            canvas.fill_rect(sx1, sy2 - 1, w, 1, PROV_FRAME_COLOR);
+            canvas.fill_rect(sx1, sy1, 1, h, PROV_FRAME_COLOR);
+            canvas.fill_rect(sx2 - 1, sy1, 1, h, PROV_FRAME_COLOR);
         }
     }
 
@@ -593,6 +574,94 @@ fn unproject(view: &Viewport, zoom: i8, x: u32, y: u32) -> Option<(u32, u32)> {
         return None; // поза мапою
     }
     Some(((wx / TILE_PX as u64) as u32, (wy / TILE_PX as u64) as u32))
+}
+
+/// Світові пікселі мапи для екранного пікселя (будь-який zoom). None — поза
+/// в'юпортом або поза мапою.
+pub fn screen_to_world_px(zoom: i8, view: Viewport, x: u32, y: u32) -> Option<(u32, u32)> {
+    let (vw, vh) = view.screen_size(zoom);
+    if x >= vw || y >= vh {
+        return None;
+    }
+    let (wx, wy) = if zoom >= 0 {
+        (
+            view.x as u64 * TILE_PX as u64 + (x as u64 >> zoom),
+            view.y as u64 * TILE_PX as u64 + (y as u64 >> zoom),
+        )
+    } else {
+        let sh = (-zoom) as u32;
+        (
+            view.x as u64 * TILE_PX as u64 + ((x as u64) << sh),
+            view.y as u64 * TILE_PX as u64 + ((y as u64) << sh),
+        )
+    };
+    if wx >= BLOCKS_X as u64 * TILE_PX as u64 || wy >= BLOCKS_Y as u64 * TILE_PX as u64 {
+        return None;
+    }
+    Some((wx as u32, wy as u32))
+}
+
+/// Блок мапи (32×32) під екранним пікселем — для клік-пікінгу.
+pub fn screen_to_block(zoom: i8, view: Viewport, x: u32, y: u32) -> Option<(u32, u32)> {
+    let (wx, wy) = screen_to_world_px(zoom, view, x, y)?;
+    Some((wx / TILE_PX, wy / TILE_PX))
+}
+
+/// Провінція під екранним пікселем: `(блок_x, блок_y, prov_id)` через lightmap
+/// L1 (точність 1 піксель мапи). None — поза мапою або L1 недоступний.
+pub fn pick_province(
+    map: &MapData,
+    zoom: i8,
+    view: Viewport,
+    x: u32,
+    y: u32,
+) -> Option<(u32, u32, u16)> {
+    let (wx, wy) = screen_to_world_px(zoom, view, x, y)?;
+    let (bx, by) = (wx / TILE_PX, wy / TILE_PX);
+    let l1 = map.lightmap.first()?;
+    let ti = l1.decode_tile(bx, by).ok()?;
+    let lx = (wx % TILE_PX) as usize;
+    let ly = (wy % TILE_PX) as usize;
+    let prov = ti.prov_ids[ly * TILE_PX as usize + lx];
+    Some((bx, by, prov))
+}
+
+/// Рамки boundbox видимих провінцій в екранних пікселях: `(x1, y1, x2, y2)`
+/// (зовнішні краї). Той самий обхід, що `MapRenderer::draw_province_frames` —
+/// для GPU-рендера (окремий прохід ліній).
+pub fn province_frames_screen(
+    map: &MapData,
+    zoom: i8,
+    view: Viewport,
+) -> Vec<(i32, i32, i32, i32)> {
+    let to_screen = |v: i64| -> i32 {
+        if zoom >= 0 {
+            (v << zoom) as i32
+        } else {
+            (v >> (-zoom)) as i32
+        }
+    };
+    let vx0 = view.x as i64 * TILE_PX as i64;
+    let vy0 = view.y as i64 * TILE_PX as i64;
+    let (vw, vh) = view.screen_size(zoom);
+    let vx1 = vx0 + vw as i64;
+    let vy1 = vy0 + vh as i64;
+
+    let mut out = Vec::new();
+    for prov in 1..map.bounds.len() {
+        // bounds[0] = розмір мапи, не провінція.
+        let b = map.bounds[prov];
+        let (bx1, by1, bx2, by2) = (b.x1 as i64, b.y1 as i64, b.x2 as i64, b.y2 as i64);
+        if bx2 < vx0 || by2 < vy0 || bx1 > vx1 || by1 > vy1 {
+            continue; // не видима у в'юпорті
+        }
+        let sx1 = to_screen(bx1 - vx0);
+        let sy1 = to_screen(by1 - vy0);
+        let sx2 = to_screen(bx2 - vx0) + 1;
+        let sy2 = to_screen(by2 - vy0) + 1;
+        out.push((sx1, sy1, sx2, sy2));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -685,6 +754,25 @@ mod tests {
         // Кожен її піксель = світлопіксель L4 (8 пікселів мапи): 29952 >> 3 = 3744.
         assert_eq!(BLOCKS_X * TILE_PX >> 3, 3744);
         assert_eq!(BLOCKS_Y * TILE_PX >> 3, 1440);
+    }
+
+    /// Геометрія клік-пікінгу: екранний піксель → блок мапи на будь-якому zoom.
+    #[test]
+    fn pick_geometry() {
+        let view = Viewport::new(400, 10, 16, 16);
+        // zoom 0: піксель (288, 384) → світові px (400·32+288, 10·32+384) = (13088, 704).
+        assert_eq!(screen_to_world_px(0, view, 288, 384), Some((13088, 704)));
+        assert_eq!(screen_to_block(0, view, 288, 384), Some((409, 22)));
+        // zoom -2: піксель (88, 112) → світові px (400·32+88·4, 10·32+112·4).
+        assert_eq!(screen_to_world_px(-2, view, 88, 112), Some((13152, 768)));
+        assert_eq!(screen_to_block(-2, view, 88, 112), Some((411, 24)));
+        // zoom 2: піксель (512, 512) → світові px (400·32+512/4, ...) = (12928, 448).
+        assert_eq!(screen_to_world_px(2, view, 512, 512), Some((12928, 448)));
+        assert_eq!(screen_to_block(2, view, 512, 512), Some((404, 14)));
+        // Поза в'юпортом і поза мапою — None.
+        assert_eq!(screen_to_world_px(0, view, 512, 0), None);
+        let far = Viewport::new(1000, 1000, 16, 16);
+        assert_eq!(screen_to_world_px(0, far, 288, 384), None);
     }
 
     /// Піксель канваса за координатами (0 поза межами); канвас не має get_pixel.
@@ -821,6 +909,16 @@ mod tests {
         assert_eq!(renderer.world_to_screen(1), Some((290, 410)));
         // Клік у блок Ісландії.
         assert_eq!(renderer.screen_to_world(288, 384), Some((409, 22)));
+
+        // Пікінг: той самий піксель → провінція 1 через lightmap L1.
+        assert_eq!(screen_to_world_px(0, view, 288, 384), Some((13088, 704)));
+        assert_eq!(pick_province(&map, 0, view, 288, 384), Some((409, 22, 1)));
+        // Рамки: bbox пров. 1 видимий у в'юпорті; (x1,y1) = (186, 316).
+        let frames = province_frames_screen(&map, 0, view);
+        assert!(
+            frames.iter().any(|&(x1, y1, _, _)| x1 == 186 && y1 == 316),
+            "рамка провінції 1: {frames:?}"
+        );
 
         // Рамки провінцій: лівий край рамки bbox пров. 1 (x=186, товщина 1) і
         // верхній (y=316..317) — видимі в канвасі.

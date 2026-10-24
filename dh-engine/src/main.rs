@@ -296,6 +296,7 @@ fn run_headless(paths: &GamePaths, cli: &Cli) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 use dh_render::canvas::RenderSurface;
+use dh_render::map_render;
 use dh_render::map_render::{MapRenderer, Viewport};
 use dh_render::text::{self, TextAlign, TextStyle};
 use dh_render::wgpu_canvas::WgpuCanvas;
@@ -329,7 +330,7 @@ impl Renderer {
 struct AppState {
     cli: Cli,
     map: MapData,
-    _prov_csv: Vec<ProvinceCsv>,
+    prov_csv: Vec<ProvinceCsv>,
     _palette: Palette,
     fonts: Vec<BitmapFont>,
     world: Option<World>,
@@ -341,6 +342,12 @@ struct AppState {
     cam_y: u32,
     /// Зум: -3..=4 (від'ємний = зум-аут з mipmap-світлом L2..L4).
     zoom: i8,
+    /// Показувати рамки провінцій (клавіша P).
+    show_provinces: bool,
+    /// Провінція під курсором (блок_x, блок_y, prov_id) — оновлюється на рух миші.
+    hover: Option<(u32, u32, u16)>,
+    /// Остання обрана кліком провінція.
+    selected: Option<(u32, u32, u16)>,
     last_frame: Instant,
     keys_down: std::collections::HashSet<winit::keyboard::KeyCode>,
     /// Кольори провінцій для політичної карти: id → ARGB (власник → колір країни
@@ -360,6 +367,31 @@ struct AppState {
 }
 
 impl AppState {
+    /// В'юпорт для поточного вікна: блоків залежить від zoom.
+    fn view_for(&self, w: u32, h: u32) -> Viewport {
+        let zoom = self.zoom;
+        let w_blocks = if zoom >= 0 {
+            (w / 32).max(1)
+        } else {
+            ((w << -zoom) / 32).max(1)
+        };
+        let h_blocks = if zoom >= 0 {
+            (h / 32).max(1)
+        } else {
+            ((h << -zoom) / 32).max(1)
+        };
+        Viewport::new(self.cam_x, self.cam_y, w_blocks, h_blocks)
+    }
+
+    /// Назва провінції за id (з Province.csv) або "?".
+    fn province_name(&self, id: u16) -> &str {
+        self.prov_csv
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| p.name.as_str())
+            .unwrap_or("?")
+    }
+
     fn hud_font(&self) -> Option<&BitmapFont> {
         self.fonts
             .iter()
@@ -458,34 +490,28 @@ impl AppState {
         };
         let map_ref: &MapData = &self.map;
         let zoom = self.zoom;
-        let cam_x = self.cam_x;
-        let cam_y = self.cam_y;
-
-        // Блоків у в'юпорті: при zoom ≥ 0 кожен блок = 32·2^z пікселів екрана,
-        // при зум-ауті (zoom < 0) = 32/2^k, тож блоків на екрані більше.
-        let w_blocks = if zoom >= 0 {
-            (w / 32).max(1)
-        } else {
-            ((w << -zoom) / 32).max(1)
-        };
-        let h_blocks = if zoom >= 0 {
-            (h / 32).max(1)
-        } else {
-            ((h << -zoom) / 32).max(1)
-        };
-        let view = Viewport::new(cam_x, cam_y, w_blocks, h_blocks);
+        let view = self.view_for(w, h);
 
         // Підготувати HUD-дані ДО мутабельного borrow поверхні.
         let font_ptr: *const BitmapFont = self.hud_font().map_or(std::ptr::null(), |f| f);
-        let line = match &self.world {
+        let mut line = match &self.world {
             Some(w) => format!(
                 "{}  |  speed {}  |  {}",
                 w.date.display(),
                 w.speed,
                 if w.paused { "PAUSED" } else { "running" }
             ),
-            None => "WASD — камера | +/- — зум | Esc — вихід".to_string(),
+            None => "WASD — камера | +/- — зум | P — рамки | Esc — вихід".to_string(),
         };
+        if let Some((bx, by, prov)) = self.hover.or(self.selected) {
+            let name = self.province_name(prov);
+            let sel = if self.hover.is_some() {
+                "пров"
+            } else {
+                "вибір"
+            };
+            line.push_str(&format!("  |  {sel} {prov} ({name}) @ ({bx},{by})"));
+        }
         let style = TextStyle {
             color: [230, 230, 230],
             shadow: true,
@@ -501,6 +527,12 @@ impl AppState {
                 // GPU-шлях: шейдер сам робить кольори з lightmap; HUD — текст
                 // у CPU-канвас, який малюється поверх окремим проходом.
                 g.set_view(zoom, view);
+                if self.show_provinces {
+                    let rects = map_render::province_frames_screen(map_ref, zoom, view);
+                    g.set_province_frames(&rects)?;
+                } else {
+                    g.set_province_frames(&[])?;
+                }
                 if !font_ptr.is_null() {
                     let font_ref: &BitmapFont = unsafe { &*font_ptr };
                     text::draw(g.hud(), font_ref, line.as_bytes(), 6, 3, &style);
@@ -508,7 +540,8 @@ impl AppState {
                 g.present()?;
             }
             Renderer::Soft(c) => {
-                let mut renderer = MapRenderer::new(map_ref, zoom, view).with_provinces(false);
+                let mut renderer =
+                    MapRenderer::new(map_ref, zoom, view).with_provinces(self.show_provinces);
                 renderer.prov_colors = Some(&self.prov_colors);
                 renderer.prov_terrain = Some(&self.prov_terrain);
                 renderer.terrain_palettes = Some(&self.terrain_palettes);
@@ -570,6 +603,7 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
     use winit::application::ApplicationHandler;
     use winit::dpi::LogicalSize;
     use winit::event::ElementState;
+    use winit::event::MouseButton;
     use winit::event::WindowEvent;
     use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
     use winit::keyboard::{KeyCode, PhysicalKey};
@@ -749,6 +783,17 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
                                     (self.0.zoom - 1).max(dh_render::map_render::ZOOM_MIN);
                                 log::info!("зум: {}", self.0.zoom);
                             }
+                            KeyCode::KeyP => {
+                                self.0.show_provinces = !self.0.show_provinces;
+                                log::info!(
+                                    "рамки провінцій: {}",
+                                    if self.0.show_provinces {
+                                        "увімкнено"
+                                    } else {
+                                        "вимкнено"
+                                    }
+                                );
+                            }
                             _ => {
                                 self.0.keys_down.insert(code);
                             }
@@ -756,6 +801,30 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
                     } else if event.state == ElementState::Released {
                         self.0.keys_down.remove(&code);
                     }
+                }
+                WindowEvent::CursorMoved { position, .. } => {
+                    let (w, h) = match self.0.surface.as_ref() {
+                        Some(s) => s.window_size(),
+                        None => return,
+                    };
+                    if w == 0 || h == 0 {
+                        return;
+                    }
+                    let (x, y) = (
+                        (position.x.clamp(0.0, w as f64 - 1.0)) as u32,
+                        (position.y.clamp(0.0, h as f64 - 1.0)) as u32,
+                    );
+                    let view = self.0.view_for(w, h);
+                    let picked = map_render::pick_province(&self.0.map, self.0.zoom, view, x, y);
+                    self.0.hover = picked;
+                }
+                WindowEvent::MouseInput {
+                    state: ElementState::Pressed,
+                    button: MouseButton::Left,
+                    ..
+                } => {
+                    // Лівий клік = закріпити вибір провінції під курсором.
+                    self.0.selected = self.0.hover.clone();
                 }
                 WindowEvent::RedrawRequested => {
                     if let Err(e) = self.0.render_frame() {
@@ -824,7 +893,7 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
     let mut app = App(AppState {
         cli: cli.clone(),
         map,
-        _prov_csv: prov_csv,
+        prov_csv,
         _palette: palette,
         fonts,
         world,
@@ -834,6 +903,9 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
         cam_x: 300, // старт: Північна Атлантика (Ісландія ~ блок 409,22)
         cam_y: 0,
         zoom: 0,
+        show_provinces: std::env::var("DH_FRAMES").is_ok(),
+        hover: None,
+        selected: None,
         last_frame: Instant::now(),
         keys_down: Default::default(),
         prov_colors,

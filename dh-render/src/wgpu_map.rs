@@ -230,6 +230,19 @@ fn fs_hud(in: MapVsOut) -> @location(0) vec4f {
 }
 "#;
 
+/// Рамки провінцій: список сегментів у NDC (вершини з CPU), колір білий.
+const SHADER_FRAMES: &str = r#"
+@vertex
+fn vs_frames(@location(0) pos: vec2f) -> @builtin(position) vec4f {
+    return vec4f(pos, 0.0, 1.0);
+}
+
+@fragment
+fn fs_frames() -> @location(0) vec4f {
+    return vec4f(1.0, 1.0, 1.0, 1.0);
+}
+"#;
+
 fn map_shader() -> String {
     let mut s = String::from(SHADER_BASE);
     s.push_str(SHADER_UNIFORM);
@@ -391,6 +404,10 @@ pub struct GpuRenderer<'a> {
     pipeline_map: wgpu::RenderPipeline,
     pipeline_river: wgpu::RenderPipeline,
     pipeline_hud: wgpu::RenderPipeline,
+    /// Рамки провінцій: вершини сегментів у NDC (оновлюються [`Self::set_province_frames`]).
+    frames_vb: Option<wgpu::Buffer>,
+    frames_count: u32,
+    pipeline_frames: wgpu::RenderPipeline,
 }
 
 impl<'a> GpuRenderer<'a> {
@@ -613,6 +630,10 @@ impl<'a> GpuRenderer<'a> {
             label: Some("hud shader"),
             source: wgpu::ShaderSource::Wgsl(hud_shader().into()),
         });
+        let shader_frames = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("frames shader"),
+            source: wgpu::ShaderSource::Wgsl(SHADER_FRAMES.into()),
+        });
         // HUD-піплайн: без uniform-групи.
         let hud_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("hud pl"),
@@ -644,10 +665,52 @@ impl<'a> GpuRenderer<'a> {
             multiview_mask: None,
             cache: None,
         });
-        // Шейдер HUD містить vs_main і структуру MapVsOut, але fs має іншу назву.
-        // Для рівномірності: map/river піплайни використовують entry "fs".
         let pipeline_map = mk("map", &bgl_map, &shader_map, false);
         let pipeline_river = mk("river", &bgl_river, &shader_river, true);
+
+        // Піплайн рамок: без бінд-груп, LineList, вершини vec2f у NDC.
+        let pipeline_frames = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("frames pipeline"),
+            layout: Some(
+                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("frames pl"),
+                    bind_group_layouts: &[],
+                    immediate_size: 0,
+                }),
+            ),
+            vertex: wgpu::VertexState {
+                module: &shader_frames,
+                entry_point: Some("vs_frames"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: 8,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x2,
+                        offset: 0,
+                        shader_location: 0,
+                    }],
+                })],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader_frames,
+                entry_point: Some("fs_frames"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: fmt,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::LineList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
 
         Ok(GpuRenderer {
             instance,
@@ -683,6 +746,9 @@ impl<'a> GpuRenderer<'a> {
             pipeline_map,
             pipeline_river,
             pipeline_hud,
+            frames_vb: None,
+            frames_count: 0,
+            pipeline_frames,
         })
     }
 
@@ -956,6 +1022,48 @@ impl<'a> GpuRenderer<'a> {
     /// HUD-канвас для малювання тексту на CPU (до [`Self::present`]).
     pub fn hud(&mut self) -> &mut Canvas {
         &mut self.hud
+    }
+
+    /// Рамки провінцій (екранні пікселі `(x1,y1,x2,y2)`, зовнішні краї):
+    /// конвертує в NDC-сегменти й заливає vertex-буфер. Порожній список —
+    /// вимикає прохід.
+    pub fn set_province_frames(&mut self, rects: &[(i32, i32, i32, i32)]) -> anyhow::Result<()> {
+        let (w, h) = self.window_size();
+        let (w, h) = (w.max(1) as f32, h.max(1) as f32);
+        let mut verts: Vec<f32> = Vec::with_capacity(rects.len() * 16);
+        let nx = |x: i32| x as f32 / w * 2.0 - 1.0;
+        let ny = |y: i32| 1.0 - y as f32 / h * 2.0;
+        for &(x1, y1, x2, y2) in rects {
+            // 4 сегменти (із включенням зовнішніх країв, як у CPU-шляху).
+            let (x1, y1, x2, y2) = (nx(x1), ny(y1), nx(x2), ny(y2));
+            verts.extend_from_slice(&[x1, y1, x2, y1]); // верх
+            verts.extend_from_slice(&[x2, y1, x2, y2]); // право
+            verts.extend_from_slice(&[x2, y2, x1, y2]); // низ
+            verts.extend_from_slice(&[x1, y2, x1, y1]); // ліво
+        }
+        self.frames_count = (verts.len() / 2) as u32;
+        if verts.is_empty() {
+            return Ok(());
+        }
+        let bytes: Vec<u8> = verts.iter().flat_map(|v| v.to_le_bytes()).collect();
+        let need = bytes.len() as u64;
+        match self.frames_vb.as_ref() {
+            Some(b) if b.size() >= need => {
+                self.queue.write_buffer(b, 0, &bytes);
+            }
+            _ => {
+                let capacity = need.next_power_of_two().max(4096);
+                let vb = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("frames vb"),
+                    size: capacity,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                self.queue.write_buffer(&vb, 0, &bytes);
+                self.frames_vb = Some(vb);
+            }
+        }
+        Ok(())
     }
 
     /// Розмір кадру (headless) — заповнюється в [`Self::set_view`].
@@ -1263,6 +1371,13 @@ impl<'a> GpuRenderer<'a> {
             rpass.set_bind_group(0, &self.uniform_bg, &[]);
             rpass.set_bind_group(1, &self.bg_river, &[]);
             rpass.draw(0..3, 0..1);
+            if self.frames_count > 0 {
+                if let Some(vb) = self.frames_vb.as_ref() {
+                    rpass.set_pipeline(&self.pipeline_frames);
+                    rpass.set_vertex_buffer(0, vb.slice(..));
+                    rpass.draw(0..self.frames_count, 0..1);
+                }
+            }
             if with_hud {
                 rpass.set_pipeline(&self.pipeline_hud);
                 rpass.set_bind_group(0, &self.bg_hud, &[]);

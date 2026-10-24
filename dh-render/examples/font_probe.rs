@@ -12,7 +12,10 @@ fn main() -> anyhow::Result<()> {
         PathBuf::from(std::env::var("HOME").unwrap())
             .join(".local/share/Steam/steamapps/common/Darkest Hour A HOI Game")
     });
-    let out = args.get(2).cloned().unwrap_or_else(|| "/tmp/font-probe.png".into());
+    let out = args
+        .get(2)
+        .cloned()
+        .unwrap_or_else(|| "/tmp/font-probe.png".into());
 
     let paths = dh_format::GamePaths::with_custom(game);
     let fonts = dh_format::fonts::load_fonts(&paths)?;
@@ -22,7 +25,9 @@ fn main() -> anyhow::Result<()> {
     }
     let font = fonts
         .iter()
-        .find(|f| f.set == "root" && f.size == 14 && f.name.to_ascii_lowercase().contains("eurostile"))
+        .find(|f| {
+            f.set == "root" && f.size == 14 && f.name.to_ascii_lowercase().contains("eurostile")
+        })
         .or_else(|| fonts.first())
         .expect("немає шрифтів");
     println!("використано: {} / {} / {}", font.name, font.set, font.size);
@@ -46,7 +51,12 @@ fn main() -> anyhow::Result<()> {
     let mut hm: std::collections::HashMap<u32, Vec<String>> = Default::default();
     for &ch in b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ" {
         let g = font.glyph(ch).unwrap();
-        let h: u32 = g.data.iter().enumerate().map(|(i, &b)| ((b as u32) << (i % 24)) ^ (i as u32 * 31)).sum();
+        let h: u32 = g
+            .data
+            .iter()
+            .enumerate()
+            .map(|(i, &b)| ((b as u32) << (i % 24)) ^ (i as u32 * 31))
+            .sum();
         hm.entry(h).or_default().push(char::from(ch).to_string());
     }
     for (h, v) in &hm {
@@ -62,8 +72,22 @@ fn main() -> anyhow::Result<()> {
         scale: 1,
         align: TextAlign::Left,
     };
-    text::draw(&mut canvas, font, b"0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ", 6, 8, &style);
-    text::draw(&mut canvas, font, b"abcdefghijklmnopqrstuvwxyz running 1933", 6, 34, &style);
+    text::draw(
+        &mut canvas,
+        font,
+        b"0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        6,
+        8,
+        &style,
+    );
+    text::draw(
+        &mut canvas,
+        font,
+        b"abcdefghijklmnopqrstuvwxyz running 1933",
+        6,
+        34,
+        &style,
+    );
 
     // PNG: ARGB → RGB.
     let mut img = image::RgbImage::new(1024, 128);
@@ -73,7 +97,11 @@ fn main() -> anyhow::Result<()> {
             img.put_pixel(
                 x,
                 y,
-                image::Rgb([((c >> 16) & 0xFF) as u8, ((c >> 8) & 0xFF) as u8, (c & 0xFF) as u8]),
+                image::Rgb([
+                    ((c >> 16) & 0xFF) as u8,
+                    ((c >> 8) & 0xFF) as u8,
+                    (c & 0xFF) as u8,
+                ]),
             );
         }
     }
