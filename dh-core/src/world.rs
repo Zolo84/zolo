@@ -375,12 +375,9 @@ pub fn build_world(
     speed: u8,
 ) -> World {
     let mut world = World::new();
-    let start = sc
-        .globaldata
-        .startdate
-        .or(sc.header.startdate)
-        .unwrap_or_else(|| dh_format::GameDate::from_ymd(1936, 1, 1));
-    world.date = start;
+    // Стартова дата: globaldata перемагає header (меню), фолбек 1936 —
+    // та сама логіка, що в dh-sim; єдине місце — dh_format::scenario::game_start.
+    world.date = dh_format::scenario::game_start(sc);
     world.set_speed(speed.min(7));
 
     for cb in &sc.countries {

@@ -11,11 +11,14 @@ use sim_link::SimLink;
 
 fn main() -> anyhow::Result<()> {
     let paths = dh_format::GamePaths::from_steam()?;
-    let sc_path = paths.mod_dir.join("scenarios/1933.eug");
-    let sc = dh_format::scenario::load_scenario(&sc_path)?;
+    // А4: один парс сценарію — dh-data через VFS; з нього і наш World, і sim.
+    let vfs = dh_data::open_install(&paths.root);
+    let mut warnings = Vec::new();
+    let data = dh_format::scenario::load_data(&vfs, "scenarios/1933.eug", &mut warnings)?;
+    let sc = dh_format::scenario::from_data(&data)?;
     let csv = dh_format::province::load(&paths.root.join("map/Map_1/Province.csv"))?;
     let our = build_world(&sc, &csv, 3);
-    let link = SimLink::build(&paths.root, "1933")?;
+    let link = SimLink::from_scenario(&vfs, &data)?;
 
     let our_tag = |i: Option<usize>| -> String {
         i.map(|k| our.countries[k].tag.as_str().to_string())

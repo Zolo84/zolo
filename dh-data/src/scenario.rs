@@ -148,6 +148,22 @@ pub struct Scenario {
     pub provinces: Vec<ProvinceSetup>,
     /// The `weather` block (`globaldata.weather`, or a top-level one).
     pub weather: crate::WeatherSetup,
+    /// `include = "..."` targets in file order, as written (nested ones too),
+    /// including ones that failed to resolve.
+    pub includes: Vec<String>,
+}
+
+impl Scenario {
+    /// The game start date: `globaldata.startdate` wins over the menu's
+    /// `header.startdate` (the original engine starts the campaign from
+    /// globaldata; the header date only feeds the scenario picker).
+    pub fn start(&self) -> Option<GameDate> {
+        self.root
+            .get_block("globaldata")
+            .and_then(|g| g.get_block("startdate"))
+            .and_then(GameDate::from_block)
+            .or(self.info.start)
+    }
 }
 
 impl Scenario {
@@ -165,7 +181,8 @@ impl Scenario {
 
     pub fn load(vfs: &Vfs, path: &str, warnings: &mut Vec<Warning>) -> std::io::Result<Self> {
         let mut seen = HashSet::new();
-        let root = load_with_includes(vfs, path, &mut seen, warnings)?;
+        let mut includes = Vec::new();
+        let root = load_with_includes(vfs, path, &mut seen, warnings, &mut includes)?;
         let countries = root
             .get_all("country")
             .filter_map(|v| CountrySetup::from_block(v.as_block()?))
@@ -186,6 +203,7 @@ impl Scenario {
                 .collect(),
             root,
             countries,
+            includes,
         })
     }
 }
@@ -195,6 +213,7 @@ fn load_with_includes(
     path: &str,
     seen: &mut HashSet<String>,
     warnings: &mut Vec<Warning>,
+    includes: &mut Vec<String>,
 ) -> std::io::Result<Block> {
     seen.insert(normalize(path));
     let mut out = Block::default();
@@ -209,6 +228,7 @@ fn load_with_includes(
             out.items.push(item);
             continue;
         };
+        includes.push(target.clone());
         let warn = |message: String| Warning {
             file: path.to_owned(),
             line,
@@ -223,7 +243,7 @@ fn load_with_includes(
             Some(p) if seen.contains(&normalize(&p)) => {
                 warnings.push(warn(format!("include cycle: {target}")))
             }
-            Some(p) => match load_with_includes(vfs, &p, seen, warnings) {
+            Some(p) => match load_with_includes(vfs, &p, seen, warnings, includes) {
                 Ok(inner) => out.items.extend(inner.items),
                 Err(e) => warnings.push(warn(format!("include {target}: {e}"))),
             },

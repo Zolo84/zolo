@@ -41,12 +41,8 @@ fn main() -> anyhow::Result<()> {
     let country_db = dh_format::db::CountryDb::load(&paths)?;
     let color_model = GameColorModel::from_game(&paths)?;
 
-    let sc = dh_format::scenario::load_scenario(
-        &paths
-            .mod_dir
-            .join("scenarios")
-            .join(format!("{scenario}.eug")),
-    )?;
+    // А4: єдиний завантажувач (dh-data через VFS + конвертація).
+    let sc = dh_format::scenario::load_from_install(&paths.root, &scenario)?;
     let mut owner_of: HashMap<u16, String> = HashMap::new();
     for cb in &sc.countries {
         for (k, v) in &cb.body {

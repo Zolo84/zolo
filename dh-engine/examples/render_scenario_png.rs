@@ -44,13 +44,8 @@ fn main() -> anyhow::Result<()> {
     // Палітра з файлу гри (Map_1/colorscales.csv) — без дампу пам'яті!
     let color_model = GameColorModel::from_game(&paths)?;
 
-    // Власники зі сценарію: ownedprovinces кожної країни.
-    let sc = dh_format::scenario::load_scenario(
-        &paths
-            .mod_dir
-            .join("scenarios")
-            .join(format!("{scenario}.eug")),
-    )?;
+    // Власники зі сценарію (А4: єдиний завантажувач — dh-data через VFS).
+    let sc = dh_format::scenario::load_from_install(&paths.root, &scenario)?;
     let mut owner_of: HashMap<u16, String> = HashMap::new();
     for cb in &sc.countries {
         for (k, v) in &cb.body {

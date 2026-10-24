@@ -40,11 +40,8 @@ fn main() -> anyhow::Result<()> {
 
     // Політична карта: власник (з .eug) → колір країни (country.csv + colorscales.csv).
     if let Some(sc_name) = &scenario {
-        let sc_path = paths
-            .mod_dir
-            .join("scenarios")
-            .join(format!("{sc_name}.eug"));
-        let sc = dh_format::scenario::load_scenario(&sc_path)?;
+        // А4: єдиний завантажувач (dh-data через VFS + конвертація).
+        let sc = dh_format::scenario::load_from_install(&paths.root, sc_name)?;
         let country_db = dh_format::db::CountryDb::load(&paths)?;
         let mut n_owned = 0;
         for cb in &sc.countries {

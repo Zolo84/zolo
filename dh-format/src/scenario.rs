@@ -1,27 +1,23 @@
-//! Парсер сценаріїв .eug: name/panel/header/globaldata/country/province/include.
-//! RE: re/RE-eug-format.md — повне дерево формату.
+//! Сценарії .eug — ОДИН завантажувач на весь workspace (А4 з PLAN.md).
 //!
-//! Синтаксис: `ключ = значення` з вкладеними блоками `{ }`, рядки в лапках,
-//! коментарі `#`. Ключові слова — регістронезалежні. Набір top-level об'єктів
-//! сценарію обмежений; невідомий → помилка "Illegal top level object".
+//! Джерело істини — `dh_data::Scenario::load` (парсер dh-text + VFS з шарами
+//! мода/бази, регістронезалежні шляхи, толерантність до битих файлів). Цей
+//! модуль конвертує їхнє сплісене дерево (`dh_text::Block`) у нашу структуру
+//! `Scenario`, яку їдять `dh_core::world::build_world`, рендер і приклади.
+//! Колишній власний міні-токенайзер видалено — дубль парсера більше не існує.
 //!
-//! `include = "..."` інлайниться: файл шукається відносно папки сценарію, а якщо
-//! не знайдено — відносно її батька (у реальних файлах шляхи відносні кореня
-//! мода: `scenarios\1933\vp.inc` або `scenarios/BS_1939.09/vp.inc`). З
-//! include-файлів беруться лише country/province-блоки (і вкладені include);
-//! решта (event-списки на кшталт `db\events.txt` тощо) пропускається без
-//! побудови дерева.
+//! Дати: у файлах сценаріїв день і числовий місяць НУЛЬ-БАЗОВІ (HoI2-спадок;
+//! dh_data::GameDate::from_block). Еталон: оригінальна гра на старті 1933
+//! показує «0:00 March 4, 1933» при `startdate = { year = 1933 month = march
+//! day = 3 }` (скрін re/wine-1933-poland-ingame.png). Конвертація в наш
+//! 360-денний календар (RE-tick.md §3: рік=360, місяць=30) — `date_from_data`.
 //!
-//! Не закритий на кінці файлу блок не є помилкою — гра теж зупиняє парсинг на
-//! EOF (реальний 1939.09/germany.inc закінчується без закриваючої `}`);
-//! видається лише warning.
-//!
-//! TODO: коли буде готовий `script::parse_file` (лексер 1669 токенів) —
-//! перейти на нього; тут власний міні-токенайзер, щоб не залежати від script.rs.
+//! Стартова дата гри — `globaldata.startdate`, `header.startdate` — лише для
+//! меню (RE-eug-format.md §2); фолбек 1.1.1936 — `game_start`.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 
 use crate::{GameDate, ObjId, ProvinceId, Tag};
 
@@ -94,8 +90,9 @@ pub struct CountryBlock {
     /// Перший top-level `id = { type = N id = N }` блоку, якщо є
     /// (у сценаріях зазвичай відсутній; є в сейвах).
     pub id: Option<ObjId>,
-    /// Звідки блок: include-файл (None = прямо з .eug).
-    pub source: Option<PathBuf>,
+    /// Звідки блок: include-файл (None = прямо з .eug). Після сплісу include
+    /// джерело блоку більше не відстежується — завжди None.
+    pub source: Option<std::path::PathBuf>,
 }
 
 /// province = { id = N ... } — початковий стан провінції (vp/bases/depots inc).
@@ -104,293 +101,30 @@ pub struct ProvinceBlock {
     pub id: ProvinceId,
     /// Усі пари блоку, крім першого `id = N`, сирим текстом.
     pub body: Vec<(String, String)>,
-    pub source: Option<PathBuf>,
+    pub source: Option<std::path::PathBuf>,
 }
 
 // ---------------------------------------------------------------------------
-// Міні-токенайзер
+// Конвертація dh_data::Scenario (сплісений dh_text::Block) → наш Scenario
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq)]
-enum TokKind {
-    /// Голе слово/число (значення без лапок, ключі).
-    Word(String),
-    /// Рядок у лапках (вміст сирий, без обробки escape-послідовностей).
-    Str(String),
-    Eq,
-    LBrace,
-    RBrace,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct Tok {
-    kind: TokKind,
-    line: u32,
-}
-
-/// Розбиває текст на токени: коментарі `#` викидаються (крім тих, що в лапках),
-/// пробіли/таби/`\r`/`\n` — розділювачі; ключі і значення можуть переноситись
-/// на нові рядки.
-fn tokenize(text: &str) -> Result<Vec<Tok>> {
-    let mut toks = Vec::new();
-    let mut chars = text.chars().peekable();
-    let mut line: u32 = 1;
-    if chars.peek() == Some(&'\u{feff}') {
-        chars.next(); // BOM
-    }
-    while let Some(c) = chars.next() {
-        match c {
-            '#' => {
-                while let Some(&c2) = chars.peek() {
-                    if c2 == '\n' || c2 == '\r' {
-                        break;
-                    }
-                    chars.next();
-                }
-            }
-            '\n' => line += 1,
-            c if c.is_whitespace() => {}
-            '{' => toks.push(Tok {
-                kind: TokKind::LBrace,
-                line,
-            }),
-            '}' => toks.push(Tok {
-                kind: TokKind::RBrace,
-                line,
-            }),
-            '=' => toks.push(Tok {
-                kind: TokKind::Eq,
-                line,
-            }),
-            '"' => {
-                let mut s = String::new();
-                loop {
-                    match chars.next() {
-                        Some('"') => break,
-                        Some('\n') => {
-                            line += 1;
-                            s.push('\n');
-                        }
-                        Some(c) => s.push(c),
-                        None => bail!("незакритий рядок: {s:?}"),
-                    }
-                }
-                toks.push(Tok {
-                    kind: TokKind::Str(s),
-                    line,
-                });
-            }
-            _ => {
-                let mut w = String::new();
-                w.push(c);
-                while let Some(&c2) = chars.peek() {
-                    if c2.is_whitespace() || matches!(c2, '{' | '}' | '=' | '#' | '"') {
-                        break;
-                    }
-                    w.push(c2);
-                    chars.next();
-                }
-                toks.push(Tok {
-                    kind: TokKind::Word(w),
-                    line,
-                });
-            }
-        }
-    }
-    Ok(toks)
-}
-
-// ---------------------------------------------------------------------------
-// Парсер токенів -> дерево
-// ---------------------------------------------------------------------------
-
-/// Значення стейтменту: атом (рядок/слово) або блок.
-#[derive(Debug, Clone, PartialEq)]
-enum Value {
-    Atom(String),
-    Block(Vec<Item>),
-}
-
-/// Елемент блоку: голе слово (список: participant = { GER }) або пара ключ = значення.
-#[derive(Debug, Clone, PartialEq)]
-enum Item {
-    Word(String),
-    Pair(String, Value),
-}
-
-struct TokIter {
-    toks: Vec<Tok>,
-    pos: usize,
-}
-
-impl TokIter {
-    fn peek(&self) -> Option<&Tok> {
-        self.toks.get(self.pos)
-    }
-    fn next(&mut self) -> Option<Tok> {
-        let t = self.toks.get(self.pos).cloned();
-        if t.is_some() {
-            self.pos += 1;
-        }
-        t
-    }
-}
-
-/// Читає елементи блоку до `}` або кінця файлу.
-/// `open_line` — рядок відкриваючої `{` (для діагностики).
-/// `top = true`: EOF нормальний (кінець файлу). У блоці EOF не є помилкою
-/// (як у грі — парсинг просто закінчується), але видається warning.
-fn parse_items(t: &mut TokIter, ctx: &str, top: bool, open_line: u32) -> Result<Vec<Item>> {
-    let mut items = Vec::new();
-    loop {
-        match t.next() {
-            None => {
-                if top {
-                    return Ok(items);
-                }
-                log::warn!(
-                    "{ctx}: блок, відкритий на рядку {open_line}, не закритий до кінця файлу (ігнорується, як у грі)"
-                );
-                return Ok(items);
-            }
-            Some(Tok {
-                kind: TokKind::RBrace,
-                line,
-            }) => {
-                if top {
-                    bail!("{ctx}:{line}: несподіваний '}}'");
-                }
-                return Ok(items);
-            }
-            Some(Tok {
-                kind: TokKind::LBrace,
-                line,
-            }) => {
-                bail!("{ctx}:{line}: несподіваний '{{'")
-            }
-            Some(Tok {
-                kind: TokKind::Eq,
-                line,
-            }) => bail!("{ctx}:{line}: несподіваний '='"),
-            Some(Tok {
-                kind: TokKind::Str(s),
-                ..
-            }) => items.push(Item::Word(s)),
-            Some(Tok {
-                kind: TokKind::Word(w),
-                line: l,
-            }) => {
-                if matches!(
-                    t.peek(),
-                    Some(Tok {
-                        kind: TokKind::Eq,
-                        ..
-                    })
-                ) {
-                    t.next();
-                    let v = parse_value(t, ctx)?;
-                    items.push(Item::Pair(w, v));
-                } else {
-                    let _ = l;
-                    items.push(Item::Word(w));
-                }
-            }
-        }
-    }
-}
-
-fn parse_value(t: &mut TokIter, ctx: &str) -> Result<Value> {
-    match t.next() {
-        None => bail!("{ctx}: очікувалось значення"),
-        Some(Tok {
-            kind: TokKind::Str(s),
-            ..
-        }) => Ok(Value::Atom(s)),
-        Some(Tok {
-            kind: TokKind::Word(w),
-            ..
-        }) => Ok(Value::Atom(w)),
-        Some(Tok {
-            kind: TokKind::LBrace,
-            line,
-        }) => Ok(Value::Block(parse_items(t, ctx, false, line)?)),
-        Some(Tok {
-            kind: TokKind::RBrace,
-            line,
-        }) => {
-            bail!("{ctx}:{line}: очікувалось значення, знайдено '}}'")
-        }
-        Some(Tok {
-            kind: TokKind::Eq,
-            line,
-        }) => {
-            bail!("{ctx}:{line}: очікувалось значення, знайдено '='")
-        }
-    }
-}
-
-/// Пропускає одне значення без побудови дерева (для include-файлів).
-fn skip_value(t: &mut TokIter, ctx: &str) -> Result<()> {
-    match t.next() {
-        None => bail!("{ctx}: очікувалось значення при пропуску"),
-        Some(Tok {
-            kind: TokKind::Str(_) | TokKind::Word(_),
-            ..
-        }) => Ok(()),
-        Some(Tok {
-            kind: TokKind::LBrace,
-            ..
-        }) => skip_until_rbrace(t, ctx),
-        Some(Tok {
-            kind: TokKind::RBrace,
-            line,
-        }) => {
-            bail!("{ctx}:{line}: очікувалось значення, знайдено '}}'")
-        }
-        Some(Tok {
-            kind: TokKind::Eq,
-            line,
-        }) => {
-            bail!("{ctx}:{line}: очікувалось значення, знайдено '='")
-        }
-    }
-}
-
-/// Пропускає блок до парної `}` (EOF — теж кінець, як у грі).
-fn skip_until_rbrace(t: &mut TokIter, ctx: &str) -> Result<()> {
-    let mut depth = 1;
-    while let Some(tok) = t.next() {
-        match tok.kind {
-            TokKind::LBrace => depth += 1,
-            TokKind::RBrace => {
-                depth -= 1;
-                if depth == 0 {
-                    return Ok(());
-                }
-            }
-            _ => {}
-        }
-    }
-    log::warn!("{ctx}: блок не закритий до кінця файлу (пропущено, як у грі)");
-    Ok(())
-}
-
-/// Відновлює «сирий текст» значення (структурно: пробіли/коментарі нормалізуються).
-fn value_to_text(v: &Value) -> String {
+/// «Сирий текст» значення — структурно, одним рядком (пробіли/коментарі
+/// нормалізуються), як у колишньому value_to_text: `{ k = v список }`.
+fn value_text(v: &dh_text::Value) -> String {
     match v {
-        Value::Atom(s) => s.clone(),
-        Value::Block(items) => {
+        dh_text::Value::Scalar(s) => s.text.clone(),
+        dh_text::Value::Block(bl) => {
             let mut out = String::from("{ ");
-            for it in items {
+            for it in bl.items.iter() {
                 match it {
-                    Item::Word(w) => {
-                        out.push_str(w);
+                    dh_text::Item::Value(v) => {
+                        out.push_str(&value_text(v));
                         out.push(' ');
                     }
-                    Item::Pair(k, val) => {
-                        out.push_str(k);
+                    dh_text::Item::Field(f) => {
+                        out.push_str(&f.key);
                         out.push_str(" = ");
-                        out.push_str(&value_to_text(val));
+                        out.push_str(&value_text(&f.value));
                         out.push(' ');
                     }
                 }
@@ -401,133 +135,26 @@ fn value_to_text(v: &Value) -> String {
     }
 }
 
-fn atom_of(v: &Value, ctx: &str) -> Result<String> {
-    match v {
-        Value::Atom(s) => Ok(s.clone()),
-        _ => bail!("{ctx}: очікувалось атомарне значення (рядок/слово)"),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Розбір конкретних блоків
-// ---------------------------------------------------------------------------
-
-const MONTHS: [&str; 12] = [
-    "january",
-    "february",
-    "march",
-    "april",
-    "may",
-    "june",
-    "july",
-    "august",
-    "september",
-    "october",
-    "november",
-    "december",
-];
-
-fn parse_month(s: &str) -> Option<i32> {
-    let s = s.trim().to_ascii_lowercase();
-    MONTHS.iter().position(|m| *m == s).map(|i| i as i32 + 1)
-}
-
-/// Дата з блоку { year = N [month = N|назва] [day = N] } (поля опційні, month/day = 1).
-fn parse_date(v: &Value, ctx: &str) -> Result<Option<GameDate>> {
-    let Value::Block(items) = v else {
-        bail!("{ctx}: очікувався блок дати");
-    };
-    let mut year = None;
-    let mut month = None;
-    let mut day = None;
-    for it in items {
-        let Item::Pair(k, val) = it else { continue };
-        match k.to_ascii_lowercase().as_str() {
-            "year" => {
-                if let Value::Atom(s) = val {
-                    year = s.trim().parse().ok();
-                }
-            }
-            "month" => {
-                if let Value::Atom(s) = val {
-                    month = parse_month(s).or_else(|| s.trim().parse().ok());
-                }
-            }
-            "day" => {
-                if let Value::Atom(s) = val {
-                    day = s.trim().parse().ok();
-                }
-            }
-            _ => {}
-        }
-    }
-    match year {
-        Some(y) => Ok(Some(GameDate::from_ymd(
-            y,
-            month.unwrap_or(1),
-            day.unwrap_or(1),
-        ))),
-        None => Ok(None),
-    }
-}
-
 /// id = { type = N id = N } -> ObjId (None, якщо полів нема).
-fn parse_objid(items: &[Item]) -> Option<ObjId> {
-    let mut kind = None;
-    let mut id = None;
-    for it in items {
-        if let Item::Pair(k, Value::Atom(s)) = it {
-            match k.to_ascii_lowercase().as_str() {
-                "type" => kind = s.trim().parse().ok(),
-                "id" => id = s.trim().parse().ok(),
-                _ => {}
-            }
-        }
-    }
-    match (kind, id) {
-        (Some(k), Some(i)) => Some(ObjId { kind: k, id: i }),
-        _ => None,
-    }
+fn parse_objid(b: &dh_text::Block) -> Option<ObjId> {
+    Some(ObjId {
+        kind: b.get_i64("type")?.clamp(0, u16::MAX as i64) as u16,
+        id: u32::try_from(b.get_i64("id")?).ok()?,
+    })
 }
 
-fn parse_header(v: &Value) -> Result<ScenarioHeader> {
-    let Value::Block(items) = v else {
-        bail!("header: очікувався блок {{...}}");
-    };
-    let mut h = ScenarioHeader::default();
-    for it in items {
-        let Item::Pair(k, val) = it else { continue };
-        match k.to_ascii_lowercase().as_str() {
-            "startdate" => h.startdate = parse_date(val, "header startdate")?,
-            "selectable" => {
-                if let Value::Block(b) = val {
-                    for w in b {
-                        if let Item::Word(w) = w {
-                            h.selectable.push(Tag(w.clone()));
-                        }
-                    }
-                }
-            }
-            _ => {
-                // TAG = { picture = "..." ... } — блок вибору країни.
-                if is_tag_key(k) {
-                    if let Value::Block(b) = val {
-                        for it in b {
-                            if let Item::Pair(k2, v2) = it {
-                                if k2.eq_ignore_ascii_case("picture") {
-                                    if let Value::Atom(s) = v2 {
-                                        h.country_pics.push((Tag(k.clone()), s.clone()));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                h.body.push((k.clone(), value_to_text(val)));
-            }
-        }
-    }
-    Ok(h)
+/// Дата з блоку сценарію → наш 360-денний календар.
+///
+/// Парсить dh_data::GameDate::from_block (день/числовий місяць нуль-базовані,
+/// назви місяців — як у грі), далі в нашу епоху (1.1.1900 = день 0).
+/// Григоріанський день >30 «переливається» в наступний місяць 360-денного
+/// календаря (31 січня → 1 лютого) — календарі зійдуться окремим пунктом.
+pub fn date_from_data(d: dh_data::GameDate) -> GameDate {
+    GameDate::from_ymd(d.year, d.month as i32, d.day as i32)
+}
+
+fn date_of_block(b: &dh_text::Block) -> Option<GameDate> {
+    dh_data::GameDate::from_block(b).map(date_from_data)
 }
 
 /// Чи виглядає ключ як тег країни (GER/U02...), а не службове поле header.
@@ -553,52 +180,76 @@ fn is_tag_key(k: &str) -> bool {
     }
 }
 
-fn parse_globaldata(v: &Value) -> Result<GlobalData> {
-    let Value::Block(items) = v else {
-        bail!("globaldata: очікувався блок {{...}}");
-    };
-    let mut gd = GlobalData::default();
-    for it in items {
-        let Item::Pair(k, val) = it else { continue };
-        match k.to_ascii_lowercase().as_str() {
-            "startdate" => gd.startdate = parse_date(val, "globaldata startdate")?,
-            "axis" | "allies" | "comintern" | "alliance" => {
-                if let Some(a) = parse_alliance(k, val)? {
-                    gd.alliances.push(a);
+fn parse_header(b: &dh_text::Block) -> ScenarioHeader {
+    let mut h = ScenarioHeader::default();
+    for f in b.fields() {
+        match f.key.to_ascii_lowercase().as_str() {
+            "startdate" => h.startdate = f.value.as_block().and_then(date_of_block),
+            "selectable" => {
+                if let Some(bl) = f.value.as_block() {
+                    for v in bl.values() {
+                        if let Some(s) = v.as_scalar() {
+                            h.selectable.push(Tag(s.text.clone()));
+                        }
+                    }
                 }
             }
-            _ => gd.body.push((k.clone(), value_to_text(val))),
+            _ => {
+                // TAG = { picture = "..." ... } — блок вибору країни.
+                if is_tag_key(&f.key) {
+                    if let Some(bl) = f.value.as_block() {
+                        for f2 in bl.fields() {
+                            if f2.key.eq_ignore_ascii_case("picture") {
+                                if let Some(s) = f2.value.as_scalar() {
+                                    h.country_pics.push((Tag(f.key.clone()), s.text.clone()));
+                                }
+                            }
+                        }
+                    }
+                }
+                h.body.push((f.key.clone(), value_text(&f.value)));
+            }
         }
     }
-    Ok(gd)
+    h
+}
+
+fn parse_globaldata(b: &dh_text::Block) -> GlobalData {
+    let mut gd = GlobalData::default();
+    for f in b.fields() {
+        match f.key.to_ascii_lowercase().as_str() {
+            "startdate" => gd.startdate = f.value.as_block().and_then(date_of_block),
+            "axis" | "allies" | "comintern" | "alliance" => {
+                if let Some(bl) = f.value.as_block() {
+                    match parse_alliance(&f.key, bl) {
+                        Some(a) => gd.alliances.push(a),
+                        None => log::warn!(
+                            "globaldata: альянс «{}» без id = {{...}} — пропущено",
+                            f.key
+                        ),
+                    }
+                }
+            }
+            _ => gd.body.push((f.key.clone(), value_text(&f.value))),
+        }
+    }
+    gd
 }
 
 /// alliance-блок: { id = { type = N id = N } participant = { TAG ... } [name = "..."] }.
-fn parse_alliance(kind: &str, v: &Value) -> Result<Option<Alliance>> {
-    let Value::Block(items) = v else {
-        return Ok(None);
-    };
+fn parse_alliance(kind: &str, b: &dh_text::Block) -> Option<Alliance> {
     let mut id = None;
     let mut name = None;
     let mut participants = Vec::new();
-    for it in items {
-        let Item::Pair(k, val) = it else { continue };
-        match k.to_ascii_lowercase().as_str() {
-            "id" => {
-                if let Value::Block(b) = val {
-                    id = parse_objid(b);
-                }
-            }
-            "name" => {
-                if let Value::Atom(s) = val {
-                    name = Some(s.clone());
-                }
-            }
+    for f in b.fields() {
+        match f.key.to_ascii_lowercase().as_str() {
+            "id" => id = f.value.as_block().and_then(parse_objid),
+            "name" => name = f.value.as_scalar().map(|s| s.text.clone()),
             "participant" => {
-                if let Value::Block(b) = val {
-                    for w in b {
-                        if let Item::Word(w) = w {
-                            participants.push(Tag(w.clone()));
+                if let Some(bl) = f.value.as_block() {
+                    for v in bl.values() {
+                        if let Some(s) = v.as_scalar() {
+                            participants.push(Tag(s.text.clone()));
                         }
                     }
                 }
@@ -606,305 +257,200 @@ fn parse_alliance(kind: &str, v: &Value) -> Result<Option<Alliance>> {
             _ => {}
         }
     }
-    let id = id.with_context(|| format!("{kind}: блок альянсу без id = {{...}}"))?;
-    Ok(Some(Alliance {
+    Some(Alliance {
         kind: kind.to_string(),
-        id,
+        id: id?,
         name,
         participants,
-    }))
+    })
 }
 
-/// country = { ... }; None — якщо значення не блок (country = GER-скаляр, напр. у подіях).
-fn parse_country_block(v: &Value, source: Option<PathBuf>) -> Result<Option<CountryBlock>> {
-    let Value::Block(items) = v else {
-        return Ok(None);
-    };
-    let mut it = items.iter();
-    // tag ОБОВ'ЯЗКОВО першим полем ("tag HAS to be first in country").
-    let Some(Item::Pair(k, Value::Atom(tag))) = it.next() else {
-        bail!("country: 'tag HAS to be first in country'");
-    };
-    if !k.eq_ignore_ascii_case("tag") {
-        bail!("country: 'tag HAS to be first in country' (знайдено '{k}')");
-    }
-    let tag = Tag(tag.clone());
+/// country = { ... }; None — якщо значення не блок або без tag (з попередженням).
+fn parse_country_block(b: &dh_text::Block, ctx: &str) -> Option<CountryBlock> {
+    // RE: «tag HAS to be first in country» — але після сплісу толеруємо
+    // tag у будь-якій позиції (гра б відкинула блок; ми — попереджаємо).
+    let tag_field = b.fields().find(|f| f.key.eq_ignore_ascii_case("tag"))?;
+    let tag = Tag(tag_field.value.as_scalar()?.text.clone());
     let mut body = Vec::new();
     let mut capital = None;
     let mut id = None;
-    for it in it {
-        let Item::Pair(k, val) = it else { continue };
-        match k.to_ascii_lowercase().as_str() {
+    for f in b.fields() {
+        if f.key.eq_ignore_ascii_case("tag") {
+            continue;
+        }
+        match f.key.to_ascii_lowercase().as_str() {
             "capital" => {
-                if let Value::Atom(s) = val {
-                    capital = s.trim().parse().ok();
-                }
+                capital = f
+                    .value
+                    .as_scalar()
+                    .and_then(|s| s.as_i64())
+                    .and_then(|c| u16::try_from(c).ok());
             }
             "id" => {
                 if id.is_none() {
-                    if let Value::Block(b) = val {
-                        id = parse_objid(b);
-                    }
+                    id = f.value.as_block().and_then(parse_objid);
                 }
             }
             _ => {}
         }
-        body.push((k.clone(), value_to_text(val)));
+        body.push((f.key.clone(), value_text(&f.value)));
     }
-    Ok(Some(CountryBlock {
+    let _ = ctx;
+    Some(CountryBlock {
         tag,
         body,
         capital,
         id,
-        source,
-    }))
+        source: None,
+    })
 }
 
-/// province = { ... }; None — якщо значення не блок.
-fn parse_province_block(v: &Value, source: Option<PathBuf>) -> Result<Option<ProvinceBlock>> {
-    let Value::Block(items) = v else {
-        return Ok(None);
+/// province = { ... }; None — якщо значення не блок або id не число.
+fn parse_province_block(b: &dh_text::Block, ctx: &str) -> Option<ProvinceBlock> {
+    // RE: «id HAS to be first in province» — позицію толеруємо, значення ні.
+    let id_field = b.fields().find(|f| f.key.eq_ignore_ascii_case("id"))?;
+    let id: ProvinceId = match id_field
+        .value
+        .as_scalar()
+        .and_then(|s| s.as_i64())
+        .and_then(|i| u16::try_from(i).ok())
+    {
+        Some(id) => id,
+        None => {
+            log::warn!("{ctx}: province з невірним id — блок пропущено");
+            return None;
+        }
     };
-    let mut it = items.iter();
-    // id ОБОВ'ЯЗКОВО першим полем ("id HAS to be first in province").
-    let Some(Item::Pair(k, Value::Atom(id))) = it.next() else {
-        bail!("province: 'id HAS to be first in province'");
-    };
-    if !k.eq_ignore_ascii_case("id") {
-        bail!("province: 'id HAS to be first in province' (знайдено '{k}')");
-    }
-    let id: ProvinceId = id
-        .trim()
-        .parse()
-        .with_context(|| format!("province: невірний id '{id}'"))?;
     let mut body = Vec::new();
-    for it in it {
-        if let Item::Pair(k, val) = it {
-            body.push((k.clone(), value_to_text(val)));
+    for f in b.fields() {
+        if !f.key.eq_ignore_ascii_case("id") {
+            body.push((f.key.clone(), value_text(&f.value)));
         }
     }
-    Ok(Some(ProvinceBlock { id, body, source }))
+    Some(ProvinceBlock {
+        id,
+        body,
+        source: None,
+    })
 }
 
-// ---------------------------------------------------------------------------
-// Top-level парсинг + include
-// ---------------------------------------------------------------------------
-
-/// Захист від циклічних include.
-const MAX_INCLUDE_DEPTH: usize = 16;
-
-/// Читає файл гри як текст: спочатку UTF-8, при невдачі — Windows-1252
-/// (реальні .inc містять латинку-1/CP1252 у назвах юнітів, напр. "München").
-fn read_text(path: &Path) -> Result<String> {
-    let bytes =
-        std::fs::read(path).with_context(|| format!("не вдалось прочитати {}", path.display()))?;
-    match String::from_utf8(bytes.clone()) {
-        Ok(s) => Ok(s),
-        Err(_) => Ok(from_cp1252(&bytes)),
-    }
-}
-
-/// Декодує CP1252 (сумісний з Latin-1 для 0xA0..0xFF; 0x80..0x9F — таблиця).
-fn from_cp1252(bytes: &[u8]) -> String {
-    const C1: [char; 32] = [
-        '\u{20AC}', '\u{FFFD}', '\u{201A}', '\u{0192}', '\u{201E}', '\u{2026}', '\u{2020}',
-        '\u{2021}', '\u{02C6}', '\u{2030}', '\u{0160}', '\u{2039}', '\u{0152}', '\u{FFFD}',
-        '\u{017D}', '\u{FFFD}', '\u{FFFD}', '\u{2018}', '\u{2019}', '\u{201C}', '\u{201D}',
-        '\u{2022}', '\u{2013}', '\u{2014}', '\u{02DC}', '\u{2122}', '\u{0161}', '\u{203A}',
-        '\u{0153}', '\u{FFFD}', '\u{017E}', '\u{0178}',
-    ];
-    bytes
-        .iter()
-        .map(|&b| match b {
-            0x00..=0x7F => b as char,
-            0x80..=0x9F => C1[(b - 0x80) as usize],
-            _ => b as char, // 0xA0..0xFF = Latin-1
-        })
-        .collect()
-}
-
-/// Завантажує сценарій .eug з диска (з рекурсивним інлайн-парсингом include).
-pub fn load_scenario(path: &Path) -> Result<Scenario> {
-    let text = read_text(path)?;
-    parse_scenario_text(&text, path)
-}
-
-/// Парсить текст сценарію (використовується і в тестах).
-pub fn parse_scenario_text(text: &str, path: &Path) -> Result<Scenario> {
-    let mut sc = Scenario::default();
-    let toks = tokenize(text)?;
-    let mut t = TokIter { toks, pos: 0 };
-    let ctx = path.display().to_string();
-    let items = parse_items(&mut t, &ctx, true, 1)?;
-    dispatch_top_level(items, path, &mut sc, 0)?;
-    Ok(sc)
-}
-
-/// Обробляє top-level пари самого сценарію; невідомий ключ — помилка.
-fn dispatch_top_level(
-    items: Vec<Item>,
-    path: &Path,
-    sc: &mut Scenario,
-    depth: usize,
-) -> Result<()> {
-    let ctx = path.display().to_string();
-    for item in items {
-        let Item::Pair(key, value) = item else {
-            continue;
+/// Конвертує сплісений сценарій dh-data в нашу структуру.
+///
+/// Порядок country/province-блоків — порядок появи в сплісеному дереві
+/// (include-и інлайняться на своїх позиціях, як і в колишньому парсері).
+/// Парси name/panel/header/globaldata «останній перемагає» — у реальних
+/// файлах ці блоки бувають лише один раз, у .eug (include-и їх не містять).
+pub fn from_data(data: &dh_data::Scenario) -> Result<Scenario> {
+    let mut sc = Scenario {
+        includes: data.includes.clone(),
+        ..Scenario::default()
+    };
+    for item in &data.root.items {
+        let dh_text::Item::Field(f) = item else {
+            continue; // голі значення на top-level — ігнор
         };
-        match key.to_ascii_lowercase().as_str() {
-            "name" => sc.name = atom_of(&value, &format!("{ctx}: name"))?,
-            "panel" => sc.panel = Some(atom_of(&value, &format!("{ctx}: panel"))?),
-            "header" => sc.header = parse_header(&value)?,
-            "globaldata" => sc.globaldata = parse_globaldata(&value)?,
-            "include" => {
-                let inc = atom_of(&value, &format!("{ctx}: include"))?;
-                sc.includes.push(inc.clone());
-                load_include(path, &inc, sc, depth)?;
+        match f.key.to_ascii_lowercase().as_str() {
+            "name" => {
+                sc.name = f
+                    .value
+                    .as_scalar()
+                    .map(|s| s.text.clone())
+                    .unwrap_or_default()
             }
-            "event" => sc.events.push(atom_of(&value, &format!("{ctx}: event"))?),
+            "panel" => sc.panel = f.value.as_scalar().map(|s| s.text.clone()),
+            "header" => {
+                if let Some(bl) = f.value.as_block() {
+                    sc.header = parse_header(bl);
+                }
+            }
+            "globaldata" => {
+                if let Some(bl) = f.value.as_block() {
+                    sc.globaldata = parse_globaldata(bl);
+                }
+            }
+            "include" => {} // уже зібрані в data.includes
+            "event" => {
+                if let Some(s) = f.value.as_scalar() {
+                    sc.events.push(s.text.clone());
+                }
+            }
             "country" => {
-                if let Some(cb) = parse_country_block(&value, None)? {
-                    sc.countries.push(cb);
+                let ctx = format!("{}: country", data.info.path);
+                if let Some(bl) = f.value.as_block() {
+                    match parse_country_block(bl, &ctx) {
+                        Some(cb) => sc.countries.push(cb),
+                        None => log::warn!("{ctx}: без tag — блок пропущено"),
+                    }
                 }
             }
             "province" => {
-                if let Some(pb) = parse_province_block(&value, None)? {
-                    sc.provinces.push(pb);
+                let ctx = format!("{}: province", data.info.path);
+                if let Some(bl) = f.value.as_block() {
+                    if let Some(pb) = parse_province_block(bl, &ctx) {
+                        sc.provinces.push(pb);
+                    }
                 }
             }
             "history" | "sleepevent" | "save_date" | "map" => {
-                sc.raw_top_level.push((key, value_to_text(&value)));
+                sc.raw_top_level.push((f.key.clone(), value_text(&f.value)));
             }
-            other => bail!("{ctx}: Illegal top level object: {other}"),
+            // Гра на невідомому top-level падає («Illegal top level object»);
+            // ми толеруємо з попередженням — моди з домішками лишаються читабельні.
+            other => log::warn!(
+                "{}: невідомий top-level об'єкт «{other}» (пропущено)",
+                data.info.path
+            ),
         }
     }
-    Ok(())
+    Ok(sc)
 }
 
-/// Завантажує include-файл і забирає з нього country/province-блоки
-/// (решта top-level стейтментів пропускається без побудови дерева).
-fn load_include(scenario_path: &Path, inc: &str, sc: &mut Scenario, depth: usize) -> Result<()> {
-    if depth >= MAX_INCLUDE_DEPTH {
-        bail!("include '{inc}': перевищено глибину вкладеності ({MAX_INCLUDE_DEPTH})");
-    }
-    let inc_path = resolve_include(scenario_path, inc)?;
-    let text = read_text(&inc_path)
-        .with_context(|| format!("include: не вдалось прочитати {}", inc_path.display()))?;
-    let toks = tokenize(&text)?;
-    let mut t = TokIter { toks, pos: 0 };
-    let ctx = inc_path.display().to_string();
-    loop {
-        match t.next() {
-            None => return Ok(()),
-            Some(Tok {
-                kind: TokKind::RBrace,
-                line,
-            }) => {
-                bail!("{ctx}:{line}: несподіваний '}}' на top-level")
-            }
-            Some(Tok {
-                kind: TokKind::LBrace,
-                line,
-            }) => {
-                bail!("{ctx}:{line}: несподіваний '{{' на top-level")
-            }
-            Some(Tok {
-                kind: TokKind::Eq,
-                line,
-            }) => {
-                bail!("{ctx}:{line}: несподіваний '=' на top-level")
-            }
-            Some(Tok {
-                kind: TokKind::Str(_),
-                ..
-            }) => {} // голий рядок — ігнор
-            Some(Tok {
-                kind: TokKind::Word(w),
-                ..
-            }) => {
-                if !matches!(
-                    t.peek(),
-                    Some(Tok {
-                        kind: TokKind::Eq,
-                        ..
-                    })
-                ) {
-                    continue; // голе слово — ігнор
-                }
-                t.next();
-                match w.to_ascii_lowercase().as_str() {
-                    "include" => {
-                        let nested = match t.peek() {
-                            Some(Tok {
-                                kind: TokKind::Str(s),
-                                ..
-                            }) => {
-                                let s = s.clone();
-                                t.next();
-                                Some(s)
-                            }
-                            Some(Tok {
-                                kind: TokKind::Word(w),
-                                ..
-                            }) => {
-                                let w = w.clone();
-                                t.next();
-                                Some(w)
-                            }
-                            _ => None,
-                        };
-                        match nested {
-                            Some(inc) => {
-                                sc.includes.push(inc.clone());
-                                load_include(&inc_path, &inc, sc, depth + 1)?;
-                            }
-                            None => skip_value(&mut t, &ctx)?,
-                        }
-                    }
-                    "country" => {
-                        let v = parse_value(&mut t, &ctx)?;
-                        if let Some(cb) = parse_country_block(&v, Some(inc_path.clone()))? {
-                            sc.countries.push(cb);
-                        }
-                    }
-                    "province" => {
-                        let v = parse_value(&mut t, &ctx)?;
-                        if let Some(pb) = parse_province_block(&v, Some(inc_path.clone()))? {
-                            sc.provinces.push(pb);
-                        }
-                    }
-                    _ => skip_value(&mut t, &ctx)?,
-                }
-            }
-        }
-    }
+// ---------------------------------------------------------------------------
+// Завантаження (джерело істини — dh_data::Scenario::load через VFS)
+// ---------------------------------------------------------------------------
+
+/// Завантажує dh_data::Scenario через VFS (єдиний парсер у workspace).
+pub fn load_data(
+    vfs: &dh_data::Vfs,
+    path: &str,
+    warnings: &mut Vec<dh_data::Warning>,
+) -> std::io::Result<dh_data::Scenario> {
+    dh_data::Scenario::load(vfs, path, warnings)
 }
 
-/// Шлях include-файлу: спочатку відносно папки сценарію, потім відносно її батька
-/// (у реальних файлах шляхи відносні кореня мода: "scenarios\\1933\\vp.inc").
-fn resolve_include(scenario_path: &Path, inc: &str) -> Result<PathBuf> {
-    let norm = inc.replace('\\', "/");
-    let rel = Path::new(&norm);
-    let dir = scenario_path
-        .parent()
-        .with_context(|| format!("include '{inc}': сценарій без батьківської папки"))?;
-    let cand = dir.join(rel);
-    if cand.is_file() {
-        return Ok(cand);
+/// Завантажує сценарій через VFS і конвертує в нашу структуру.
+pub fn load_vfs(
+    vfs: &dh_data::Vfs,
+    path: &str,
+    warnings: &mut Vec<dh_data::Warning>,
+) -> Result<Scenario> {
+    let data = load_data(vfs, path, warnings)
+        .with_context(|| format!("{path}: завантаження сценарію через VFS"))?;
+    from_data(&data)
+}
+
+/// Завантажує сценарій з встановленої гри (VFS з шаром мода зі settings.cfg).
+/// Попередження парсера — в лог (перші 5).
+pub fn load_from_install(root: &Path, scenario: &str) -> Result<Scenario> {
+    let vfs = dh_data::open_install(root);
+    let mut warnings = Vec::new();
+    let sc = load_vfs(&vfs, &format!("scenarios/{scenario}.eug"), &mut warnings)?;
+    for w in warnings.iter().take(5) {
+        log::warn!("сценарій: {w}");
     }
-    if let Some(grand) = dir.parent() {
-        let cand2 = grand.join(rel);
-        if cand2.is_file() {
-            return Ok(cand2);
-        }
-        bail!(
-            "include '{inc}' не знайдено (шукав {} та {})",
-            cand.display(),
-            cand2.display()
-        );
+    if warnings.len() > 5 {
+        log::debug!("сценарій: попереджень усього: {}", warnings.len());
     }
-    bail!("include '{inc}' не знайдено (шукав {})", cand.display())
+    Ok(sc)
+}
+
+/// Стартова дата гри: `globaldata.startdate` перемагає `header.startdate`
+/// (головний — для меню); фолбек 1.1.1936. Та сама логіка, що й у dh-sim.
+pub fn game_start(sc: &Scenario) -> GameDate {
+    sc.globaldata
+        .startdate
+        .or(sc.header.startdate)
+        .unwrap_or_else(|| GameDate::from_ymd(1936, 1, 1))
 }
 
 // ---------------------------------------------------------------------------
@@ -914,40 +460,7 @@ fn resolve_include(scenario_path: &Path, inc: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn kinds(toks: &[Tok]) -> Vec<&TokKind> {
-        toks.iter().map(|t| &t.kind).collect()
-    }
-
-    #[test]
-    fn tokenize_comments_strings_and_braces() {
-        let toks =
-            tokenize("# comment\nname = \"A # B\"\r\nheader =\n{ selectable = { GER U02 } # x\n}")
-                .unwrap();
-        assert_eq!(
-            kinds(&toks),
-            vec![
-                &TokKind::Word("name".into()),
-                &TokKind::Eq,
-                &TokKind::Str("A # B".into()),
-                &TokKind::Word("header".into()),
-                &TokKind::Eq,
-                &TokKind::LBrace,
-                &TokKind::Word("selectable".into()),
-                &TokKind::Eq,
-                &TokKind::LBrace,
-                &TokKind::Word("GER".into()),
-                &TokKind::Word("U02".into()),
-                &TokKind::RBrace,
-                &TokKind::RBrace,
-            ]
-        );
-        // номери рядків
-        assert_eq!(toks[0].line, 2); // name
-        assert_eq!(toks[5].line, 4); // {
-        assert_eq!(toks[12].line, 5); // остання }
-        assert_eq!(toks[2].line, 2); // рядок у лапках
-    }
+    use std::fs;
 
     const SYNTHETIC: &str = r#"
 # test scenario
@@ -974,11 +487,35 @@ country =
 }
 province = { id = 825 air_base = { size = 2 } }
 history = { 2400014 2400022 }
+event = "db\events.txt"
+include = "scenarios/1933/pol.inc"
 "#;
 
+    /// Синтетичний сценарій у тимчасовій «грі» (VFS), як у тесті dh-data.
+    fn synthetic_install() -> (dh_data::Vfs, dh_data::Scenario) {
+        let dir = std::env::temp_dir().join(format!("dh-fmt-scn-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("scenarios/1933")).unwrap();
+        fs::write(dir.join("scenarios/1933.eug"), SYNTHETIC).unwrap();
+        fs::write(
+            dir.join("scenarios/1933/pol.inc"),
+            "country = { tag = POL capital = 138 ownedprovinces = { 1 2 3 } \
+             controlledprovinces = { 1 2 } }\n\
+             province = { id = 64 points = 5 }\n",
+        )
+        .unwrap();
+        let vfs = dh_data::open_install(&dir);
+        let mut warnings = Vec::new();
+        let data = load_data(&vfs, "scenarios/1933.eug", &mut warnings).unwrap();
+        (vfs, data)
+    }
+
     #[test]
-    fn parse_synthetic_scenario() {
-        let sc = parse_scenario_text(SYNTHETIC, Path::new("test.eug")).unwrap();
+    fn converts_synthetic_scenario() {
+        let (_vfs, data) = synthetic_install();
+        assert_eq!(data.info.start, Some(dh_data::GameDate::new(1933, 1, 1)));
+        let sc = from_data(&data).unwrap();
+
         assert_eq!(sc.name, "SYNTH_SCENARIO");
         assert_eq!(sc.panel.as_deref(), Some("scenarios/data/x.bmp"));
         assert_eq!(
@@ -993,10 +530,6 @@ history = { 2400014 2400022 }
             )]
         );
         assert!(sc.header.body.iter().any(|(k, _)| k == "startyear"));
-        assert_eq!(
-            sc.globaldata.startdate,
-            Some(GameDate::from_ymd(1933, 3, 3))
-        );
         assert_eq!(sc.globaldata.alliances.len(), 2);
         let axis = &sc.globaldata.alliances[0];
         assert_eq!(axis.kind, "axis");
@@ -1008,7 +541,7 @@ history = { 2400014 2400022 }
             .body
             .iter()
             .any(|(k, v)| k == "war" && v.starts_with("{ ")));
-        assert_eq!(sc.countries.len(), 1);
+        assert_eq!(sc.countries.len(), 2);
         let ger = &sc.countries[0];
         assert_eq!(ger.tag, Tag("GER".into()));
         assert_eq!(ger.capital, Some(163));
@@ -1017,44 +550,108 @@ history = { 2400014 2400022 }
         assert!(ger.body.iter().any(|(k, _)| k == "landunit"));
         assert!(ger.body.iter().any(|(k, _)| k == "capital"));
         assert_eq!(ger.source, None);
-        assert_eq!(sc.provinces.len(), 1);
+        // Країна з include-файлу: список провінцій серіалізується для build_world.
+        let pol = &sc.countries[1];
+        assert_eq!(pol.tag, Tag("POL".into()));
+        assert_eq!(pol.capital, Some(138));
+        assert!(pol
+            .body
+            .iter()
+            .any(|(k, v)| k == "ownedprovinces" && v == "{ 1 2 3 }"));
+        assert!(pol
+            .body
+            .iter()
+            .any(|(k, v)| k == "controlledprovinces" && v == "{ 1 2 }"));
+        assert_eq!(sc.provinces.len(), 2);
         assert_eq!(sc.provinces[0].id, 825);
+        assert!(sc.provinces[0].body.iter().any(|(k, _)| k == "air_base"));
+        assert!(sc.provinces[1]
+            .body
+            .iter()
+            .any(|(k, v)| k == "points" && v == "5"));
+        assert_eq!(sc.events, vec!["db\\events.txt".to_string()]);
         assert!(sc
             .raw_top_level
             .iter()
             .any(|(k, v)| k == "history" && v.contains("2400014")));
+        assert_eq!(sc.includes, vec!["scenarios/1933/pol.inc".to_string()]);
+    }
+
+    /// Стартова дата: globaldata перемагає header; день нуль-базований
+    /// (еталон — оригінал показує «March 4, 1933» при `day = 3`).
+    #[test]
+    fn game_start_is_globaldata_with_zero_based_day() {
+        let (_vfs, data) = synthetic_install();
+        let sc = from_data(&data).unwrap();
+        assert_eq!(sc.header.startdate, Some(GameDate::from_ymd(1933, 1, 1)));
+        assert_eq!(
+            sc.globaldata.startdate,
+            Some(GameDate::from_ymd(1933, 3, 4))
+        );
+        assert_eq!(game_start(&sc).display(), "March 4 1933");
+        assert_eq!(
+            date_from_data(dh_data::GameDate::new(1933, 3, 4)).display(),
+            "March 4 1933"
+        );
     }
 
     #[test]
-    fn illegal_top_level_object() {
-        let err = parse_scenario_text("name = \"x\"\nfoo = { 1 }", Path::new("t.eug"))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("Illegal top level object: foo"), "{err}");
-        assert!(err.contains("t.eug"), "{err}");
-    }
-
-    #[test]
-    fn country_requires_tag_first() {
-        let err = parse_scenario_text(
-            "name = \"x\"\ncountry = { capital = 1 tag = GER }",
-            Path::new("t.eug"),
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(err.contains("tag HAS to be first"), "{err}");
-    }
-
-    #[test]
-    fn unclosed_trailing_block_is_tolerated() {
-        // Реальний 1939.09/germany.inc закінчується без закриваючої '}' — гра це терпить.
-        let sc = parse_scenario_text(
-            "name = \"x\"\ncountry = { tag = GER capital = 163 ",
-            Path::new("t.eug"),
+    fn unknown_top_level_key_is_tolerated() {
+        // Гра падає («Illegal top level object»); наш єдиний завантажувач
+        // толерує з попередженням (мод-сумісність).
+        let dir = std::env::temp_dir().join(format!("dh-fmt-unk-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("scenarios")).unwrap();
+        fs::write(
+            dir.join("scenarios/t.eug"),
+            "name = \"x\"\nfoo = { 1 }\ncountry = { tag = GER capital = 163 }\n",
         )
         .unwrap();
+        let vfs = dh_data::open_install(&dir);
+        let mut warnings = Vec::new();
+        let sc = load_vfs(&vfs, "scenarios/t.eug", &mut warnings).unwrap();
         assert_eq!(sc.countries.len(), 1);
         assert_eq!(sc.countries[0].capital, Some(163));
+        assert!(sc.name == "x");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn country_without_tag_is_skipped() {
+        let dir = std::env::temp_dir().join(format!("dh-fmt-notag-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("scenarios")).unwrap();
+        fs::write(
+            dir.join("scenarios/t.eug"),
+            "country = { capital = 1 }\ncountry = { tag = GER capital = 163 }\n",
+        )
+        .unwrap();
+        let vfs = dh_data::open_install(&dir);
+        let mut warnings = Vec::new();
+        let sc = load_vfs(&vfs, "scenarios/t.eug", &mut warnings).unwrap();
+        assert_eq!(sc.countries.len(), 1);
+        assert_eq!(sc.countries[0].tag, Tag("GER".into()));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Реальний 1939.09/germany.inc закінчується без закриваючої '}' —
+    /// гра це терпить; dh-text теж (помилка парсера → warning).
+    #[test]
+    fn unclosed_trailing_block_is_tolerated() {
+        let dir = std::env::temp_dir().join(format!("dh-fmt-eof-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("scenarios")).unwrap();
+        fs::write(
+            dir.join("scenarios/t.eug"),
+            "name = \"x\"\ncountry = { tag = GER capital = 163 ",
+        )
+        .unwrap();
+        let vfs = dh_data::open_install(&dir);
+        let mut warnings = Vec::new();
+        let sc = load_vfs(&vfs, "scenarios/t.eug", &mut warnings).unwrap();
+        assert_eq!(sc.countries.len(), 1);
+        assert_eq!(sc.countries[0].capital, Some(163));
+        fs::remove_dir_all(dir).unwrap();
     }
 
     /// Реальний сценарій 1933.eug: потребує встановленої гри через Steam.
@@ -1062,23 +659,24 @@ history = { 2400014 2400022 }
     #[ignore = "потребує реальних файлів гри (Steam)"]
     fn loads_real_1933() -> anyhow::Result<()> {
         let paths = crate::GamePaths::from_steam()?;
-        let file = paths.mod_dir.join("scenarios").join("1933.eug");
-        if !file.exists() {
-            anyhow::bail!("файл не знайдено: {}", file.display());
-        }
-        let sc = load_scenario(&file)?;
+        let sc = load_from_install(&paths.root, "1933")?;
         assert_eq!(sc.name, "1933_SCENARIO", "name");
-        assert!(sc.globaldata.startdate.is_some(), "startdate");
+        assert_eq!(game_start(&sc).display(), "March 4 1933", "старт гри");
         assert!(sc.globaldata.alliances.len() >= 3, "alliances");
-        assert!(
-            sc.globaldata
-                .alliances
-                .iter()
-                .any(|a| !a.participants.is_empty()),
-            "alliance with participants"
-        );
+        assert!(sc
+            .globaldata
+            .alliances
+            .iter()
+            .any(|a| !a.participants.is_empty()));
         assert!(sc.countries.len() > 30, "countries: {}", sc.countries.len());
         assert!(!sc.includes.is_empty(), "includes");
+        assert!(!sc.events.is_empty(), "events");
+        // Контроль синтезованогоvp-блоку: points з vp.inc читаються.
+        let with_vp = sc
+            .provinces
+            .iter()
+            .filter(|p| p.body.iter().any(|(k, _)| k.eq_ignore_ascii_case("points")));
+        assert!(with_vp.count() > 100, "vp-блоки з vp.inc");
         eprintln!(
             "1933: includes={} events={} countries={} provinces={} alliances={} selectable={}",
             sc.includes.len(),

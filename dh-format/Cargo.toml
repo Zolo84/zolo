@@ -10,3 +10,5 @@ byteorder = { workspace = true }
 image = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
+dh-data = { workspace = true }
+dh-text = { workspace = true }

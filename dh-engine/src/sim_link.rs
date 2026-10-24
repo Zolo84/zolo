@@ -16,12 +16,16 @@
 //! специфікації docs/ (movement, combat, supply, weather, organisation).
 
 use std::collections::HashMap;
+
+#[cfg(test)]
 use std::path::Path;
 
-use anyhow::{Context, Result};
+#[cfg(test)]
+use anyhow::Context;
+use anyhow::Result;
 use dh_core::country::Country;
 use dh_core::world::World as OurWorld;
-use dh_data::{open_install, Scenario};
+use dh_data::Scenario;
 use dh_sim::{Simulation, World as SimWorld};
 
 /// Seed ихнього dh-tool (детермінованість як у референсних прогонах).
@@ -148,11 +152,13 @@ pub struct SimLink {
 }
 
 impl SimLink {
-    /// Будує симуляцію: сценарій через VFS + повний стек систем
-    /// (WeatherSystem, OrgRegain, March, DigIn, Attrition, Engage, Combat —
-    /// той самий набір, що в dh-tool `march`).
+    /// Будує симуляцію зі сценарію (зручність для тестів/зондів):
+    /// VFS встановленої гри → єдиний завантажувач dh-data → from_scenario.
+    /// Бінарник і приклади парсять сценарій самі й ідуть в from_scenario —
+    /// один парс на запуск (А4).
+    #[cfg(test)]
     pub fn build(game_root: &Path, scenario_name: &str) -> Result<Self> {
-        let vfs = open_install(game_root);
+        let vfs = dh_data::open_install(game_root);
         let path = format!("scenarios/{scenario_name}.eug");
         let mut warnings = Vec::new();
         let sc = Scenario::load(&vfs, &path, &mut warnings)
@@ -163,20 +169,34 @@ impl SimLink {
         if warnings.len() > 5 {
             log::debug!("dh-data: попереджень усього: {}", warnings.len());
         }
+        Self::from_scenario(&vfs, &sc)
+    }
 
+    /// Будує симуляцію з ВЖЕ завантаженого сценарію (А4: один парс на запуск —
+    /// головний цикл передає сюди той самий dh_data::Scenario, з якого
+    /// dh_format::scenario::from_data зробив наш World).
+    pub fn from_scenario(vfs: &dh_data::Vfs, sc: &Scenario) -> Result<Self> {
         let ctx = std::sync::Arc::new(
-            dh_sim::movement::MoveContext::load(&vfs)
+            dh_sim::movement::MoveContext::load(vfs)
                 .map_err(|e| anyhow::anyhow!("MoveContext (дані руху): {e}"))?,
         );
-        let (mut sw, conflicts) = SimWorld::from_scenario(&sc);
+        let (mut sw, conflicts) = SimWorld::from_scenario(sc);
         if !conflicts.is_empty() {
             log::warn!("dh-sim: конфліктів у сценарії: {}", conflicts.len());
         }
-        sw.load_misc(&vfs)
+        // Стартова дата — як в оригіналі: globaldata.startdate перемагає
+        // header.startdate (меню), день у файлах нуль-базований: гра на старті
+        // 1933 показує «March 4, 1933» при `day = 3` (скрін re/). Їхній
+        // from_scenario бере header — у мосту переозначаємо, щоб світ і
+        // симуляція стартували в ту саму дату (календар sim — григоріанський).
+        if let Some(start) = sc.start() {
+            sw.date = start;
+        }
+        sw.load_misc(vfs)
             .map_err(|e| anyhow::anyhow!("db/misc.txt: {e}"))?;
-        sw.load_leaders(&vfs)
+        sw.load_leaders(vfs)
             .map_err(|e| anyhow::anyhow!("db/leaders: {e}"))?;
-        let tech_warn = sw.load_techs(&vfs);
+        let tech_warn = sw.load_techs(vfs);
         if !tech_warn.is_empty() {
             log::debug!("dh-sim: попереджень техів: {}", tech_warn.len());
         }
@@ -188,14 +208,15 @@ impl SimLink {
         sim.add_system(dh_sim::DigIn);
         sim.add_system(dh_sim::Attrition::new(ctx.clone()));
         sim.add_system(dh_sim::Engage);
-        sim.add_system(dh_sim::Combat::new(ctx, &sc));
+        sim.add_system(dh_sim::Combat::new(ctx, sc));
 
         // Локалізовані назви провінцій (dh-data: Provinces + Localisation).
         let mut prov_names = std::collections::HashMap::new();
-        match dh_data::Provinces::load_active(&vfs, &mut warnings) {
+        let mut names_warnings = Vec::new();
+        match dh_data::Provinces::load_active(vfs, &mut names_warnings) {
             Ok(provs) => {
                 let loc =
-                    dh_data::Localisation::load(&vfs, dh_data::localisation::Language::English);
+                    dh_data::Localisation::load(vfs, dh_data::localisation::Language::English);
                 for id in 1..=3000u32 {
                     if let Some(p) = provs.get(id) {
                         prov_names.insert(id, loc.text(&p.name).to_owned());
@@ -318,28 +339,39 @@ mod tests {
     #[ignore = "потребує встановленої гри (DH_GAME_DIR або Steam)"]
     fn sim_link_builds_runs_and_ownership_matches() {
         let root = game_root();
-        let link = SimLink::build(&root, "1933").expect("симуляція 1933");
+
+        // А4: ОДИН парс сценарію на обидва світи — dh-data через VFS, далі
+        // конвертація в нашу структуру для build_world і from_scenario для sim.
+        let vfs = dh_data::open_install(&root);
+        let mut warnings = Vec::new();
+        let data = dh_data::Scenario::load(&vfs, "scenarios/1933.eug", &mut warnings)
+            .expect("сценарій 1933 через VFS");
+        let our_sc = dh_format::scenario::from_data(&data).expect("конвертація сценарію");
+        let link = SimLink::from_scenario(&vfs, &data).expect("симуляція 1933");
         assert!(
             !link.sim.world.units.is_empty(),
             "у сценарії 1933 мають бути юніти"
         );
         assert!(!link.sim.world.countries.is_empty());
 
-        // Наш світ з нашого завантажувача сценарію.
+        // Наш світ з тим самим сценарієм.
         let paths = dh_format::GamePaths::from_steam().expect("гра у Steam");
-        let sc_path = paths.mod_dir.join("scenarios/1933.eug");
-        let sc = dh_format::scenario::load_scenario(&sc_path).expect("наш сценарій");
         let csv = dh_format::province::load(&paths.root.join("map/Map_1/Province.csv"))
             .expect("Province.csv");
-        let mut our = dh_core::world::build_world(&sc, &csv, 3);
+        let mut our = dh_core::world::build_world(&our_sc, &csv, 3);
         let owned_before = our.provinces.iter().filter(|p| p.owner.is_some()).count();
         assert!(
             owned_before > 1000,
             "очікуємо тисячі провінцій із власниками"
         );
 
-        // Стартова синхронізація: обидва завантажувачі читають той самий
-        // сценарій — розбіжностей бути не має.
+        // Стартова дата — як в оригіналі (globaldata, нуль-базований день):
+        // гра показує «March 4, 1933»; обидва світи мають стартувати в неї.
+        assert_eq!(our.date.display(), "March 4 1933");
+        assert_eq!(link.sim.date().to_string(), "1933-03-04 00:00");
+
+        // Стартова синхронізація: обидва світи з одного парсера —
+        // розбіжностей бути не має.
         assert!(
             !link.sync_owners(&mut our),
             "стартові власники нашого World і dh-sim мають збігатися"
@@ -351,7 +383,7 @@ mod tests {
         let total = total_divisions(&link);
         link.advance_day();
         assert_eq!(link.sim.world.hour, 24);
-        assert_eq!(link.sim.date().to_string(), "1933-01-02 00:00");
+        assert_eq!(link.sim.date().to_string(), "1933-03-05 00:00");
         let _ = link.sync_owners(&mut our);
 
         // Назви провінцій завантажено.
@@ -374,13 +406,14 @@ mod tests {
         sim.advance_day();
         sim.advance_day();
         // 3 доби по ~0.9 с; знімки приходять ПО ЧЕРЗІ (після кожної доби) —
-        // дренуємо канал, аж поки не побачимо фінальну дату.
+        // дренуємо канал, аж поки не побачимо фінальну дату (старт March 4
+        // 1933 + 3 доби).
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
         let mut last: Option<SimSnapshot> = None;
         while std::time::Instant::now() < deadline {
             match sim.try_snapshot() {
                 Some(s) => {
-                    let done = s.date == "1933-01-04 00:00";
+                    let done = s.date == "1933-03-07 00:00";
                     last = Some(s);
                     if done {
                         break;
@@ -390,7 +423,7 @@ mod tests {
             }
         }
         let s = last.expect("знімок за 30 с");
-        assert_eq!(s.date, "1933-01-04 00:00");
+        assert_eq!(s.date, "1933-03-07 00:00");
         assert!(!s.stacks.is_empty());
         assert!(s.day_ms > 0, "профіль доби має вимірюватися");
     }

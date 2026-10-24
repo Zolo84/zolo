@@ -25,7 +25,6 @@ use dh_format::fonts::BitmapFont;
 use dh_format::map::{load as load_map, MapData};
 use dh_format::map_color::GameColorModel;
 use dh_format::palette::Palette;
-use dh_format::scenario::load_scenario;
 use dh_format::{GamePaths, ProvinceCsv};
 
 mod sim_link;
@@ -149,6 +148,34 @@ fn load_static(paths: &GamePaths) -> Result<(MapData, Vec<ProvinceCsv>, Palette,
     Ok((map, prov_csv, palette, fonts))
 }
 
+/// А4 — ЄДИНЕ завантаження сценарію на запуск: dh-data через VFS (джерело
+/// істини: шари мода/бази, регістронезалежні шляхи, dh-text-парсер) +
+/// конвертація в нашу структуру для build_world. Повертає також
+/// dh_data::Scenario та VFS — їх їсть SimLink::from_scenario; другого парса
+/// більше не існує.
+fn load_scenario_pair(
+    paths: &GamePaths,
+    name: &str,
+) -> Result<(
+    dh_format::scenario::Scenario,
+    dh_data::Scenario,
+    dh_data::Vfs,
+)> {
+    let vfs = dh_data::open_install(&paths.root);
+    let mut warnings = Vec::new();
+    let data =
+        dh_format::scenario::load_data(&vfs, &format!("scenarios/{name}.eug"), &mut warnings)
+            .with_context(|| format!("scenarios/{name}.eug: завантаження сценарію"))?;
+    for w in warnings.iter().take(5) {
+        log::warn!("сценарій: {w}");
+    }
+    if warnings.len() > 5 {
+        log::debug!("сценарій: попереджень усього: {}", warnings.len());
+    }
+    let sc = dh_format::scenario::from_data(&data)?;
+    Ok((sc, data, vfs))
+}
+
 // Headless
 // ---------------------------------------------------------------------------
 
@@ -162,11 +189,7 @@ fn run_headless(paths: &GamePaths, cli: &Cli) -> Result<()> {
         prov_csv.len()
     );
 
-    let sc_path = paths
-        .mod_dir
-        .join("scenarios")
-        .join(format!("{}.eug", cli.scenario));
-    let sc = load_scenario(&sc_path)?;
+    let (sc, data_sc, vfs) = load_scenario_pair(paths, &cli.scenario)?;
     log::info!(
         "сценарій «{}»: країн {}, province-блоків {}, альянсів {}",
         sc.name,
@@ -189,7 +212,7 @@ fn run_headless(paths: &GamePaths, cli: &Cli) -> Result<()> {
     // Симуляція dh-sim (юніти, рух, бої, постачання, погода, ORG) — опційно.
     let mut sim_link = None;
     if cli.sim {
-        match sim_link::SimLink::build(&paths.root, &cli.scenario) {
+        match sim_link::SimLink::from_scenario(&vfs, &data_sc) {
             Ok(link) => {
                 log::info!(
                     "dh-sim: країн {}, юнітів {}, старт {}",
@@ -1059,12 +1082,11 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
 
     let mut world = None;
     let mut game_time = None;
+    // А4: один парс — dh_data::Scenario і VFS живуть до створення SimThread.
+    let mut scenario_data: Option<(dh_data::Scenario, dh_data::Vfs)> = None;
     if !cli.map_only {
-        let sc_path = paths
-            .mod_dir
-            .join("scenarios")
-            .join(format!("{}.eug", cli.scenario));
-        let sc = load_scenario(&sc_path)?;
+        let (sc, data_sc, vfs) = load_scenario_pair(paths, &cli.scenario)?;
+        scenario_data = Some((data_sc, vfs));
         log::info!(
             "сценарій «{}»: країн {}, province-блоків {}, альянсів {}",
             sc.name,
@@ -1091,7 +1113,10 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
     let mut prov_names = HashMap::new();
     let mut unit_stacks = Vec::new();
     if !cli.map_only && cli.sim {
-        match sim_link::SimLink::build(&paths.root, &cli.scenario) {
+        let (data_sc, vfs) = scenario_data
+            .as_ref()
+            .expect("сценарій завантажено разом зі світом");
+        match sim_link::SimLink::from_scenario(vfs, data_sc) {
             Ok(link) => {
                 log::info!(
                     "dh-sim: країн {}, юнітів {}, старт {}",
