@@ -44,6 +44,10 @@ pub struct Scenario {
     pub events: Vec<String>,
     /// Інші легальні top-level пари (history/sleepevent/save_date/map) сирим текстом.
     pub raw_top_level: Vec<(String, String)>,
+    /// Історія спрацьованих подій сейву (`events_history` — id).
+    pub events_history: Vec<u64>,
+    /// «Сплячі» події сейву (`slept_events` — id).
+    pub slept_events: Vec<u64>,
 }
 
 /// header = { ... }: дата старту для меню, ігрові країни, картинки вибору.
@@ -335,17 +339,34 @@ fn parse_province_block(b: &dh_text::Block, ctx: &str) -> Option<ProvinceBlock> 
 }
 
 /// Конвертує сплісений сценарій dh-data в нашу структуру.
-///
-/// Порядок country/province-блоків — порядок появи в сплісеному дереві
-/// (include-и інлайняться на своїх позиціях, як і в колишньому парсері).
-/// Парси name/panel/header/globaldata «останній перемагає» — у реальних
-/// файлах ці блоки бувають лише один раз, у .eug (include-и їх не містять).
 pub fn from_data(data: &dh_data::Scenario) -> Result<Scenario> {
+    from_root(&data.root, &data.info.path, data.includes.clone())
+}
+
+/// Конвертує дерево `dh_text::Block` (сценарій АБО сейв — та сама мова) в
+/// нашу структуру. Спільна точка обох завантажень: сценарії йдуть через
+/// `from_data` (сплісений VFS-парсер dh-data), сейви — напряму з
+/// `savegame::load` (розпакований bz2 → dh_text::parse).
+///
+/// Порядок country/province-блоків — порядок появи в дереві (include-и
+/// інлайняться на своїх позиціях). Парси name/panel/header/globaldata
+/// «останній перемагає» — у реальних файлах ці блоки бувають лише один раз.
+///
+/// Сейв-поліморфізм (RE-savegames.md §4-5): `save_date = {...}` (дата гри
+/// на момент сейву, токен 599) проєктується в `globaldata.startdate` — для
+/// завантаження сейву вона Є стартова дата; `events_history`/`slept_events`
+/// (історія спрацьованих/сплячих подій) — у однойменні поля для відновлення
+/// рушія подій. Списки event-файлів (`event = "..."`) сейв теж несе.
+pub fn from_root(
+    root: &dh_text::Block,
+    name_fallback: &str,
+    includes: Vec<String>,
+) -> Result<Scenario> {
     let mut sc = Scenario {
-        includes: data.includes.clone(),
+        includes,
         ..Scenario::default()
     };
-    for item in &data.root.items {
+    for item in &root.items {
         let dh_text::Item::Field(f) = item else {
             continue; // голі значення на top-level — ігнор
         };
@@ -368,14 +389,14 @@ pub fn from_data(data: &dh_data::Scenario) -> Result<Scenario> {
                     sc.globaldata = parse_globaldata(bl);
                 }
             }
-            "include" => {} // уже зібрані в data.includes
+            "include" => {} // уже зібрані в sc.includes
             "event" => {
                 if let Some(s) = f.value.as_scalar() {
                     sc.events.push(s.text.clone());
                 }
             }
             "country" => {
-                let ctx = format!("{}: country", data.info.path);
+                let ctx = format!("{name_fallback}: country");
                 if let Some(bl) = f.value.as_block() {
                     match parse_country_block(bl, &ctx) {
                         Some(cb) => sc.countries.push(cb),
@@ -384,7 +405,7 @@ pub fn from_data(data: &dh_data::Scenario) -> Result<Scenario> {
                 }
             }
             "province" => {
-                let ctx = format!("{}: province", data.info.path);
+                let ctx = format!("{name_fallback}: province");
                 if let Some(bl) = f.value.as_block() {
                     if let Some(pb) = parse_province_block(bl, &ctx) {
                         sc.provinces.push(pb);
@@ -394,13 +415,32 @@ pub fn from_data(data: &dh_data::Scenario) -> Result<Scenario> {
             "history" | "sleepevent" | "save_date" | "map" => {
                 sc.raw_top_level.push((f.key.clone(), value_text(&f.value)));
             }
+            "events_history" => {
+                if let Some(bl) = f.value.as_block() {
+                    sc.events_history = bl.ints().map(|i| i as u64).collect();
+                }
+            }
+            "slept_events" => {
+                if let Some(bl) = f.value.as_block() {
+                    sc.slept_events = bl.ints().map(|i| i as u64).collect();
+                }
+            }
             // Гра на невідомому top-level падає («Illegal top level object»);
             // ми толеруємо з попередженням — моди з домішками лишаються читабельні.
-            other => log::warn!(
-                "{}: невідомий top-level об'єкт «{other}» (пропущено)",
-                data.info.path
-            ),
+            other => {
+                log::warn!("{name_fallback}: невідомий top-level об'єкт «{other}» (пропущено)")
+            }
         }
+    }
+    // Сейв: save_date (дата гри на момент сейву) → стартова дата світу.
+    if let Some(sd) = root
+        .get_block("save_date")
+        .and_then(dh_data::GameDate::from_block)
+    {
+        sc.globaldata.startdate = Some(date_from_data(sd));
+    }
+    if sc.name.is_empty() {
+        sc.name = name_fallback.to_owned();
     }
     Ok(sc)
 }

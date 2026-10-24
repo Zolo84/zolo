@@ -86,6 +86,13 @@ struct Cli {
     #[arg(long, default_value = "1933")]
     scenario: String,
 
+    /// Сейв для ШВИДКОГО СТАРТУ (Б.8): ім'я без розширення з
+    /// scenarios/save games/ (bz2 або голий текст). Замінює сценарій:
+    /// дата/власники/капітоли/історія подій — з сейву. Симуляція dh-sim
+    /// з сейвом поки не підключена (їй потрібен сценарний dh_data::Scenario).
+    #[arg(long)]
+    save: Option<String>,
+
     /// Віконний режим (завжди ввімкнено; прапорець для сумісності CLI).
     #[arg(long)]
     windowed: bool,
@@ -156,12 +163,31 @@ fn load_static(paths: &GamePaths) -> Result<(MapData, Vec<ProvinceCsv>, Palette,
 fn load_scenario_pair(
     paths: &GamePaths,
     name: &str,
+    save: Option<&str>,
 ) -> Result<(
     dh_format::scenario::Scenario,
-    dh_data::Scenario,
+    Option<dh_data::Scenario>,
     dh_data::Vfs,
 )> {
     let vfs = dh_data::open_install(&paths.root);
+    // Швидкий старт із сейву (Б.8): сейв читається тим самим конвеєром
+    // (bz2/текст → from_root), дата сейву стає стартовою; dh_data::Scenario
+    // для sim з сейву не будуємо (TODO: відновлення їхнього світу з сейву).
+    if let Some(save_name) = save {
+        let rel = format!("scenarios/save games/{save_name}.eug");
+        let bytes = vfs
+            .read(&rel)
+            .with_context(|| format!("{rel}: сейв не знайдено (VFS)"))?;
+        let sc = dh_format::savegame::from_bytes(&bytes, save_name)?;
+        log::info!(
+            "сейв «{}»: країн {}, province-блоків {}, подій-файлів {}",
+            sc.name,
+            sc.countries.len(),
+            sc.provinces.len(),
+            sc.events.len()
+        );
+        return Ok((sc, None, vfs));
+    }
     let mut warnings = Vec::new();
     let data =
         dh_format::scenario::load_data(&vfs, &format!("scenarios/{name}.eug"), &mut warnings)
@@ -173,7 +199,7 @@ fn load_scenario_pair(
         log::debug!("сценарій: попереджень усього: {}", warnings.len());
     }
     let sc = dh_format::scenario::from_data(&data)?;
-    Ok((sc, data, vfs))
+    Ok((sc, Some(data), vfs))
 }
 
 // Headless
@@ -188,7 +214,7 @@ const EVENT_SEED: u64 = 0xD412_0002;
 fn bootstrap_events(
     world: &mut World,
     sc: &dh_format::scenario::Scenario,
-    data: &dh_data::Scenario,
+    data: Option<&dh_data::Scenario>,
     vfs: &dh_data::Vfs,
 ) {
     let files = sc.events.clone();
@@ -224,6 +250,9 @@ fn bootstrap_events(
     // queued_events сценарію: globaldata.queued_events = { event = { tag id hour } }
     // (RE-eug-format.md §2; година → доби: 0→старт, 24→+1 доба, 72→+3 доби).
     let start = dh_format::scenario::game_start(sc);
+    let Some(data) = data else {
+        return; // сейв: queued_events у нього вже в історії (events_history)
+    };
     if let Some(engine) = world.event_engine.as_mut() {
         let Some(gd) = data.root.get_block("globaldata") else {
             return;
@@ -255,7 +284,7 @@ fn run_headless(paths: &GamePaths, cli: &Cli) -> Result<()> {
         prov_csv.len()
     );
 
-    let (sc, data_sc, vfs) = load_scenario_pair(paths, &cli.scenario)?;
+    let (sc, data_sc, vfs) = load_scenario_pair(paths, &cli.scenario, cli.save.as_deref())?;
     log::info!(
         "сценарій «{}»: країн {}, province-блоків {}, альянсів {}",
         sc.name,
@@ -265,7 +294,7 @@ fn run_headless(paths: &GamePaths, cli: &Cli) -> Result<()> {
     );
 
     let mut world = build_world(&sc, &prov_csv, cli.speed);
-    bootstrap_events(&mut world, &sc, &data_sc, &vfs);
+    bootstrap_events(&mut world, &sc, data_sc.as_ref(), &vfs);
     let owned = world.provinces.iter().filter(|p| p.owner.is_some()).count();
 
     log::info!(
@@ -279,17 +308,22 @@ fn run_headless(paths: &GamePaths, cli: &Cli) -> Result<()> {
     // Симуляція dh-sim (юніти, рух, бої, постачання, погода, ORG) — опційно.
     let mut sim_link = None;
     if cli.sim {
-        match sim_link::SimLink::from_scenario(&vfs, &data_sc) {
-            Ok(link) => {
-                log::info!(
-                    "dh-sim: країн {}, юнітів {}, старт {}",
-                    link.sim.world.countries.len(),
-                    link.sim.world.units.len(),
-                    link.sim.date()
-                );
-                sim_link = Some(link);
+        if data_sc.is_none() {
+            log::warn!("dh-sim з --save поки не підключена — headless без симуляції");
+        }
+        if let Some(data_sc) = data_sc.as_ref() {
+            match sim_link::SimLink::from_scenario(&vfs, data_sc) {
+                Ok(link) => {
+                    log::info!(
+                        "dh-sim: країн {}, юнітів {}, старт {}",
+                        link.sim.world.countries.len(),
+                        link.sim.world.units.len(),
+                        link.sim.date()
+                    );
+                    sim_link = Some(link);
+                }
+                Err(e) => log::error!("dh-sim не збудовано (прогін без симуляції): {e:#}"),
             }
-            Err(e) => log::error!("dh-sim не збудовано (прогін без симуляції): {e:#}"),
         }
     }
 
@@ -1150,9 +1184,9 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
     let mut world = None;
     let mut game_time = None;
     // А4: один парс — dh_data::Scenario і VFS живуть до створення SimThread.
-    let mut scenario_data: Option<(dh_data::Scenario, dh_data::Vfs)> = None;
+    let mut scenario_data: Option<(Option<dh_data::Scenario>, dh_data::Vfs)> = None;
     if !cli.map_only {
-        let (sc, data_sc, vfs) = load_scenario_pair(paths, &cli.scenario)?;
+        let (sc, data_sc, vfs) = load_scenario_pair(paths, &cli.scenario, cli.save.as_deref())?;
         log::info!(
             "сценарій «{}»: країн {}, province-блоків {}, альянсів {}",
             sc.name,
@@ -1161,7 +1195,7 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
             sc.globaldata.alliances.len()
         );
         let mut w = build_world(&sc, &prov_csv, cli.speed);
-        bootstrap_events(&mut w, &sc, &data_sc, &vfs);
+        bootstrap_events(&mut w, &sc, data_sc.as_ref(), &vfs);
         let owned = w.provinces.iter().filter(|p| p.owner.is_some()).count();
         log::info!(
             "світ: країн {}, провінцій {}, з власником {}, старт {}",
@@ -1184,24 +1218,29 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
         let (data_sc, vfs) = scenario_data
             .as_ref()
             .expect("сценарій завантажено разом зі світом");
-        match sim_link::SimLink::from_scenario(vfs, data_sc) {
-            Ok(link) => {
-                log::info!(
-                    "dh-sim: країн {}, юнітів {}, старт {}",
-                    link.sim.world.countries.len(),
-                    link.sim.world.units.len(),
-                    link.sim.date()
-                );
-                // Стартове вирівнювання власників (обидва завантажувачі читають
-                // той самий сценарій; розбіжності логуються sync_owners).
-                if let Some(w) = world.as_mut() {
-                    link.sync_owners(w);
+        if data_sc.is_none() {
+            log::warn!("dh-sim з --save поки не підключена (потрібен dh_data::Scenario) — гра без симуляції");
+        }
+        if let Some(data_sc) = data_sc.as_ref() {
+            match sim_link::SimLink::from_scenario(vfs, data_sc) {
+                Ok(link) => {
+                    log::info!(
+                        "dh-sim: країн {}, юнітів {}, старт {}",
+                        link.sim.world.countries.len(),
+                        link.sim.world.units.len(),
+                        link.sim.date()
+                    );
+                    // Стартове вирівнювання власників (обидва завантажувачі читають
+                    // той самий сценарій; розбіжності логуються sync_owners).
+                    if let Some(w) = world.as_mut() {
+                        link.sync_owners(w);
+                    }
+                    prov_names = link.prov_names();
+                    unit_stacks = link.unit_stacks();
+                    sim = Some(sim_link::SimThread::spawn(link));
                 }
-                prov_names = link.prov_names();
-                unit_stacks = link.unit_stacks();
-                sim = Some(sim_link::SimThread::spawn(link));
+                Err(e) => log::error!("dh-sim не збудовано (гра без симуляції): {e:#}"),
             }
-            Err(e) => log::error!("dh-sim не збудовано (гра без симуляції): {e:#}"),
         }
     }
 
