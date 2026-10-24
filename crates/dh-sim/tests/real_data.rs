@@ -950,3 +950,103 @@ fn organisation_by_the_newer_rules() {
         assert!((gained - r).abs() < 1e-4, "{gained} vs {r}");
     }
 }
+
+/// German divisions standing in supply draw a day's supplies (and an idle
+/// quarter of their fuel) from the national stockpile; with the stockpile
+/// empty they go short, and VIII. Armeekorps' ORG then falls by 0.05 an hour.
+#[test]
+fn divisions_draw_supplies_and_fuel_from_the_stockpile() {
+    use dh_sim::OrgRegain;
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let ctx = Arc::new(ctx);
+    let (world, _) = World::from_scenario(&scenario);
+    let german: Vec<usize> = (0..world.units.len())
+        .filter(|&i| {
+            let u = &world.units[i];
+            u.owner == "GER"
+                && u.unit.branch == dh_data::Branch::Land
+                && u.unit
+                    .location
+                    .is_some_and(|p| world.in_supply(&ctx, "GER", p))
+        })
+        .collect();
+    let (mut supplies, mut oil) = (0.0f64, 0.0f64);
+    for &i in &german {
+        let cond = world.need_conditions(&ctx, i);
+        for d in &world.units[i].unit.divisions {
+            let s = ctx.units.division_stats(d).unwrap();
+            let share = d.strength.unwrap_or(100.0) / 100.0;
+            supplies += f64::from(world.supply_need(&ctx, &cond, d));
+            oil += f64::from(world.fuel_need(&ctx, &cond, d));
+            // Idle on easy ground: the model's use times strength, a
+            // quarter of it for fuel.
+            if !matches!(cond.terrain, 3 | 4 | 6) {
+                let expected = s.get("supplyconsumption") * share;
+                assert!((f64::from(world.supply_need(&ctx, &cond, d)) - expected).abs() < 1e-4);
+            }
+            let fuel = s.get("fuelconsumption") * share * 0.25;
+            assert!((f64::from(world.fuel_need(&ctx, &cond, d)) - fuel).abs() < 1e-4);
+        }
+    }
+    assert!(supplies > 0.0 && oil > 0.0, "{supplies} {oil}");
+    let start = world.countries["GER"].stock;
+    let mut sim = Simulation::new(world, 1);
+    sim.add_system(OrgRegain::new(ctx.clone()));
+    sim.run_hours(24);
+    let after = sim.world.countries["GER"].stock;
+    assert!(
+        (start.supplies - after.supplies - supplies).abs() < 0.01,
+        "{supplies}"
+    );
+    assert!((start.oil - after.oil - oil).abs() < 0.01, "{oil}");
+    assert!(german
+        .iter()
+        .flat_map(|&i| &sim.world.units[i].unit.divisions)
+        .all(|d| !d.no_supplies && !d.no_fuel));
+
+    // An empty stockpile: every draw fails.
+    let corps = sim
+        .world
+        .units
+        .iter()
+        .position(|u| u.unit.name == "VIII. Armeekorps")
+        .unwrap();
+    sim.world.countries.get_mut("GER").unwrap().stock.supplies = 0.0;
+    let before: Vec<f64> = sim.world.units[corps]
+        .unit
+        .divisions
+        .iter()
+        .map(|d| d.organisation.unwrap())
+        .collect();
+    sim.tick();
+    for (d, b) in sim.world.units[corps].unit.divisions.iter().zip(before) {
+        assert!(d.no_supplies);
+        // Full ORG: −0.5 a tenth at a time, kept at most at the maximum.
+        assert!((b - d.organisation.unwrap() - 0.05).abs() < 1e-4);
+    }
+}
+
+/// A division without fuel takes three times as long over a hop
+/// (`combat[210]`).
+#[test]
+fn no_fuel_triples_the_hop() {
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let corps = scenario
+        .countries
+        .iter()
+        .flat_map(|c| &c.units)
+        .find(|u| u.name == "VIII. Armeekorps")
+        .unwrap();
+    let link = ctx.adjacency.link(300, 299).unwrap();
+    let cond = dh_sim::movement::MoveConditions::default();
+    let mut divisions = corps.divisions.clone();
+    assert_eq!(ctx.hop_hours(&divisions, 300, link, false, &cond), Some(21));
+    divisions[0].no_fuel = true;
+    // 21 h means distance / speed is in 21..22 h, so 63..66 h.
+    let h = ctx.hop_hours(&divisions, 300, link, false, &cond).unwrap();
+    assert!((63..66).contains(&h), "{h}");
+}

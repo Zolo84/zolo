@@ -8,6 +8,7 @@
 pub mod attrition;
 pub mod battle;
 pub mod combat;
+pub mod consumption;
 pub mod dig_in;
 pub mod leaders;
 pub mod march;

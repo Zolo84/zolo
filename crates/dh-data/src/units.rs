@@ -58,6 +58,10 @@ pub struct Division {
     pub experience: Option<f64>,
     pub brigades: Vec<Brigade>,
     pub locked: bool,
+    /// Supplies or fuel could not be drawn this hour (division fields
+    /// `+0x156`/`+0x157`, supply.md §3); set by the simulation.
+    pub no_supplies: bool,
+    pub no_fuel: bool,
     pub raw: Block,
 }
 
@@ -96,6 +100,8 @@ impl Division {
             experience: b.get_f64("experience"),
             brigades,
             locked: b.get_bool("locked").unwrap_or(false),
+            no_supplies: false,
+            no_fuel: false,
             raw: b.clone(),
         })
     }

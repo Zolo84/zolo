@@ -57,6 +57,19 @@ pub struct Params {
     pub logistics_wizard_ese: f32, // combat[161]
     /// Land speed factor out of supply (land-movement.md §3.1).
     pub out_of_supply_speed: f32, // combat[208]
+    /// Land travel time factor while a division has no fuel.
+    pub no_fuel_travel: f32, // combat[210]
+    /// Speed of a division without fuel, when not negative (−1: off).
+    pub fuel_speed: f32, // combat[211]
+    /// Default combat modifiers of land divisions without supplies / fuel.
+    pub no_supplies_combat: f32, // combat[27]
+    pub no_fuel_combat: f32,            // combat[30]
+    /// Land supply need factors: standing still, in combat.
+    pub supply_idle: f32, // economy[63]
+    pub supply_combat: f32,             // economy[64]
+    /// Land fuel need factors: standing still, in combat.
+    pub fuel_idle: f32, // economy[65]
+    pub fuel_combat: f32,               // economy[66]
     /// Friendly-province ORG regain: `min(2 · infra + bonus, cap)`
     /// (organisation.md §2, old logic).
     pub org_friendly_bonus: f32, // combat[165]
@@ -145,6 +158,14 @@ impl Default for Params {
             leader_move_similar: 0.025,
             logistics_wizard_ese: 0.1,
             out_of_supply_speed: 0.1,
+            no_fuel_travel: 3.0,
+            fuel_speed: -1.0,
+            no_supplies_combat: -0.2,
+            no_fuel_combat: 0.0,
+            supply_idle: 1.0,
+            supply_combat: 1.0,
+            fuel_idle: 0.25,
+            fuel_combat: 1.0,
             org_friendly_bonus: 0.0,
             org_friendly_cap: 1.2,
             new_org_logic: false,
@@ -290,6 +311,14 @@ impl Params {
             f("combat", 188 + k, v);
         }
         f("economy", 87, &mut p.supply_distance);
+        f("combat", 210, &mut p.no_fuel_travel);
+        f("combat", 211, &mut p.fuel_speed);
+        f("combat", 27, &mut p.no_supplies_combat);
+        f("combat", 30, &mut p.no_fuel_combat);
+        f("economy", 63, &mut p.supply_idle);
+        f("economy", 64, &mut p.supply_combat);
+        f("economy", 65, &mut p.fuel_idle);
+        f("economy", 66, &mut p.fuel_combat);
         f("country", 10, &mut p.country_supply_distance);
         f("mod", 21, &mut p.rebel_org);
         p

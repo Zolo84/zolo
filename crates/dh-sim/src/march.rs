@@ -98,6 +98,8 @@ impl World {
             supply: self.supply_speed_factor(ctx, self.units[unit].controller(), from),
             weather,
             leader,
+            fuel_speed: (p.fuel_speed >= 0.0).then_some(p.fuel_speed),
+            no_fuel_travel: p.no_fuel_travel,
         }
     }
 }

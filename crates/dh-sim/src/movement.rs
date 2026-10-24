@@ -13,6 +13,7 @@ use dh_map::{AdjKind, Adjacency, Link, Path};
 pub mod terrain {
     pub const PLAINS: u8 = 0;
     pub const DESERT: u8 = 3;
+    pub const MARSH: u8 = 4;
     pub const JUNGLE: u8 = 6;
     pub const URBAN: u8 = 7;
     pub const OCEAN: u8 = 8;
@@ -48,6 +49,12 @@ pub struct MoveConditions {
     pub weather: Weather,
     /// Leader trait bonuses (§3.5) as one factor, applied after `× 0.75`.
     pub leader: f32,
+    /// Speed of a division without fuel (`combat[211]`, `0x50818E`), when
+    /// the rule is on.
+    pub fuel_speed: Option<f32>,
+    /// Travel time factor while any division has no fuel (`combat[210]`,
+    /// `0x431184`).
+    pub no_fuel_travel: f32,
 }
 
 impl Default for MoveConditions {
@@ -56,6 +63,8 @@ impl Default for MoveConditions {
             supply: 1.0,
             weather: Weather::Clear,
             leader: 1.0,
+            fuel_speed: None,
+            no_fuel_travel: 3.0,
         }
     }
 }
@@ -293,7 +302,10 @@ impl MoveContext {
         let mut best = 200.0f32;
         let mut halve = false;
         for d in divisions {
-            let speed = self.units.division_stats(d).map_or(0.0, |s| s.max_speed);
+            let mut speed = self.units.division_stats(d).map_or(0.0, |s| s.max_speed);
+            if let Some(v) = cond.fuel_speed.filter(|_| d.no_fuel) {
+                speed = speed.min(f64::from(v));
+            }
             let column = dh_data::unitdb::DIVISION_TYPES
                 .iter()
                 .position(|t| *t == d.kind)
@@ -342,6 +354,9 @@ impl MoveContext {
         let v = self.stack_speed(divisions, link.to, cond);
         if hostile && !dest.is_water() {
             d *= 1.25;
+        }
+        if divisions.iter().any(|d| d.no_fuel) {
+            d *= cond.no_fuel_travel;
         }
         Some(((d as f64 / v as f64) as u32).max(1))
     }

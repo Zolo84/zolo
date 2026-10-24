@@ -51,6 +51,9 @@ pub struct OrgConditions {
 
 pub struct OrgRegain {
     ctx: Arc<MoveContext>,
+    /// Draw supplies and fuel first, as the game does in the same call
+    /// (`consumption`); off, every draw succeeds.
+    pub consume: bool,
     /// `db/difficulty.csv`; empty means no difficulty modifier.
     pub difficulty: Difficulty,
     pub difficulty_level: usize,
@@ -60,6 +63,7 @@ impl OrgRegain {
     pub fn new(ctx: Arc<MoveContext>) -> Self {
         OrgRegain {
             ctx,
+            consume: true,
             difficulty: Difficulty::default(),
             difficulty_level: dh_data::difficulty::NORMAL,
         }
@@ -213,9 +217,18 @@ impl World {
         };
 
         if p.new_org_logic {
-            let [base, _no_fuel, _no_supplies, low_org, home, _transport, march, _retreat] =
+            let [base, no_fuel, no_supplies, low_org, home, _transport, march, _retreat] =
                 p.org_land;
             let mut x = cond.ese * (1.0 + morale * p.org_morale) * base;
+            if d.no_fuel {
+                x *= no_fuel;
+            }
+            if d.no_supplies {
+                if no_supplies < 0.0 {
+                    return no_supplies;
+                }
+                x *= no_supplies;
+            }
             if x == 0.0 {
                 return 0.0;
             }
@@ -246,6 +259,9 @@ impl World {
         } else {
             cond.infra
         };
+        if d.no_fuel {
+            x *= 0.5;
+        }
         x *= cond.distance;
         x *= if q < 0.25 {
             3.0
@@ -259,7 +275,9 @@ impl World {
         if cond.moving {
             x = -0.2;
         }
-        if x >= 0.0 {
+        if d.no_supplies {
+            x = -0.5;
+        } else if x >= 0.0 {
             x += (morale - 30.0) * 0.01;
         }
         x -= weather_penalty(cond.weather);
@@ -321,6 +339,9 @@ impl System for OrgRegain {
             let Some(cond) = world.org_conditions(&self.ctx, i, hq, in_supply) else {
                 continue;
             };
+            if self.consume {
+                world.consume(&self.ctx, i, in_supply);
+            }
             let changes: Vec<(f32, f32)> = world.units[i]
                 .unit
                 .divisions

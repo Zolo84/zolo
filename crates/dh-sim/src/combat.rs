@@ -24,7 +24,8 @@
 //! traits, command limits by direction, envelopment, encirclement, dig-in,
 //! land forts (with FortressBuster), dissent and difficulty. Not yet:
 //! paratroopers and invasion size, shore bombardment, country bonuses by
-//! type, supply and fuel shortage, army detection, mission efficiency. Misc
+//! type, army detection, mission efficiency. Supply and fuel shortage use
+//! the models' default modifiers. Misc
 //! values come from the world's [`crate::Params`].
 
 pub mod events;
@@ -528,6 +529,14 @@ impl Combat {
                     a *= 1.0 + dissent;
                 }
                 a *= 1.0 + difficulty;
+                // Rows 24/25: short of supplies or fuel this hour (the
+                // models' defaults; no paratroopers are modelled).
+                if d.no_supplies && p.no_supplies_combat != 0.0 {
+                    a *= 1.0 + p.no_supplies_combat;
+                }
+                if d.no_fuel && p.no_fuel_combat != 0.0 {
+                    a *= 1.0 + p.no_fuel_combat;
+                }
                 out.push(Fighter {
                     unit: u,
                     division: i,
