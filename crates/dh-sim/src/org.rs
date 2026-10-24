@@ -34,9 +34,14 @@ pub struct OrgConditions {
     pub ese: f32,
     /// On land (not at sea or on a river).
     pub land: bool,
+    /// The province has an owner.
+    pub owned: bool,
     pub infra: f32,
-    /// In a province of a friendly owner.
+    /// Friendly owner by the old rules' test ([`World::friendly_owner`]).
     pub friendly: bool,
+    /// Friendly owner by the newer rules' test: the stack owner itself, an
+    /// ally it is not at war with, or a country granting it access.
+    pub home: bool,
     /// `D`, from the distance to the last friendly province.
     pub distance: f32,
     pub moving: bool,
@@ -87,6 +92,56 @@ impl World {
             || self.has_access(tag, owner)
     }
 
+    /// A province the stack may fall back on (`0x51D3D0`): owned by the
+    /// stack's owner or by an ally of its command country.
+    fn supply_base(&self, unit: usize, p: u32) -> bool {
+        let u = &self.units[unit];
+        self.owner
+            .get(&p)
+            .is_some_and(|o| *o == u.owner || self.diplomacy.allied(o, u.controller()))
+    }
+
+    /// The nearest such province (`0x51D3D0` with an empty cache): the
+    /// capital unless one is closer, comparing against the best distance cut
+    /// to whole units as the game does.
+    fn nearest_supply_base(&self, ctx: &MoveContext, unit: usize) -> Option<u32> {
+        let u = &self.units[unit];
+        let loc = u.unit.location?;
+        let mut best_p = self
+            .countries
+            .get(u.controller())
+            .or_else(|| self.countries.get(&u.owner))
+            .and_then(|c| c.capital);
+        let mut best = 1_000_000i64;
+        for p in 0..ctx.provinces.len() as u32 {
+            if !self.supply_base(unit, p) {
+                continue;
+            }
+            let dist = if p == loc {
+                0.0
+            } else {
+                ctx.distance(loc, p).unwrap_or(f32::MAX)
+            };
+            if dist < best as f32 {
+                best_p = Some(p);
+                best = dist as i64;
+            }
+        }
+        best_p
+    }
+
+    /// What `0x51D3D0` makes of the cached supply base: the stack's province
+    /// while it is a supply base, else the cached one, else the nearest.
+    fn refreshed_supply_base(&self, ctx: &MoveContext, unit: usize) -> Option<u32> {
+        let u = &self.units[unit];
+        match u.unit.location {
+            Some(loc) if self.supply_base(unit, loc) => Some(loc),
+            _ => u
+                .last_friendly
+                .or_else(|| self.nearest_supply_base(ctx, unit)),
+        }
+    }
+
     fn friendly_province(&self, unit: usize, p: u32) -> bool {
         let u = &self.units[unit];
         self.owner
@@ -108,13 +163,20 @@ impl World {
         let loc = u.unit.location?;
         let leader = self.stack_leader(unit);
         let land = ctx.province(loc).is_some_and(|i| !i.is_water());
+        let owner = self.owner.get(&loc);
         Some(OrgConditions {
             rebels: u.controller() == REBELS,
             in_battle: self.in_battle(unit),
             ese: self.stack_supply_efficiency(ctx, unit, &leader, hq),
             land,
+            owned: owner.is_some(),
             infra: ctx.province(loc).map_or(0.0, |i| i.infra),
             friendly: land && self.friendly_province(unit, loc),
+            home: owner.is_some_and(|o| {
+                *o == u.owner
+                    || self.diplomacy.allied(&u.owner, o) && !self.at_war(&u.owner, o)
+                    || self.has_access(&u.owner, o)
+            }),
             distance: self.supply_distance_factor(ctx, unit),
             moving: u.is_moving(self.hour),
             weather: self.weather_at(loc),
@@ -160,7 +222,10 @@ impl World {
             if low_org > 0.0 && q < 1.0 {
                 x *= 1.0 + (1.0 - q) * low_org;
             }
-            x *= if cond.friendly { home } else { cond.distance };
+            // At sea, on a river or in an ownerless province: neither.
+            if cond.land && cond.owned {
+                x *= if cond.home { home } else { cond.distance };
+            }
             if cond.moving {
                 if march < 0.0 {
                     return march;
@@ -174,13 +239,13 @@ impl World {
         }
 
         let mut x = cond.ese * (1.0 + (morale - 30.0) * 0.01);
-        if cond.land {
-            x *= if cond.friendly {
-                (2.0 * cond.infra + p.org_friendly_bonus).min(p.org_friendly_cap)
-            } else {
-                cond.infra
-            };
-        }
+        x *= if !cond.land {
+            0.0
+        } else if cond.friendly {
+            (2.0 * cond.infra + p.org_friendly_bonus).min(p.org_friendly_cap)
+        } else {
+            cond.infra
+        };
         x *= cond.distance;
         x *= if q < 0.25 {
             3.0
@@ -214,8 +279,11 @@ impl World {
     pub fn supply_distance_factor(&self, ctx: &MoveContext, unit: usize) -> f32 {
         let p = &self.params;
         let u = &self.units[unit];
-        let dist = match (u.unit.location, u.last_friendly) {
-            (Some(a), Some(b)) => ctx.distance(a, b).unwrap_or(0.0),
+        let base = u
+            .last_friendly
+            .or_else(|| self.refreshed_supply_base(ctx, unit));
+        let dist = match (u.unit.location, base) {
+            (Some(a), Some(b)) if a != b => ctx.distance(a, b).unwrap_or(0.0),
             _ => 0.0,
         };
         ((100.0 - (dist * p.supply_distance).min(100.0)) * 0.01 * p.country_supply_distance)
@@ -265,12 +333,9 @@ impl System for OrgRegain {
             for (d, (org, max)) in world.units[i].unit.divisions.iter_mut().zip(changes) {
                 d.organisation = Some(f64::from(org.clamp(0.0, max.max(0.0))));
             }
-            // `0x51D3D0`: remember the stack's province while it is friendly.
-            if let Some(loc) = world.units[i].unit.location {
-                if world.friendly_province(i, loc) {
-                    world.units[i].last_friendly = Some(loc);
-                }
-            }
+            // `0x51D3D0`: remember the stack's province while it is a
+            // supply base, else keep the last one (or find the nearest).
+            world.units[i].last_friendly = world.refreshed_supply_base(&self.ctx, i);
         }
     }
 }

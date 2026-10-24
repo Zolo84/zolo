@@ -904,3 +904,49 @@ fn organisation_recovers_at_home_and_wears_on_the_march() {
         assert!((lost - 5.0 * 0.02).abs() < 1e-4, "{lost}");
     }
 }
+
+/// The newer ORG rules, as "Darkest Hour Full" switches them on: at home a
+/// division regains `ESE · (1 + morale/100) · (1 + (1 − q) · 3) · 1.3 / 24`
+/// an hour (`q` its share of full ORG), and nothing on the march.
+#[test]
+fn organisation_by_the_newer_rules() {
+    use dh_data::{open_install, Misc};
+    use dh_sim::{OrgRegain, Params};
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let dir = std::env::var_os("DH_GAME_DIR").unwrap();
+    let params = Params::from_misc(&Misc::load(&open_install(&dir)).unwrap());
+    assert!(params.new_org_logic);
+    let ctx = Arc::new(ctx);
+    let (mut world, _) = World::from_scenario(&scenario);
+    world.set_params(params);
+    let corps = world
+        .units
+        .iter()
+        .position(|u| u.unit.name == "VIII. Armeekorps")
+        .unwrap();
+    for d in &mut world.units[corps].unit.divisions {
+        d.organisation = Some(5.0);
+    }
+    let leader = world.stack_leader(corps).into_owned();
+    let hq = world.under_hq_influence(&ctx, corps);
+    let ese = world.stack_supply_efficiency(&ctx, corps, &leader, hq);
+    let expected: Vec<f32> = world.units[corps]
+        .unit
+        .divisions
+        .iter()
+        .map(|d| {
+            let s = ctx.units.division_stats(d).unwrap();
+            let q = 5.0 / s.get("defaultorganisation") as f32;
+            ese * (1.0 + s.get("morale") as f32 * 0.01) * (1.0 + (1.0 - q) * 3.0) * 1.3 / 24.0
+        })
+        .collect();
+    let mut sim = Simulation::new(world, 1);
+    sim.add_system(OrgRegain::new(ctx.clone()));
+    sim.tick();
+    for (d, r) in sim.world.units[corps].unit.divisions.iter().zip(&expected) {
+        let gained = d.organisation.unwrap() as f32 - 5.0;
+        assert!((gained - r).abs() < 1e-4, "{gained} vs {r}");
+    }
+}
