@@ -60,8 +60,18 @@ impl GameDate {
 
     pub fn display(&self) -> String {
         const MONTHS: [&str; 12] = [
-            "January", "February", "March", "April", "May", "June", "July", "August",
-            "September", "October", "November", "December",
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
         ];
         format!(
             "{} {} {}",

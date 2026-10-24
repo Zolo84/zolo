@@ -2,18 +2,18 @@
 //!
 //! Контрактні типи даних (спільні для всіх модулів крейту).
 
+pub mod colorscale;
 pub mod dates;
-pub mod script;   // лексер/парсер скрипт-мови (1669 токенів)
-pub mod tokens;   // реєстр ключових слів
-pub mod map;      // tiles/index/boundbox/adjacent/airdist/navaldist/lightmap
-pub mod province; // Province.csv
-pub mod db;       // бази даних гри (country.csv, units, tech, ...)
-pub mod scenario; // сценарії .eug
-pub mod savegame; // сейви .eug + bzip2
-pub mod fonts;    // бітмап-шрифти (RLE-гліфи)
-pub mod palette;  // палітри (.act, *_palette.bmp)
+pub mod db; // бази даних гри (country.csv, units, tech, ...)
+pub mod fonts; // бітмап-шрифти (RLE-гліфи)
+pub mod map; // tiles/index/boundbox/adjacent/airdist/navaldist/lightmap
 pub mod map_color; // точна модель кольору політичної карти (палітра+LUT+scale)
-pub mod colorscale; // генерація палітри з map/Map_1/colorscales.csv (файл гри)
+pub mod palette; // палітри (.act, *_palette.bmp)
+pub mod province; // Province.csv
+pub mod savegame; // сейви .eug + bzip2
+pub mod scenario; // сценарії .eug
+pub mod script; // лексер/парсер скрипт-мови (1669 токенів)
+pub mod tokens; // реєстр ключових слів // генерація палітри з map/Map_1/colorscales.csv (файл гри)
 
 pub use dates::*;
 
@@ -67,7 +67,10 @@ impl Terrain {
             Terrain::Marsh => 4,
             Terrain::Hills => 5,
             Terrain::Jungle => 6,
-            Terrain::Ocean | Terrain::Water | Terrain::Subarctic | Terrain::Urban
+            Terrain::Ocean
+            | Terrain::Water
+            | Terrain::Subarctic
+            | Terrain::Urban
             | Terrain::Unknown(_) => 0,
         }
     }

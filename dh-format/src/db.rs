@@ -21,9 +21,7 @@ pub struct CountryDb {
 impl CountryDb {
     pub fn load(paths: &crate::GamePaths) -> anyhow::Result<Self> {
         let mut s = Self::default();
-        let p = paths
-            .mod_dir
-            .join("db/country.csv");
+        let p = paths.mod_dir.join("db/country.csv");
         if p.is_file() {
             for line in std::fs::read_to_string(&p)?.lines() {
                 let mut it = line.split(';');
@@ -132,7 +130,10 @@ impl ColorScales {
     }
 
     fn norm(name: &str) -> String {
-        name.chars().filter(|c| !c.is_whitespace()).flat_map(|c| c.to_lowercase()).collect()
+        name.chars()
+            .filter(|c| !c.is_whitespace())
+            .flat_map(|c| c.to_lowercase())
+            .collect()
     }
 
     pub fn load_from(p: &Path) -> anyhow::Result<Self> {
@@ -146,7 +147,8 @@ impl ColorScales {
                 continue;
             }
             let parts: Vec<&str> = t.split(';').collect();
-            if t.ends_with(";;;") || (parts.len() == 4 && parts[1].is_empty() && parts[2].is_empty())
+            if t.ends_with(";;;")
+                || (parts.len() == 4 && parts[1].is_empty() && parts[2].is_empty())
             {
                 name = Some(Self::norm(parts[0].trim()));
             } else if let (Some(n), Some(r), Some(g), Some(b), Some(idx)) = (

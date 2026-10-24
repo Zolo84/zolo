@@ -2,7 +2,7 @@
 //! шкали провінцій з ВЛАСНИКІВ (FUN_004dcb20 case 0); без жодних дампів.
 //!
 //! cargo run -p dh-engine --example render_scenario_png -- \
-//!   <гра> <сценарій> <гравець> <x,y,w,h блоки> <zoom 0..4> <out.png>
+//!   <гра> <сценарій> <гравець> <x,y,w,h блоки> <zoom -3..4> <out.png>
 //!
 //! Приклад (Польща 1933):
 //!   cargo run -p dh-engine --example render_scenario_png -- \
@@ -24,11 +24,14 @@ fn main() -> anyhow::Result<()> {
     });
     let scenario = args.get(2).cloned().unwrap_or_else(|| "1933".into());
     let player = args.get(3).cloned().unwrap_or_else(|| "POL".into());
-    let view_spec = args.get(4).cloned().unwrap_or_else(|| "480,30,64,48".into());
-    let zoom: u8 = args
-        .get(5)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
+    let view_spec = args
+        .get(4)
+        .cloned()
+        .unwrap_or_else(|| "480,30,64,48".into());
+    let zoom: i8 = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(0).clamp(
+        dh_render::map_render::ZOOM_MIN,
+        dh_render::map_render::ZOOM_MAX,
+    );
     let out = args
         .get(6)
         .map(PathBuf::from)
@@ -120,7 +123,11 @@ fn main() -> anyhow::Result<()> {
             img.put_pixel(
                 x,
                 y,
-                image::Rgb([((c >> 16) & 0xFF) as u8, ((c >> 8) & 0xFF) as u8, (c & 0xFF) as u8]),
+                image::Rgb([
+                    ((c >> 16) & 0xFF) as u8,
+                    ((c >> 8) & 0xFF) as u8,
+                    (c & 0xFF) as u8,
+                ]),
             );
         }
     }
@@ -132,7 +139,11 @@ fn main() -> anyhow::Result<()> {
         for x in 0..w {
             let c = canvas.buf()[(y * w + x) as usize];
             *count
-                .entry([((c >> 16) & 0xFF) as u8, ((c >> 8) & 0xFF) as u8, (c & 0xFF) as u8])
+                .entry([
+                    ((c >> 16) & 0xFF) as u8,
+                    ((c >> 8) & 0xFF) as u8,
+                    (c & 0xFF) as u8,
+                ])
                 .or_insert(0) += 1;
         }
     }

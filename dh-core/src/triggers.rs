@@ -439,7 +439,9 @@ impl Trigger {
             T_ATWAR => return Self::parse_bool(id, args, || Condition::AtWar),
             T_WAR => Condition::WarWith(as_tag(args, "war")?),
             T_ALLIANCE => Condition::InAllianceWith(as_tag(args, "alliance")?),
-            T_ALLIES => return Self::parse_bool(id, args, || Condition::InFaction(Faction::Allies)),
+            T_ALLIES => {
+                return Self::parse_bool(id, args, || Condition::InFaction(Faction::Allies))
+            }
             T_AXIS => return Self::parse_bool(id, args, || Condition::InFaction(Faction::Axis)),
             T_COMINTERN => {
                 return Self::parse_bool(id, args, || Condition::InFaction(Faction::Comintern))
@@ -659,7 +661,11 @@ fn as_string(v: &Value, what: &str) -> Result<String> {
     match v {
         Value::String(s) => Ok(s.clone()),
         Value::Number(n) => Ok(format!("{n}")),
-        Value::Bool(b) => Ok(if *b { "yes".to_string() } else { "no".to_string() }),
+        Value::Bool(b) => Ok(if *b {
+            "yes".to_string()
+        } else {
+            "no".to_string()
+        }),
         other => bail!("{what}: очікувався рядок, отримано {other:?}"),
     }
 }
@@ -735,8 +741,18 @@ fn month_arg(v: &Value) -> Result<u8> {
         Value::Number(n) => Ok(*n as u8),
         Value::String(s) => {
             const MONTHS: [&str; 12] = [
-                "january", "february", "march", "april", "may", "june", "july", "august",
-                "september", "october", "november", "december",
+                "january",
+                "february",
+                "march",
+                "april",
+                "may",
+                "june",
+                "july",
+                "august",
+                "september",
+                "october",
+                "november",
+                "december",
             ];
             let lower = s.to_ascii_lowercase();
             MONTHS
@@ -1134,9 +1150,9 @@ impl WorldTriggers for World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::ProvinceState;
     use dh_format::script::parse_str;
     use dh_format::ProvinceResources;
-    use crate::world::ProvinceState;
 
     fn tag(s: &str) -> Tag {
         Tag(s.to_string())
@@ -1191,7 +1207,10 @@ mod tests {
         w.provinces[0].controller = Some(1);
         w.provinces[0].occupied = true;
         assert!(w.check_trigger(&sov(), &ctrl), "контролер — окупант");
-        assert!(!w.check_trigger(&ger(), &ctrl), "власник не контролює окуповану");
+        assert!(
+            !w.check_trigger(&ger(), &ctrl),
+            "власник не контролює окуповану"
+        );
 
         // Зміна власника: тепер СРСР володіє.
         w.provinces[0].owner = Some(1);
@@ -1235,10 +1254,16 @@ mod tests {
         )
         .unwrap();
         assert!(w.check_trigger(&ger(), &war));
-        assert!(!w.check_trigger(&ger(), &Trigger::from_token(0x137, &Value::String("USA".into())).unwrap()));
+        assert!(!w.check_trigger(
+            &ger(),
+            &Trigger::from_token(0x137, &Value::String("USA".into())).unwrap()
+        ));
 
         // США у світі немає — WarWith(USA) не панікує.
-        assert!(!w.check_trigger(&ger(), &Trigger::from_token(0x137, &Value::String("USA".into())).unwrap()));
+        assert!(!w.check_trigger(
+            &ger(),
+            &Trigger::from_token(0x137, &Value::String("USA".into())).unwrap()
+        ));
     }
 
     /// Вкладені and/or/not зі справжнього скрипт-тексту (лексер dh-format).
@@ -1288,7 +1313,9 @@ mod tests {
     #[test]
     fn relation_trigger_uses_country_relations() {
         let mut w = ww();
-        w.country_mut(&tag("GER")).unwrap().change_relation(&tag("SOV"), 50);
+        w.country_mut(&tag("GER"))
+            .unwrap()
+            .change_relation(&tag("SOV"), 50);
 
         let t = Trigger::from_token(
             0x135,
@@ -1383,7 +1410,10 @@ mod tests {
         assert!(!w.check_trigger(&sov(), &tagger));
 
         let ai = Trigger::from_token(0x1f9, &Value::Bool(true)).unwrap();
-        assert!(w.check_trigger(&ger(), &ai), "Country::new — ai_enabled=true");
+        assert!(
+            w.check_trigger(&ger(), &ai),
+            "Country::new — ai_enabled=true"
+        );
         w.country_mut(&tag("GER")).unwrap().ai_enabled = false;
         assert!(!w.check_trigger(&ger(), &ai));
 
@@ -1486,6 +1516,9 @@ mod tests {
         assert!(w.check_trigger(&ger(), &t));
 
         w.country_mut(&tag("GER")).unwrap().manpower = 0.5;
-        assert!(!w.check_trigger(&ger(), &t), "кон'юнкція: одна умова не виконалась");
+        assert!(
+            !w.check_trigger(&ger(), &t),
+            "кон'юнкція: одна умова не виконалась"
+        );
     }
 }

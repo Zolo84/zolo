@@ -254,7 +254,11 @@ mod tests {
         c.fill_rect(2, 2, 4, 3, GREEN);
         for y in 2..5 {
             for x in 2..6 {
-                assert_eq!(c.buf()[y * 8 + x], 0xFF00_FF00, "({x},{y}) має бути зеленим");
+                assert_eq!(
+                    c.buf()[y * 8 + x],
+                    0xFF00_FF00,
+                    "({x},{y}) має бути зеленим"
+                );
             }
         }
         // Зовні прямокутника — порожньо.

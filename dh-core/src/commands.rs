@@ -136,7 +136,11 @@ pub enum CommandType {
     /// `flag` 0x3d6 / `setflag` 0x3d7 / `clrflag` 0x3d8 / `local_flag` 0x3d9 /
     /// `local_setflag` 0x3da / `local_clrflag` 0x3db (RE-scripts.md §5, «Загальні»):
     /// сценарні прапори (сховища прапорів у Country немає — TODO).
-    Flags { flag: String, set: bool, local: bool },
+    Flags {
+        flag: String,
+        set: bool,
+        local: bool,
+    },
 
     // ================= AI / сценарій =================
     /// 12-елементні родини сценарних прапорів world: 0x1d1..0x1f4 (36 ID) —
@@ -166,7 +170,10 @@ impl CommandType {
     pub fn with_children(self, children: Vec<Command>) -> Self {
         match self {
             CommandType::Random(_) => CommandType::Random(children),
-            CommandType::Action { which, .. } => CommandType::Action { which, commands: children },
+            CommandType::Action { which, .. } => CommandType::Action {
+                which,
+                commands: children,
+            },
             other => other,
         }
     }
@@ -182,7 +189,10 @@ pub struct Command {
 
 impl Command {
     pub fn new(ctype: CommandType) -> Self {
-        Self { ctype, source: None }
+        Self {
+            ctype,
+            source: None,
+        }
     }
 
     pub fn with_source(mut self, source: impl Into<String>) -> Self {
@@ -273,8 +283,8 @@ impl Command {
             // 0x2a6 guarantee, 0x14a embargo, 0x2b5 access, 0xe4 puppet, 0xe6 make_puppet;
             // завершення: 0x2a7 end_guarantee, 0x2ad end_non_aggression,
             // 0x47f leave_alliance, 0x480 end_puppet, 0x481 end_mastery, 0x482 end_access.
-            0x13c | 0x13f | 0x14c | 0x2a6 | 0x14a | 0x2b5 | 0xe4 | 0xe6 | 0x2a7 | 0x2ad
-            | 0x47f | 0x480 | 0x481 | 0x482 => CommandType::Pact {
+            0x13c | 0x13f | 0x14c | 0x2a6 | 0x14a | 0x2b5 | 0xe4 | 0xe6 | 0x2a7 | 0x2ad | 0x47f
+            | 0x480 | 0x481 | 0x482 => CommandType::Pact {
                 kind: match id {
                     0x13c | 0x13f => PactKind::Alliance,
                     0x14c => PactKind::NonAggression,
@@ -384,24 +394,99 @@ impl Command {
 
             // ---- AI-параметри, накази, характеристики юнітів, погода/місцевість,
             //      списки провінцій: розпізнано, ефекту в ядрі немає.
-            0x17 | 0x1b | 0x35 | 0x36 | 0x3a | 0x3b | 0x41 | 0x4d | 0x55 | 0x56 | 0x58
-            | 0x62 | 0x63 | 0x66 | 0x67 | 0x68 | 0x69 | 0x6b | 0x6c | 0x6d | 0x70 | 0x71
-            | 0x72..=0x79 | 0x7c..=0x82 | 0x87 | 0x89 | 0x8c | 0x8d | 0x8e | 0x91 | 0x9b
-            | 0xa0 | 0xa1 | 0xa7 | 0xa8 | 0xaa | 0xab | 0xb7..=0xb9 | 0xbb..=0xc0
-            | 0xd1..=0xe3 | 0xe7 | 0x103..=0x107 | 0x10a | 0x10e | 0x116 | 0x11b..=0x11e
-            | 0x125..=0x129 | 0x12d | 0x138 | 0x13d | 0x140 | 0x141 | 0x147 | 0x148
-            | 0x149 | 0x14b | 0x14d..=0x150 | 0x152..=0x159 | 0x15c..=0x161 | 0x162..=0x168
-            | 0x169..=0x176 | 0x17b..=0x17d | 0x180..=0x18d | 0x18e | 0x18f | 0x192..=0x197
-            | 0x19a | 0x19b | 0x1a2..=0x1a5 | 0x1ad | 0x1b0..=0x1b2 | 0x1b9..=0x1bd
-            | 0x1c8 | 0x1c9 | 0x1cf | 0x1d0 | 0x1f5 | 0x1f6 | 0x1fa..=0x1ff
+            0x17
+            | 0x1b
+            | 0x35
+            | 0x36
+            | 0x3a
+            | 0x3b
+            | 0x41
+            | 0x4d
+            | 0x55
+            | 0x56
+            | 0x58
+            | 0x62
+            | 0x63
+            | 0x66
+            | 0x67
+            | 0x68
+            | 0x69
+            | 0x6b
+            | 0x6c
+            | 0x6d
+            | 0x70
+            | 0x71
+            | 0x72..=0x79
+            | 0x7c..=0x82
+            | 0x87
+            | 0x89
+            | 0x8c
+            | 0x8d
+            | 0x8e
+            | 0x91
+            | 0x9b
+            | 0xa0
+            | 0xa1
+            | 0xa7
+            | 0xa8
+            | 0xaa
+            | 0xab
+            | 0xb7..=0xb9
+            | 0xbb..=0xc0
+            | 0xd1..=0xe3
+            | 0xe7
+            | 0x103..=0x107
+            | 0x10a
+            | 0x10e
+            | 0x116
+            | 0x11b..=0x11e
+            | 0x125..=0x129
+            | 0x12d
+            | 0x138
+            | 0x13d
+            | 0x140
+            | 0x141
+            | 0x147
+            | 0x148
+            | 0x149
+            | 0x14b
+            | 0x14d..=0x150
+            | 0x152..=0x159
+            | 0x15c..=0x161
+            | 0x162..=0x168
+            | 0x169..=0x176
+            | 0x17b..=0x17d
+            | 0x180..=0x18d
+            | 0x18e
+            | 0x18f
+            | 0x192..=0x197
+            | 0x19a
+            | 0x19b
+            | 0x1a2..=0x1a5
+            | 0x1ad
+            | 0x1b0..=0x1b2
+            | 0x1b9..=0x1bd
+            | 0x1c8
+            | 0x1c9
+            | 0x1cf
+            | 0x1d0
+            | 0x1f5
+            | 0x1f6
+            | 0x1fa..=0x1ff
             | 0x204..=0x206 => CommandType::AiParam(id),
 
             // ---- Предикати (умови тригерів, RE-commands-details.md §5) ----
-            0x1a | 0x6a | 0xe5 | 0x13b | 0x15a | 0x15b | 0x17e | 0x17f | 0x190 | 0x1a0
-            | 0x1a1 | 0x1ae | 0x1af | 0x1c7 | 0x1ca | 0x200 | 0x202 => CommandType::Predicate(id),
+            0x1a | 0x6a | 0xe5 | 0x13b | 0x15a | 0x15b | 0x17e | 0x17f | 0x190 | 0x1a0 | 0x1a1
+            | 0x1ae | 0x1af | 0x1c7 | 0x1ca | 0x200 | 0x202 => CommandType::Predicate(id),
 
             // ---- Поля структур/UI (дані парсера) ----
-            0x198 | 0x199 | 0x19c..=0x19f | 0x1a6..=0x1ac | 0x1be | 0x1bf | 0x1c2..=0x1c6
+            0x198
+            | 0x199
+            | 0x19c..=0x19f
+            | 0x1a6..=0x1ac
+            | 0x1be
+            | 0x1bf
+            | 0x1c2..=0x1c6
             | 0x1cb..=0x1ce => CommandType::StructField(id),
 
             other => {
@@ -413,7 +498,10 @@ impl Command {
             }
         };
 
-        Ok(Self { ctype, source: None })
+        Ok(Self {
+            ctype,
+            source: None,
+        })
     }
 }
 
@@ -497,12 +585,16 @@ pub struct CommandExecutor {
 
 impl CommandExecutor {
     pub fn new() -> Self {
-        Self { rng: GameRng::new() }
+        Self {
+            rng: GameRng::new(),
+        }
     }
 
     /// Виконавець із детермінованим сидом (для тестів і відтворюваних партій).
     pub fn with_seed(seed: u64) -> Self {
-        Self { rng: GameRng::with_seed(seed) }
+        Self {
+            rng: GameRng::with_seed(seed),
+        }
     }
 
     pub fn seed_rng(&mut self, seed: u64) {
@@ -565,7 +657,10 @@ impl EffectExecutor for CommandExecutor {
             CommandType::Prestige(v) => {
                 if let Some(c) = country_for(world, target) {
                     c.prestige += *v;
-                    log::debug!("[commands:{src}] prestige/wealth: {} += {v}", c.tag.as_str());
+                    log::debug!(
+                        "[commands:{src}] prestige/wealth: {} += {v}",
+                        c.tag.as_str()
+                    );
                 } else {
                     log::warn!("[commands:{src}] prestige: ціль не країна ({target:?}) — пропуск");
                 }
@@ -606,12 +701,18 @@ impl EffectExecutor for CommandExecutor {
                 if let Some(c) = country_for(world, target) {
                     c.resources.rare += *v;
                 } else {
-                    log::warn!("[commands:{src}] rare_materials: ціль не країна ({target:?}) — пропуск");
+                    log::warn!(
+                        "[commands:{src}] rare_materials: ціль не країна ({target:?}) — пропуск"
+                    );
                 }
             }
 
             // ================= Дипломатія =================
-            CommandType::Relation { tag, target: to, value } => {
+            CommandType::Relation {
+                tag,
+                target: to,
+                value,
+            } => {
                 let Some(i) = resolve_country(world, tag, target) else {
                     log::warn!("[commands:{src}] relation: невідома країна-джерело ({tag:?})");
                     return Ok(());
@@ -627,7 +728,11 @@ impl EffectExecutor for CommandExecutor {
                     to.as_str()
                 );
             }
-            CommandType::SetRelation { tag, target: to, value } => {
+            CommandType::SetRelation {
+                tag,
+                target: to,
+                value,
+            } => {
                 let Some(i) = resolve_country(world, tag, target) else {
                     log::warn!("[commands:{src}] set_relation: невідома країна-джерело ({tag:?})");
                     return Ok(());
@@ -661,7 +766,11 @@ impl EffectExecutor for CommandExecutor {
                     return Ok(());
                 };
                 if world.declare_war(&from_tag, to) {
-                    log::debug!("[commands:{src}] war: {} ↔ {}", from_tag.as_str(), to.as_str());
+                    log::debug!(
+                        "[commands:{src}] war: {} ↔ {}",
+                        from_tag.as_str(),
+                        to.as_str()
+                    );
                 } else {
                     log::warn!(
                         "[commands:{src}] war: {} ↔ {} — невідомий тег або війна вже йде",
@@ -684,7 +793,9 @@ impl EffectExecutor for CommandExecutor {
                             &from_owned
                         }
                         _ => {
-                            log::warn!("[commands:{src}] peace: немає країни-джерела (target={target:?})");
+                            log::warn!(
+                                "[commands:{src}] peace: немає країни-джерела (target={target:?})"
+                            );
                             return Ok(());
                         }
                     }
@@ -711,7 +822,12 @@ impl EffectExecutor for CommandExecutor {
                     to.as_str()
                 );
             }
-            CommandType::Pact { kind, from, to, end } => {
+            CommandType::Pact {
+                kind,
+                from,
+                to,
+                end,
+            } => {
                 match kind {
                     PactKind::Alliance => {
                         let from_idx = resolve_country(world, from, target);
@@ -885,7 +1001,11 @@ impl EffectExecutor for CommandExecutor {
             }
 
             // ================= AI / сценарій =================
-            CommandType::ScenarioFlag { family, index, value } => {
+            CommandType::ScenarioFlag {
+                family,
+                index,
+                value,
+            } => {
                 // В ориг. — byte[world+0x3bf3/+0x3bff/+0x3bf9+idx] = value
                 // (RE-commands-details.md §3); у нас прапорів світу немає (TODO).
                 log::debug!(
@@ -960,13 +1080,15 @@ mod tests {
         let mut ex = CommandExecutor::new();
         // money 0xf6, значення 100.5.
         let cmd = Command::from_token(0xf6, &[100.5], &[]).unwrap();
-        ex.execute(&mut w, &CommandTarget::Country(0), &cmd).unwrap();
+        ex.execute(&mut w, &CommandTarget::Country(0), &cmd)
+            .unwrap();
         assert!((w.countries[0].money - 100.5).abs() < 1e-9);
         assert_eq!(w.countries[1].money, 0.0);
 
         // Від'ємний аргумент — витрата.
         let cmd = Command::from_token(0xf6, &[-10.0], &[]).unwrap();
-        ex.execute(&mut w, &CommandTarget::Country(0), &cmd).unwrap();
+        ex.execute(&mut w, &CommandTarget::Country(0), &cmd)
+            .unwrap();
         assert!((w.countries[0].money - 90.5).abs() < 1e-9);
     }
 
@@ -977,7 +1099,8 @@ mod tests {
         // war 0x137: тег доповнюється з цілі виконання (Германія).
         let cmd = Command::from_token(0x137, &[], &[String::from("SOV")]).unwrap();
         assert!(matches!(cmd.ctype, CommandType::War { .. }));
-        ex.execute(&mut w, &CommandTarget::Country(0), &cmd).unwrap();
+        ex.execute(&mut w, &CommandTarget::Country(0), &cmd)
+            .unwrap();
         assert!(w.countries[0].at_war.contains(&tag("SOV")));
         assert!(w.countries[1].at_war.contains(&tag("GER")));
         // Відносини обидвім сторонам — −200 (як у SETUP_WAR).
@@ -998,7 +1121,8 @@ mod tests {
 
         let mut ex = CommandExecutor::new();
         let cmd = Command::from_token(0x1b4, &[], &[String::from("SOV")]).unwrap();
-        ex.execute(&mut w, &CommandTarget::Country(0), &cmd).unwrap();
+        ex.execute(&mut w, &CommandTarget::Country(0), &cmd)
+            .unwrap();
         assert!(w.countries[0].at_war.is_empty());
         assert!(w.countries[1].at_war.is_empty());
     }
@@ -1014,7 +1138,8 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for _ in 0..24 {
             let mut w = two_country_world();
-            ex.execute(&mut w, &CommandTarget::Country(0), &cmd).unwrap();
+            ex.execute(&mut w, &CommandTarget::Country(0), &cmd)
+                .unwrap();
             let delta = w.countries[0].money;
             assert!(delta == 1.0 || delta == 2.0, "delta={delta}");
             seen.insert(delta as i64);
@@ -1029,12 +1154,14 @@ mod tests {
         let mut ex = CommandExecutor::new();
         // relation 0x135: значення — дельта до ставлення GER→SOV.
         let cmd = Command::from_token(0x135, &[25.0], &[String::from("SOV")]).unwrap();
-        ex.execute(&mut w, &CommandTarget::Country(0), &cmd).unwrap();
+        ex.execute(&mut w, &CommandTarget::Country(0), &cmd)
+            .unwrap();
         assert_eq!(w.countries[0].relations.get(&tag("SOV")), Some(&25));
 
         // Кламп −200..200 (як change_relation).
         let cmd = Command::from_token(0x135, &[1000.0], &[String::from("SOV")]).unwrap();
-        ex.execute(&mut w, &CommandTarget::Country(0), &cmd).unwrap();
+        ex.execute(&mut w, &CommandTarget::Country(0), &cmd)
+            .unwrap();
         assert_eq!(w.countries[0].relations.get(&tag("SOV")), Some(&200));
     }
 
@@ -1051,7 +1178,8 @@ mod tests {
             (0x232, "rare"),
         ] {
             let cmd = Command::from_token(id, &[10.0], &[]).unwrap();
-            ex.execute(&mut w, &CommandTarget::Country(0), &cmd).unwrap();
+            ex.execute(&mut w, &CommandTarget::Country(0), &cmd)
+                .unwrap();
             let c = &w.countries[0];
             let v = match field {
                 "supplies" => c.resources.supplies,
@@ -1065,7 +1193,8 @@ mod tests {
 
         // gain_tech 0x407.
         let cmd = Command::from_token(0x407, &[123.0], &[]).unwrap();
-        ex.execute(&mut w, &CommandTarget::Country(0), &cmd).unwrap();
+        ex.execute(&mut w, &CommandTarget::Country(0), &cmd)
+            .unwrap();
         assert_eq!(w.countries[0].techs, vec![123]);
     }
 
@@ -1103,38 +1232,37 @@ mod tests {
         let cmd = Command::from_token(0x7fff, &[], &[]).unwrap();
         assert!(matches!(cmd.ctype, CommandType::Unknown(0x7fff)));
         // Виконання не панікує, лише warn.
-        ex.execute(&mut w, &CommandTarget::Country(0), &cmd).unwrap();
+        ex.execute(&mut w, &CommandTarget::Country(0), &cmd)
+            .unwrap();
     }
 
     /// Усі 289 ID словника (RE-commands.md §2) зіставляються з відомим типом.
     #[test]
     fn all_289_ids_map_to_known_types() {
         const KNOWN: [u16; 289] = [
-            0x17, 0x18, 0x19, 0x1a, 0x1b, 0x35, 0x36, 0x3a, 0x3b, 0x41, 0x4d, 0x55, 0x56,
-            0x58, 0x62, 0x63, 0x66, 0x67, 0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x70, 0x71,
-            0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7c, 0x7d, 0x7e, 0x7f, 0x80,
-            0x81, 0x82, 0x87, 0x89, 0x8c, 0x8d, 0x8e, 0x91, 0x9b, 0xa0, 0xa1, 0xa7, 0xa8,
-            0xaa, 0xab, 0xb7, 0xb8, 0xb9, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf, 0xc0, 0xd1, 0xd2,
-            0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf,
-            0xe0, 0xe1, 0xe2, 0xe3, 0xe5, 0xe7, 0xf6, 0x103, 0x104, 0x105, 0x106, 0x107,
-            0x10a, 0x10b, 0x10e, 0x116, 0x11b, 0x11c, 0x11d, 0x11e, 0x125, 0x126, 0x127,
-            0x128, 0x129, 0x12d, 0x137, 0x138, 0x13b, 0x13c, 0x13d, 0x13f, 0x140, 0x141,
-            0x147, 0x148, 0x149, 0x14a, 0x14b, 0x14c, 0x14d, 0x14e, 0x14f, 0x150, 0x152,
-            0x153, 0x154, 0x155, 0x156, 0x157, 0x158, 0x159, 0x15a, 0x15b, 0x15c, 0x15d,
-            0x15e, 0x15f, 0x160, 0x161, 0x162, 0x163, 0x164, 0x165, 0x166, 0x167, 0x168,
-            0x169, 0x16a, 0x16b, 0x16c, 0x16d, 0x16e, 0x16f, 0x170, 0x171, 0x172, 0x173,
-            0x174, 0x175, 0x176, 0x17b, 0x17c, 0x17d, 0x17e, 0x17f, 0x180, 0x181, 0x182,
-            0x183, 0x184, 0x185, 0x186, 0x187, 0x188, 0x189, 0x18a, 0x18b, 0x18c, 0x18d,
-            0x18e, 0x18f, 0x190, 0x192, 0x193, 0x194, 0x195, 0x196, 0x197, 0x198, 0x199,
-            0x19a, 0x19b, 0x19c, 0x19d, 0x19e, 0x19f, 0x1a0, 0x1a1, 0x1a2, 0x1a3, 0x1a4,
-            0x1a5, 0x1a6, 0x1a7, 0x1a8, 0x1a9, 0x1aa, 0x1ab, 0x1ac, 0x1ad, 0x1ae, 0x1af,
-            0x1b0, 0x1b1, 0x1b2, 0x1b9, 0x1ba, 0x1bb, 0x1bc, 0x1bd, 0x1be, 0x1bf, 0x1c2,
-            0x1c3, 0x1c4, 0x1c5, 0x1c6, 0x1c7, 0x1c8, 0x1c9, 0x1ca, 0x1cb, 0x1cc, 0x1cd,
-            0x1ce, 0x1cf, 0x1d0, 0x1d1, 0x1d2, 0x1d3, 0x1d4, 0x1d5, 0x1d6, 0x1d7, 0x1d8,
-            0x1d9, 0x1da, 0x1db, 0x1dc, 0x1dd, 0x1de, 0x1df, 0x1e0, 0x1e1, 0x1e2, 0x1e3,
-            0x1e4, 0x1e5, 0x1e6, 0x1e7, 0x1e8, 0x1e9, 0x1ea, 0x1eb, 0x1ec, 0x1ed, 0x1ee,
-            0x1ef, 0x1f0, 0x1f1, 0x1f2, 0x1f3, 0x1f4, 0x1f5, 0x1f6, 0x1f7, 0x1f8, 0x1f9,
-            0x1fa, 0x1fb, 0x1fc, 0x1fd, 0x1fe, 0x1ff, 0x200, 0x202, 0x203, 0x204, 0x205,
+            0x17, 0x18, 0x19, 0x1a, 0x1b, 0x35, 0x36, 0x3a, 0x3b, 0x41, 0x4d, 0x55, 0x56, 0x58,
+            0x62, 0x63, 0x66, 0x67, 0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x70, 0x71, 0x72, 0x73,
+            0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7c, 0x7d, 0x7e, 0x7f, 0x80, 0x81, 0x82, 0x87,
+            0x89, 0x8c, 0x8d, 0x8e, 0x91, 0x9b, 0xa0, 0xa1, 0xa7, 0xa8, 0xaa, 0xab, 0xb7, 0xb8,
+            0xb9, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf, 0xc0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7,
+            0xd8, 0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf, 0xe0, 0xe1, 0xe2, 0xe3, 0xe5, 0xe7,
+            0xf6, 0x103, 0x104, 0x105, 0x106, 0x107, 0x10a, 0x10b, 0x10e, 0x116, 0x11b, 0x11c,
+            0x11d, 0x11e, 0x125, 0x126, 0x127, 0x128, 0x129, 0x12d, 0x137, 0x138, 0x13b, 0x13c,
+            0x13d, 0x13f, 0x140, 0x141, 0x147, 0x148, 0x149, 0x14a, 0x14b, 0x14c, 0x14d, 0x14e,
+            0x14f, 0x150, 0x152, 0x153, 0x154, 0x155, 0x156, 0x157, 0x158, 0x159, 0x15a, 0x15b,
+            0x15c, 0x15d, 0x15e, 0x15f, 0x160, 0x161, 0x162, 0x163, 0x164, 0x165, 0x166, 0x167,
+            0x168, 0x169, 0x16a, 0x16b, 0x16c, 0x16d, 0x16e, 0x16f, 0x170, 0x171, 0x172, 0x173,
+            0x174, 0x175, 0x176, 0x17b, 0x17c, 0x17d, 0x17e, 0x17f, 0x180, 0x181, 0x182, 0x183,
+            0x184, 0x185, 0x186, 0x187, 0x188, 0x189, 0x18a, 0x18b, 0x18c, 0x18d, 0x18e, 0x18f,
+            0x190, 0x192, 0x193, 0x194, 0x195, 0x196, 0x197, 0x198, 0x199, 0x19a, 0x19b, 0x19c,
+            0x19d, 0x19e, 0x19f, 0x1a0, 0x1a1, 0x1a2, 0x1a3, 0x1a4, 0x1a5, 0x1a6, 0x1a7, 0x1a8,
+            0x1a9, 0x1aa, 0x1ab, 0x1ac, 0x1ad, 0x1ae, 0x1af, 0x1b0, 0x1b1, 0x1b2, 0x1b9, 0x1ba,
+            0x1bb, 0x1bc, 0x1bd, 0x1be, 0x1bf, 0x1c2, 0x1c3, 0x1c4, 0x1c5, 0x1c6, 0x1c7, 0x1c8,
+            0x1c9, 0x1ca, 0x1cb, 0x1cc, 0x1cd, 0x1ce, 0x1cf, 0x1d0, 0x1d1, 0x1d2, 0x1d3, 0x1d4,
+            0x1d5, 0x1d6, 0x1d7, 0x1d8, 0x1d9, 0x1da, 0x1db, 0x1dc, 0x1dd, 0x1de, 0x1df, 0x1e0,
+            0x1e1, 0x1e2, 0x1e3, 0x1e4, 0x1e5, 0x1e6, 0x1e7, 0x1e8, 0x1e9, 0x1ea, 0x1eb, 0x1ec,
+            0x1ed, 0x1ee, 0x1ef, 0x1f0, 0x1f1, 0x1f2, 0x1f3, 0x1f4, 0x1f5, 0x1f6, 0x1f7, 0x1f8,
+            0x1f9, 0x1fa, 0x1fb, 0x1fc, 0x1fd, 0x1fe, 0x1ff, 0x200, 0x202, 0x203, 0x204, 0x205,
             0x206,
         ];
         for id in KNOWN {

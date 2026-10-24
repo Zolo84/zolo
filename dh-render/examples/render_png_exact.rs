@@ -8,13 +8,17 @@ fn main() -> anyhow::Result<()> {
         PathBuf::from(std::env::var("HOME").unwrap())
             .join(".local/share/Steam/steamapps/common/Darkest Hour A HOI Game")
     });
-    let out = args.get(2).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp/dh-exact-minimap.png"));
+    let out = args
+        .get(2)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp/dh-exact-minimap.png"));
 
     let paths = dh_format::GamePaths::with_custom(game);
     let map = dh_format::map::load(&paths)?;
-    let color_model = dh_format::map_color::GameColorModel::load(
-        &PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../dh-format/data")),
-    )?;
+    let color_model = dh_format::map_color::GameColorModel::load(&PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../dh-format/data"
+    )))?;
 
     // Міні-карта: 1 піксель = 1 блок; колір — центральний піксель lightmap через color_exact.
     let mut img = image::RgbImage::new(936, 360);

@@ -14,7 +14,9 @@ fn main() -> anyhow::Result<()> {
         let table = 4 * (n + 1);
         let mut offs = Vec::with_capacity(n + 1);
         for i in 0..=n {
-            offs.push(u32::from_le_bytes(data[4 * i..4 * i + 4].try_into().unwrap()));
+            offs.push(u32::from_le_bytes(
+                data[4 * i..4 * i + 4].try_into().unwrap(),
+            ));
         }
         let lvl = LightmapLevel {
             level: level as u8,
@@ -33,7 +35,10 @@ fn main() -> anyhow::Result<()> {
                     Ok(t) => {
                         total_leaves += t.prov_ids.iter().filter(|&&v| v != 0).count() as u64;
                         max_leaves = max_leaves.max(
-                            t.prov_ids.chunks(32).map(|row| row.iter().filter(|&&v| v != 0).count() as u32).sum::<u32>(),
+                            t.prov_ids
+                                .chunks(32)
+                                .map(|row| row.iter().filter(|&&v| v != 0).count() as u32)
+                                .sum::<u32>(),
                         );
                     }
                     Err(e) => {

@@ -13,7 +13,9 @@ fn main() -> anyhow::Result<()> {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp/dh-render-out.png"));
     // Необов'язковий в'юпорт: x y w h (блоки 32×32). Дефолт — Північна Атлантика.
-    let view: Option<Vec<u32>> = args.get(3).map(|s| s.split(',').map(|v| v.parse().unwrap_or(0)).collect());
+    let view: Option<Vec<u32>> = args
+        .get(3)
+        .map(|s| s.split(',').map(|v| v.parse().unwrap_or(0)).collect());
     // Необов'язковий сценарій (ім'я .eug у scenarios/): політична карта за власниками.
     let scenario = args.get(4).cloned();
 
@@ -38,7 +40,10 @@ fn main() -> anyhow::Result<()> {
 
     // Політична карта: власник (з .eug) → колір країни (country.csv + colorscales.csv).
     if let Some(sc_name) = &scenario {
-        let sc_path = paths.mod_dir.join("scenarios").join(format!("{sc_name}.eug"));
+        let sc_path = paths
+            .mod_dir
+            .join("scenarios")
+            .join(format!("{sc_name}.eug"));
         let sc = dh_format::scenario::load_scenario(&sc_path)?;
         let country_db = dh_format::db::CountryDb::load(&paths)?;
         let mut n_owned = 0;
@@ -104,9 +109,10 @@ fn main() -> anyhow::Result<()> {
     r.prov_colors = Some(&prov_colors);
 
     // Точна модель кольору (палітра 0xA44C34 + LUT): dh-format/data.
-    let color_model = dh_format::map_color::GameColorModel::load(
-        &PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../dh-format/data")),
-    )
+    let color_model = dh_format::map_color::GameColorModel::load(&PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../dh-format/data"
+    )))
     .map_err(|e| anyhow::anyhow!("color model: {e:#}"))?;
     r.color_model = Some(&color_model);
 
@@ -125,7 +131,11 @@ fn main() -> anyhow::Result<()> {
     for y in 0..720 {
         for x in 0..1280 {
             let px = canvas.buf()[(y * 1280 + x) as usize];
-            img.put_pixel(x, y, image::Rgb([(px >> 16) as u8, (px >> 8) as u8, px as u8]));
+            img.put_pixel(
+                x,
+                y,
+                image::Rgb([(px >> 16) as u8, (px >> 8) as u8, px as u8]),
+            );
         }
     }
     img.save(&out)?;

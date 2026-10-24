@@ -11,7 +11,9 @@ fn main() -> anyhow::Result<()> {
     let table = 4 * (n + 1);
     let mut offs = Vec::with_capacity(n + 1);
     for i in 0..=n {
-        offs.push(u32::from_le_bytes(data[4 * i..4 * i + 4].try_into().unwrap()));
+        offs.push(u32::from_le_bytes(
+            data[4 * i..4 * i + 4].try_into().unwrap(),
+        ));
     }
     let lvl = LightmapLevel {
         level: 1,
@@ -39,7 +41,13 @@ fn main() -> anyhow::Result<()> {
                 let mut row = String::new();
                 for x in 0..32 {
                     let v = t.prov_ids[(y * 32 + x) as usize];
-                    row.push(if v == 56 { 'P' } else if v == 0 { '.' } else { '#' });
+                    row.push(if v == 56 {
+                        'P'
+                    } else if v == 0 {
+                        '.'
+                    } else {
+                        '#'
+                    });
                 }
                 println!("{row}");
             }

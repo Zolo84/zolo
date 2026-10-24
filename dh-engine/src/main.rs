@@ -291,9 +291,9 @@ fn run_headless(paths: &GamePaths, cli: &Cli) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 use dh_render::canvas::RenderSurface;
-use dh_render::wgpu_canvas::WgpuCanvas;
 use dh_render::map_render::{MapRenderer, Viewport};
 use dh_render::text::{self, TextAlign, TextStyle};
+use dh_render::wgpu_canvas::WgpuCanvas;
 
 const VIEW_W: u32 = 1280;
 const VIEW_H: u32 = 800;
@@ -311,7 +311,8 @@ struct AppState {
     /// Верхній лівий кут камери в блоках 32×32.
     cam_x: u32,
     cam_y: u32,
-    zoom: u8,
+    /// Зум: -3..=4 (від'ємний = зум-аут з mipmap-світлом L2..L4).
+    zoom: i8,
     last_frame: Instant,
     keys_down: std::collections::HashSet<winit::keyboard::KeyCode>,
     /// Кольори провінцій для політичної карти: id → ARGB (власник → колір країни
@@ -334,7 +335,9 @@ impl AppState {
     fn hud_font(&self) -> Option<&BitmapFont> {
         self.fonts
             .iter()
-            .find(|f| f.set == "root" && f.size == 14 && f.name.to_ascii_lowercase().contains("eurostile"))
+            .find(|f| {
+                f.set == "root" && f.size == 14 && f.name.to_ascii_lowercase().contains("eurostile")
+            })
             .or_else(|| self.fonts.iter().find(|f| f.size >= 12 && f.size <= 18))
             .or_else(|| self.fonts.first())
     }
@@ -358,7 +361,9 @@ impl AppState {
         // Власники: колір країни перекриває колір місцевості.
         for prov in &world.provinces {
             let Some(owner) = prov.owner else { continue };
-            let Some(country) = world.countries.get(owner) else { continue };
+            let Some(country) = world.countries.get(owner) else {
+                continue;
+            };
             let (r, g, b) = country_db.color_of(&country.tag);
             colors[prov.id as usize] =
                 0xFF00_0000 | ((r as u32) << 16) | ((g as u32) << 8) | b as u32;
@@ -429,7 +434,19 @@ impl AppState {
         let cam_x = self.cam_x;
         let cam_y = self.cam_y;
 
-        let view = Viewport::new(cam_x, cam_y, (w / 32).max(1), (h / 32).max(1));
+        // Блоків у в'юпорті: при zoom ≥ 0 кожен блок = 32·2^z пікселів екрана,
+        // при зум-ауті (zoom < 0) = 32/2^k, тож блоків на екрані більше.
+        let w_blocks = if self.zoom >= 0 {
+            (w / 32).max(1)
+        } else {
+            ((w << -self.zoom) / 32).max(1)
+        };
+        let h_blocks = if self.zoom >= 0 {
+            (h / 32).max(1)
+        } else {
+            ((h << -self.zoom) / 32).max(1)
+        };
+        let view = Viewport::new(cam_x, cam_y, w_blocks, h_blocks);
         let mut renderer = MapRenderer::new(map_ref, zoom, view).with_provinces(false);
         renderer.prov_colors = Some(&self.prov_colors);
         renderer.prov_terrain = Some(&self.prov_terrain);
@@ -491,7 +508,8 @@ impl AppState {
 
         // Рух камери (утримування WASD) — крок у блоках, масштабований зумом.
         if !self.keys_down.is_empty() {
-            let step = 1.max(8 - self.zoom as i64 * 2); // зум більший → крок менший
+            // Зум-аут (від'ємний) → більший крок: 8 − 2·(−k) = 8+2k.
+            let step = 1.max(8 - self.zoom as i64 * 2);
             use winit::keyboard::KeyCode::*;
             for k in &self.keys_down {
                 match k {
@@ -509,9 +527,9 @@ impl AppState {
 fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
     use winit::application::ApplicationHandler;
     use winit::dpi::LogicalSize;
+    use winit::event::ElementState;
     use winit::event::WindowEvent;
     use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-    use winit::event::ElementState;
     use winit::keyboard::{KeyCode, PhysicalKey};
     use winit::window::Window;
 
@@ -585,20 +603,30 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
             };
             let size = window.inner_size();
             let display = el.owned_display_handle();
-            let surface =
-                WgpuCanvas::new(&window, Box::new(display), size.width.max(1), size.height.max(1))
-                    .expect("wgpu");
+            let surface = WgpuCanvas::new(
+                &window,
+                Box::new(display),
+                size.width.max(1),
+                size.height.max(1),
+            )
+            .expect("wgpu");
             // WgpuCanvas позичає &Window — протягом життя App вікно живе,
             // тож продовження життя через transmute є безпечним (App тримає Window).
-            self.0.surface =
-                Some(unsafe { std::mem::transmute::<WgpuCanvas<'_>, WgpuCanvas<'static>>(surface) });
+            self.0.surface = Some(unsafe {
+                std::mem::transmute::<WgpuCanvas<'_>, WgpuCanvas<'static>>(surface)
+            });
             self.0.window = Some(window);
             self.0.last_frame = Instant::now();
             log::info!("вікно створено (бекенд: Wayland або X11 за середовищем)");
             el.set_control_flow(ControlFlow::Poll);
         }
 
-        fn window_event(&mut self, el: &ActiveEventLoop, _id: winit::window::WindowId, event: WindowEvent) {
+        fn window_event(
+            &mut self,
+            el: &ActiveEventLoop,
+            _id: winit::window::WindowId,
+            event: WindowEvent,
+        ) {
             match event {
                 WindowEvent::CloseRequested => {
                     log::info!("закриття вікна");
@@ -623,7 +651,14 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
                             KeyCode::Space => {
                                 if let Some(w) = &mut self.0.world {
                                     w.paused = !w.paused;
-                                    log::info!("{}", if w.paused { "ПАУЗА" } else { "гра триває" });
+                                    log::info!(
+                                        "{}",
+                                        if w.paused {
+                                            "ПАУЗА"
+                                        } else {
+                                            "гра триває"
+                                        }
+                                    );
                                 }
                             }
                             KeyCode::Digit1 => self.0.set_speed(1),
@@ -634,11 +669,13 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
                             KeyCode::Digit6 => self.0.set_speed(6),
                             KeyCode::Digit7 => self.0.set_speed(7),
                             KeyCode::Equal | KeyCode::NumpadAdd => {
-                                self.0.zoom = (self.0.zoom + 1).min(4);
+                                self.0.zoom =
+                                    (self.0.zoom + 1).min(dh_render::map_render::ZOOM_MAX);
                                 log::info!("зум: {}", self.0.zoom);
                             }
                             KeyCode::Minus | KeyCode::NumpadSubtract => {
-                                self.0.zoom = self.0.zoom.saturating_sub(1);
+                                self.0.zoom =
+                                    (self.0.zoom - 1).max(dh_render::map_render::ZOOM_MIN);
                                 log::info!("зум: {}", self.0.zoom);
                             }
                             _ => {
@@ -663,7 +700,9 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
             if let Some(w) = self.0.window.as_ref() {
                 w.request_redraw();
             }
-            el.set_control_flow(ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(16)));
+            el.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(16),
+            ));
         }
     }
 
@@ -701,14 +740,8 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
         AppState::build_province_scales(&prov_csv, world.as_ref(), &country_db, &cli.player);
     {
         use dh_format::colorscale::DARK_FLAG;
-        let bright = prov_scales
-            .iter()
-            .filter(|&&s| s & DARK_FLAG == 0)
-            .count();
-        let water = prov_scales
-            .iter()
-            .filter(|&&s| s == 23 | DARK_FLAG)
-            .count();
+        let bright = prov_scales.iter().filter(|&&s| s & DARK_FLAG == 0).count();
+        let water = prov_scales.iter().filter(|&&s| s == 23 | DARK_FLAG).count();
         log::info!(
             "шкали провінцій: {} світлих (гравець {}), {} морських (55), решта темні",
             bright,

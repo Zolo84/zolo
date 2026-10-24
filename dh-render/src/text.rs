@@ -91,7 +91,14 @@ pub fn measure(font: &BitmapFont, text: &[u8], scale: u32) -> (u32, u32) {
 
 /// Малює текст на канвасі в `(x, y)` (верхній лівий кут першого рядка) зі
 /// стилем `style`: переноси рядків, вирівнювання, тінь і колірні теги.
-pub fn draw(canvas: &mut Canvas, font: &BitmapFont, text: &[u8], x: i32, y: i32, style: &TextStyle) {
+pub fn draw(
+    canvas: &mut Canvas,
+    font: &BitmapFont,
+    text: &[u8],
+    x: i32,
+    y: i32,
+    style: &TextStyle,
+) {
     let scale = style.scale.max(1);
     let line_step = font.size * scale;
 
@@ -186,7 +193,16 @@ fn draw_line(
             let new = tag_color(line[i + 1], style.color);
             if new != Some(color) {
                 // колір змінився (або тег невідомий) → закриваємо сегмент
-                seg_x += blit_segment(canvas, font, &line[seg_start..i], seg_x, y, color, style.shadow, scale) as i32;
+                seg_x += blit_segment(
+                    canvas,
+                    font,
+                    &line[seg_start..i],
+                    seg_x,
+                    y,
+                    color,
+                    style.shadow,
+                    scale,
+                ) as i32;
                 seg_start = i + 2;
             } else {
                 // тег з тим самим кольором — просто пропускаємо обидва байти
@@ -199,7 +215,16 @@ fn draw_line(
         }
         i += 1;
     }
-    blit_segment(canvas, font, &line[seg_start..], seg_x, y, color, style.shadow, scale);
+    blit_segment(
+        canvas,
+        font,
+        &line[seg_start..],
+        seg_x,
+        y,
+        color,
+        style.shadow,
+        scale,
+    );
 }
 
 /// Рендерить сегмент у маску й блітить її кольором (тінь — чорною копією зі
@@ -292,7 +317,11 @@ mod tests {
         let f = font10();
         assert_eq!(measure(&f, b"AB", 1), (5, 2));
         assert_eq!(measure(&f, b"AB", 2), (10, 4));
-        assert_eq!(measure(&f, b"", 1), (0, 2), "порожній текст = один порожній рядок");
+        assert_eq!(
+            measure(&f, b"", 1),
+            (0, 2),
+            "порожній текст = один порожній рядок"
+        );
         // пробіл 0x20: гліфа немає → крок = size
         assert_eq!(measure(&f, b"A B", 1), (2 + 2 + 3, 2));
     }
@@ -310,7 +339,11 @@ mod tests {
         let f = font10();
         assert_eq!(measure(&f, b"\xA7RAB", 1), (5, 2));
         assert_eq!(measure(&f, b"A\xA7GB", 1), (5, 2));
-        assert_eq!(measure(&f, b"A\xA7xB", 1), (5, 2), "невідомий тег — теж 2 байти без ширини");
+        assert_eq!(
+            measure(&f, b"A\xA7xB", 1),
+            (5, 2),
+            "невідомий тег — теж 2 байти без ширини"
+        );
         // самотній § наприкінці: літери немає → звичайний байт (гліфа немає → крок size)
         assert_eq!(measure(&f, b"AB\xA7", 1), (2 + 3 + 2, 2));
     }
@@ -355,7 +388,10 @@ mod tests {
     #[test]
     fn draw_scale_stretches_glyph() {
         let f = font10();
-        let style = TextStyle { scale: 2, ..TextStyle::default() };
+        let style = TextStyle {
+            scale: 2,
+            ..TextStyle::default()
+        };
         let mut c = Canvas::new(16, 16);
         draw(&mut c, &f, b"C", 0, 0, &style);
         // C: смуга 1×2 → блок 2×4
@@ -372,7 +408,10 @@ mod tests {
         let f = font10();
         // Найширший рядок "AB" (5), рядок "B" (3).
         // Center: "B" зсунуто на (5-3)/2 = 1.
-        let style = TextStyle { align: TextAlign::Center, ..TextStyle::default() };
+        let style = TextStyle {
+            align: TextAlign::Center,
+            ..TextStyle::default()
+        };
         let mut c = Canvas::new(16, 16);
         draw(&mut c, &f, b"B\nAB", 0, 0, &style);
         assert_eq!(px(&c, 0, 0), EMPTY);
@@ -383,7 +422,10 @@ mod tests {
         assert_eq!(px(&c, 4, 2), WHITE);
 
         // Right: "B" зсунуто на 2.
-        let style = TextStyle { align: TextAlign::Right, ..TextStyle::default() };
+        let style = TextStyle {
+            align: TextAlign::Right,
+            ..TextStyle::default()
+        };
         let mut c = Canvas::new(16, 16);
         draw(&mut c, &f, b"B\nAB", 0, 0, &style);
         assert_eq!(px(&c, 0, 0), EMPTY);
@@ -403,7 +445,10 @@ mod tests {
     #[test]
     fn draw_shadow_offset() {
         let f = font10();
-        let style = TextStyle { shadow: true, ..TextStyle::default() };
+        let style = TextStyle {
+            shadow: true,
+            ..TextStyle::default()
+        };
         let mut c = Canvas::new(16, 16);
         draw(&mut c, &f, b"C", 5, 5, &style);
         assert_eq!(px(&c, 5, 5), WHITE, "чорнило на місці");
@@ -439,7 +484,10 @@ mod tests {
         assert_eq!(px(&c, 0, 0), GREEN);
 
         // §r — скидання до style.color
-        let style = TextStyle { color: [0, 0, 255], ..TextStyle::default() };
+        let style = TextStyle {
+            color: [0, 0, 255],
+            ..TextStyle::default()
+        };
         let mut c = Canvas::new(16, 16);
         draw(&mut c, &f, b"A\xA7R\xA7rB", 0, 0, &style);
         assert_eq!(px(&c, 0, 0), BLUE);
@@ -492,7 +540,10 @@ mod tests {
     #[test]
     fn measure_matches_drawn_extent() {
         let f = font10();
-        let style = TextStyle { scale: 2, ..TextStyle::default() };
+        let style = TextStyle {
+            scale: 2,
+            ..TextStyle::default()
+        };
         let (w, h) = measure(&f, b"AB\nB", 2);
         assert_eq!((w, h), (10, 8), "AB=10, B=6; 2 рядки × 4");
         let mut c = Canvas::new(16, 16);

@@ -150,9 +150,18 @@ fn tokenize(text: &str) -> Result<Vec<Tok>> {
             }
             '\n' => line += 1,
             c if c.is_whitespace() => {}
-            '{' => toks.push(Tok { kind: TokKind::LBrace, line }),
-            '}' => toks.push(Tok { kind: TokKind::RBrace, line }),
-            '=' => toks.push(Tok { kind: TokKind::Eq, line }),
+            '{' => toks.push(Tok {
+                kind: TokKind::LBrace,
+                line,
+            }),
+            '}' => toks.push(Tok {
+                kind: TokKind::RBrace,
+                line,
+            }),
+            '=' => toks.push(Tok {
+                kind: TokKind::Eq,
+                line,
+            }),
             '"' => {
                 let mut s = String::new();
                 loop {
@@ -166,7 +175,10 @@ fn tokenize(text: &str) -> Result<Vec<Tok>> {
                         None => bail!("незакритий рядок: {s:?}"),
                     }
                 }
-                toks.push(Tok { kind: TokKind::Str(s), line });
+                toks.push(Tok {
+                    kind: TokKind::Str(s),
+                    line,
+                });
             }
             _ => {
                 let mut w = String::new();
@@ -178,7 +190,10 @@ fn tokenize(text: &str) -> Result<Vec<Tok>> {
                     w.push(c2);
                     chars.next();
                 }
-                toks.push(Tok { kind: TokKind::Word(w), line });
+                toks.push(Tok {
+                    kind: TokKind::Word(w),
+                    line,
+                });
             }
         }
     }
@@ -238,19 +253,40 @@ fn parse_items(t: &mut TokIter, ctx: &str, top: bool, open_line: u32) -> Result<
                 );
                 return Ok(items);
             }
-            Some(Tok { kind: TokKind::RBrace, line }) => {
+            Some(Tok {
+                kind: TokKind::RBrace,
+                line,
+            }) => {
                 if top {
                     bail!("{ctx}:{line}: несподіваний '}}'");
                 }
                 return Ok(items);
             }
-            Some(Tok { kind: TokKind::LBrace, line }) => {
+            Some(Tok {
+                kind: TokKind::LBrace,
+                line,
+            }) => {
                 bail!("{ctx}:{line}: несподіваний '{{'")
             }
-            Some(Tok { kind: TokKind::Eq, line }) => bail!("{ctx}:{line}: несподіваний '='"),
-            Some(Tok { kind: TokKind::Str(s), .. }) => items.push(Item::Word(s)),
-            Some(Tok { kind: TokKind::Word(w), line: l }) => {
-                if matches!(t.peek(), Some(Tok { kind: TokKind::Eq, .. })) {
+            Some(Tok {
+                kind: TokKind::Eq,
+                line,
+            }) => bail!("{ctx}:{line}: несподіваний '='"),
+            Some(Tok {
+                kind: TokKind::Str(s),
+                ..
+            }) => items.push(Item::Word(s)),
+            Some(Tok {
+                kind: TokKind::Word(w),
+                line: l,
+            }) => {
+                if matches!(
+                    t.peek(),
+                    Some(Tok {
+                        kind: TokKind::Eq,
+                        ..
+                    })
+                ) {
                     t.next();
                     let v = parse_value(t, ctx)?;
                     items.push(Item::Pair(w, v));
@@ -266,15 +302,28 @@ fn parse_items(t: &mut TokIter, ctx: &str, top: bool, open_line: u32) -> Result<
 fn parse_value(t: &mut TokIter, ctx: &str) -> Result<Value> {
     match t.next() {
         None => bail!("{ctx}: очікувалось значення"),
-        Some(Tok { kind: TokKind::Str(s), .. }) => Ok(Value::Atom(s)),
-        Some(Tok { kind: TokKind::Word(w), .. }) => Ok(Value::Atom(w)),
-        Some(Tok { kind: TokKind::LBrace, line }) => {
-            Ok(Value::Block(parse_items(t, ctx, false, line)?))
-        }
-        Some(Tok { kind: TokKind::RBrace, line }) => {
+        Some(Tok {
+            kind: TokKind::Str(s),
+            ..
+        }) => Ok(Value::Atom(s)),
+        Some(Tok {
+            kind: TokKind::Word(w),
+            ..
+        }) => Ok(Value::Atom(w)),
+        Some(Tok {
+            kind: TokKind::LBrace,
+            line,
+        }) => Ok(Value::Block(parse_items(t, ctx, false, line)?)),
+        Some(Tok {
+            kind: TokKind::RBrace,
+            line,
+        }) => {
             bail!("{ctx}:{line}: очікувалось значення, знайдено '}}'")
         }
-        Some(Tok { kind: TokKind::Eq, line }) => {
+        Some(Tok {
+            kind: TokKind::Eq,
+            line,
+        }) => {
             bail!("{ctx}:{line}: очікувалось значення, знайдено '='")
         }
     }
@@ -284,12 +333,24 @@ fn parse_value(t: &mut TokIter, ctx: &str) -> Result<Value> {
 fn skip_value(t: &mut TokIter, ctx: &str) -> Result<()> {
     match t.next() {
         None => bail!("{ctx}: очікувалось значення при пропуску"),
-        Some(Tok { kind: TokKind::Str(_) | TokKind::Word(_), .. }) => Ok(()),
-        Some(Tok { kind: TokKind::LBrace, .. }) => skip_until_rbrace(t, ctx),
-        Some(Tok { kind: TokKind::RBrace, line }) => {
+        Some(Tok {
+            kind: TokKind::Str(_) | TokKind::Word(_),
+            ..
+        }) => Ok(()),
+        Some(Tok {
+            kind: TokKind::LBrace,
+            ..
+        }) => skip_until_rbrace(t, ctx),
+        Some(Tok {
+            kind: TokKind::RBrace,
+            line,
+        }) => {
             bail!("{ctx}:{line}: очікувалось значення, знайдено '}}'")
         }
-        Some(Tok { kind: TokKind::Eq, line }) => {
+        Some(Tok {
+            kind: TokKind::Eq,
+            line,
+        }) => {
             bail!("{ctx}:{line}: очікувалось значення, знайдено '='")
         }
     }
@@ -352,8 +413,18 @@ fn atom_of(v: &Value, ctx: &str) -> Result<String> {
 // ---------------------------------------------------------------------------
 
 const MONTHS: [&str; 12] = [
-    "january", "february", "march", "april", "may", "june", "july", "august", "september",
-    "october", "november", "december",
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
 ];
 
 fn parse_month(s: &str) -> Option<i32> {
@@ -391,7 +462,11 @@ fn parse_date(v: &Value, ctx: &str) -> Result<Option<GameDate>> {
         }
     }
     match year {
-        Some(y) => Ok(Some(GameDate::from_ymd(y, month.unwrap_or(1), day.unwrap_or(1)))),
+        Some(y) => Ok(Some(GameDate::from_ymd(
+            y,
+            month.unwrap_or(1),
+            day.unwrap_or(1),
+        ))),
         None => Ok(None),
     }
 }
@@ -458,7 +533,14 @@ fn parse_header(v: &Value) -> Result<ScenarioHeader> {
 /// Чи виглядає ключ як тег країни (GER/U02...), а не службове поле header.
 fn is_tag_key(k: &str) -> bool {
     const RESERVED: &[&str] = &[
-        "name", "startdate", "startyear", "endyear", "selectable", "free", "combat", "tutorial",
+        "name",
+        "startdate",
+        "startyear",
+        "endyear",
+        "selectable",
+        "free",
+        "combat",
+        "tutorial",
         "tutorialfile",
     ];
     if k.len() < 2 || k.len() > 4 || RESERVED.contains(&k.to_ascii_lowercase().as_str()) {
@@ -614,8 +696,8 @@ const MAX_INCLUDE_DEPTH: usize = 16;
 /// Читає файл гри як текст: спочатку UTF-8, при невдачі — Windows-1252
 /// (реальні .inc містять латинку-1/CP1252 у назвах юнітів, напр. "München").
 fn read_text(path: &Path) -> Result<String> {
-    let bytes = std::fs::read(path)
-        .with_context(|| format!("не вдалось прочитати {}", path.display()))?;
+    let bytes =
+        std::fs::read(path).with_context(|| format!("не вдалось прочитати {}", path.display()))?;
     match String::from_utf8(bytes.clone()) {
         Ok(s) => Ok(s),
         Err(_) => Ok(from_cp1252(&bytes)),
@@ -659,10 +741,17 @@ pub fn parse_scenario_text(text: &str, path: &Path) -> Result<Scenario> {
 }
 
 /// Обробляє top-level пари самого сценарію; невідомий ключ — помилка.
-fn dispatch_top_level(items: Vec<Item>, path: &Path, sc: &mut Scenario, depth: usize) -> Result<()> {
+fn dispatch_top_level(
+    items: Vec<Item>,
+    path: &Path,
+    sc: &mut Scenario,
+    depth: usize,
+) -> Result<()> {
     let ctx = path.display().to_string();
     for item in items {
-        let Item::Pair(key, value) = item else { continue };
+        let Item::Pair(key, value) = item else {
+            continue;
+        };
         match key.to_ascii_lowercase().as_str() {
             "name" => sc.name = atom_of(&value, &format!("{ctx}: name"))?,
             "panel" => sc.panel = Some(atom_of(&value, &format!("{ctx}: panel"))?),
@@ -708,30 +797,57 @@ fn load_include(scenario_path: &Path, inc: &str, sc: &mut Scenario, depth: usize
     loop {
         match t.next() {
             None => return Ok(()),
-            Some(Tok { kind: TokKind::RBrace, line }) => {
+            Some(Tok {
+                kind: TokKind::RBrace,
+                line,
+            }) => {
                 bail!("{ctx}:{line}: несподіваний '}}' на top-level")
             }
-            Some(Tok { kind: TokKind::LBrace, line }) => {
+            Some(Tok {
+                kind: TokKind::LBrace,
+                line,
+            }) => {
                 bail!("{ctx}:{line}: несподіваний '{{' на top-level")
             }
-            Some(Tok { kind: TokKind::Eq, line }) => {
+            Some(Tok {
+                kind: TokKind::Eq,
+                line,
+            }) => {
                 bail!("{ctx}:{line}: несподіваний '=' на top-level")
             }
-            Some(Tok { kind: TokKind::Str(_), .. }) => {} // голий рядок — ігнор
-            Some(Tok { kind: TokKind::Word(w), .. }) => {
-                if !matches!(t.peek(), Some(Tok { kind: TokKind::Eq, .. })) {
+            Some(Tok {
+                kind: TokKind::Str(_),
+                ..
+            }) => {} // голий рядок — ігнор
+            Some(Tok {
+                kind: TokKind::Word(w),
+                ..
+            }) => {
+                if !matches!(
+                    t.peek(),
+                    Some(Tok {
+                        kind: TokKind::Eq,
+                        ..
+                    })
+                ) {
                     continue; // голе слово — ігнор
                 }
                 t.next();
                 match w.to_ascii_lowercase().as_str() {
                     "include" => {
                         let nested = match t.peek() {
-                            Some(Tok { kind: TokKind::Str(s), .. }) => {
+                            Some(Tok {
+                                kind: TokKind::Str(s),
+                                ..
+                            }) => {
                                 let s = s.clone();
                                 t.next();
                                 Some(s)
                             }
-                            Some(Tok { kind: TokKind::Word(w), .. }) => {
+                            Some(Tok {
+                                kind: TokKind::Word(w),
+                                ..
+                            }) => {
                                 let w = w.clone();
                                 t.next();
                                 Some(w)
@@ -805,10 +921,9 @@ mod tests {
 
     #[test]
     fn tokenize_comments_strings_and_braces() {
-        let toks = tokenize(
-            "# comment\nname = \"A # B\"\r\nheader =\n{ selectable = { GER U02 } # x\n}",
-        )
-        .unwrap();
+        let toks =
+            tokenize("# comment\nname = \"A # B\"\r\nheader =\n{ selectable = { GER U02 } # x\n}")
+                .unwrap();
         assert_eq!(
             kinds(&toks),
             vec![
@@ -956,7 +1071,10 @@ history = { 2400014 2400022 }
         assert!(sc.globaldata.startdate.is_some(), "startdate");
         assert!(sc.globaldata.alliances.len() >= 3, "alliances");
         assert!(
-            sc.globaldata.alliances.iter().any(|a| !a.participants.is_empty()),
+            sc.globaldata
+                .alliances
+                .iter()
+                .any(|a| !a.participants.is_empty()),
             "alliance with participants"
         );
         assert!(sc.countries.len() > 30, "countries: {}", sc.countries.len());

@@ -178,8 +178,16 @@ impl LightmapLevel {
             }
         }
         let k = ids.len();
-        ensure!(k >= 1, "lightmap L{} секція {idx}: порожній список ID", self.level);
-        ensure!(p < sec.len(), "lightmap L{} секція {idx}: немає байта прапорця", self.level);
+        ensure!(
+            k >= 1,
+            "lightmap L{} секція {idx}: порожній список ID",
+            self.level
+        );
+        ensure!(
+            p < sec.len(),
+            "lightmap L{} секція {idx}: немає байта прапорця",
+            self.level
+        );
 
         // ---- 2. Квадродерево: біти LSB-first з байта 2k.
         // Перший біт = «розбити корінь 32×32» (0 = однорідний тайл).
@@ -193,23 +201,43 @@ impl LightmapLevel {
         let mut stack: Vec<(u8, u8, u8)> = vec![(5u8, 0u8, 0u8)]; // (рівень, x, y)
         while let Some((l, x, y)) = stack.pop() {
             if !br.read()? {
-                leaves.push(Leaf { x0: x as u32, y0: y as u32, size: 1u32 << l });
+                leaves.push(Leaf {
+                    x0: x as u32,
+                    y0: y as u32,
+                    size: 1u32 << l,
+                });
                 continue;
             }
             if l >= 2 {
                 let h = 1u8 << (l - 1);
                 // LIFO: SE обробляється першим, NW — останнім.
-                stack.push((l - 1, x, y));            // NW
-                stack.push((l - 1, x + h, y));        // NE
-                stack.push((l - 1, x, y + h));        // SW
-                stack.push((l - 1, x + h, y + h));    // SE
+                stack.push((l - 1, x, y)); // NW
+                stack.push((l - 1, x + h, y)); // NE
+                stack.push((l - 1, x, y + h)); // SW
+                stack.push((l - 1, x + h, y + h)); // SE
             } else {
                 // рівень 1: чотири окремі пікселі, SE, SW, NE, NW.
                 leaves.extend([
-                    Leaf { x0: (x + 1) as u32, y0: (y + 1) as u32, size: 1 },
-                    Leaf { x0: x as u32, y0: (y + 1) as u32, size: 1 },
-                    Leaf { x0: (x + 1) as u32, y0: y as u32, size: 1 },
-                    Leaf { x0: x as u32, y0: y as u32, size: 1 },
+                    Leaf {
+                        x0: (x + 1) as u32,
+                        y0: (y + 1) as u32,
+                        size: 1,
+                    },
+                    Leaf {
+                        x0: x as u32,
+                        y0: (y + 1) as u32,
+                        size: 1,
+                    },
+                    Leaf {
+                        x0: (x + 1) as u32,
+                        y0: y as u32,
+                        size: 1,
+                    },
+                    Leaf {
+                        x0: x as u32,
+                        y0: y as u32,
+                        size: 1,
+                    },
                 ]);
             }
         }
@@ -249,9 +277,24 @@ impl LightmapLevel {
         let mut light = vec![0u8; n_leaves];
         for g in 0..light_bytes / 3 {
             let o = refs_end + g * 3;
-            let b0 = *sec.get(o).ok_or_else(|| anyhow!("lightmap L{} секція {idx}: обрізаний потік світла", self.level))?;
-            let b1 = *sec.get(o + 1).ok_or_else(|| anyhow!("lightmap L{} секція {idx}: обрізаний потік світла", self.level))?;
-            let b2 = *sec.get(o + 2).ok_or_else(|| anyhow!("lightmap L{} секція {idx}: обрізаний потік світла", self.level))?;
+            let b0 = *sec.get(o).ok_or_else(|| {
+                anyhow!(
+                    "lightmap L{} секція {idx}: обрізаний потік світла",
+                    self.level
+                )
+            })?;
+            let b1 = *sec.get(o + 1).ok_or_else(|| {
+                anyhow!(
+                    "lightmap L{} секція {idx}: обрізаний потік світла",
+                    self.level
+                )
+            })?;
+            let b2 = *sec.get(o + 2).ok_or_else(|| {
+                anyhow!(
+                    "lightmap L{} секція {idx}: обрізаний потік світла",
+                    self.level
+                )
+            })?;
             let w = b0 as u32 | (b1 as u32) << 8 | (b2 as u32) << 16;
             for j in 0..4 {
                 let vi = g * 4 + j;
@@ -314,7 +357,11 @@ struct BitReader<'a> {
 
 impl<'a> BitReader<'a> {
     fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, pos: 0, mask: 0x01 }
+        Self {
+            bytes,
+            pos: 0,
+            mask: 0x01,
+        }
     }
     fn read(&mut self) -> anyhow::Result<bool> {
         let b = *self
@@ -403,12 +450,19 @@ pub fn load(paths: &GamePaths) -> anyhow::Result<MapData> {
         let p = map_dir.join("index.tbl");
         let raw = read_file(&p, "index.tbl")?;
         let n = (BLOCKS_X * BLOCKS_Y) as usize;
-        ensure!(raw.len() == n * 4, "index.tbl: розмір {} ≠ {n}×4", raw.len());
+        ensure!(
+            raw.len() == n * 4,
+            "index.tbl: розмір {} ≠ {n}×4",
+            raw.len()
+        );
         let mut v = vec![0u32; n];
         for bx_i in 0..BLOCKS_X as usize {
             for by_i in 0..BLOCKS_Y as usize {
                 let t = LittleEndian::read_u32(&raw[(bx_i * BLOCKS_Y as usize + by_i) * 4..]);
-                ensure!(t < TILE_SLOTS, "index.tbl[{bx_i},{by_i}] = {t} ≥ {TILE_SLOTS} (поза атласом)");
+                ensure!(
+                    t < TILE_SLOTS,
+                    "index.tbl[{bx_i},{by_i}] = {t} ≥ {TILE_SLOTS} (поза атласом)"
+                );
                 v[by_i * BLOCKS_X as usize + bx_i] = t;
             }
         }
@@ -419,7 +473,11 @@ pub fn load(paths: &GamePaths) -> anyhow::Result<MapData> {
     let (bounds, prov_count, map_w, map_h) = {
         let p = map_dir.join("boundbox.tbl");
         let raw = read_file(&p, "boundbox.tbl")?;
-        ensure!(raw.len() == (PROV_COUNT as usize + 1) * 16, "boundbox.tbl: розмір {} ≠ 2770×16", raw.len());
+        ensure!(
+            raw.len() == (PROV_COUNT as usize + 1) * 16,
+            "boundbox.tbl: розмір {} ≠ 2770×16",
+            raw.len()
+        );
         let n = raw.len() / 16;
         let mut v = Vec::with_capacity(n);
         for i in 0..n {
@@ -432,9 +490,15 @@ pub fn load(paths: &GamePaths) -> anyhow::Result<MapData> {
             });
         }
         let pc = (n - 1) as u16;
-        ensure!(pc == PROV_COUNT, "boundbox.tbl: провінцій {pc} ≠ {PROV_COUNT}");
+        ensure!(
+            pc == PROV_COUNT,
+            "boundbox.tbl: провінцій {pc} ≠ {PROV_COUNT}"
+        );
         let (mw, mh) = (v[0].x1 as u32, v[0].y1 as u32);
-        ensure!(mw == MAP_W && mh == MAP_H, "boundbox.tbl: розмір мапи {mw}×{mh} ≠ {MAP_W}×{MAP_H}");
+        ensure!(
+            mw == MAP_W && mh == MAP_H,
+            "boundbox.tbl: розмір мапи {mw}×{mh} ≠ {MAP_W}×{MAP_H}"
+        );
         (v, pc, mw, mh)
     };
 
@@ -444,7 +508,11 @@ pub fn load(paths: &GamePaths) -> anyhow::Result<MapData> {
         let p = map_dir.join("adjacent.tbl");
         let raw = read_file(&p, "adjacent.tbl")?;
         let n = (prov_count as usize) + 1;
-        ensure!(raw.len() >= (n + 1) * 4, "adjacent.tbl: замалий розмір {}", raw.len());
+        ensure!(
+            raw.len() >= (n + 1) * 4,
+            "adjacent.tbl: замалий розмір {}",
+            raw.len()
+        );
         let mut sums = vec![0u32; n + 1];
         for i in 0..=n {
             sums[i] = LittleEndian::read_u32(&raw[i * 4..]);
@@ -526,7 +594,11 @@ pub fn load(paths: &GamePaths) -> anyhow::Result<MapData> {
         let n = (tx * ty) as usize;
         let p = map_dir.join(format!("lightmap{lvl}.tbl"));
         let raw = read_file(&p, &format!("lightmap{lvl}.tbl"))?;
-        ensure!(raw.len() >= (n + 1) * 4 + 4, "lightmap{lvl}.tbl: замалий розмір {}", raw.len());
+        ensure!(
+            raw.len() >= (n + 1) * 4 + 4,
+            "lightmap{lvl}.tbl: замалий розмір {}",
+            raw.len()
+        );
         let mut offsets = Vec::with_capacity(n + 1);
         for i in 0..=n {
             offsets.push(LittleEndian::read_u32(&raw[i * 4..]));
@@ -538,7 +610,11 @@ pub fn load(paths: &GamePaths) -> anyhow::Result<MapData> {
             raw.len(),
             n + 1
         );
-        ensure!(offsets[0] == 0, "lightmap{lvl}.tbl: offsets[0] = {}", offsets[0]);
+        ensure!(
+            offsets[0] == 0,
+            "lightmap{lvl}.tbl: offsets[0] = {}",
+            offsets[0]
+        );
         for i in 0..n {
             ensure!(
                 offsets[i] <= offsets[i + 1],
@@ -638,7 +714,12 @@ mod tests {
         // Зум-піраміда: той самий географічний пункт на L2..L4 містить провінцію 1.
         for (lvl, (bx, by)) in [(1usize, (205, 11)), (2, (102, 5)), (3, (51, 2))] {
             let t = map.lightmap[lvl].decode_tile(bx, by)?;
-            assert!(t.id_list.contains(&1), "L{}: немає провінції 1 у {:?}", lvl + 1, t.id_list);
+            assert!(
+                t.id_list.contains(&1),
+                "L{}: немає провінції 1 у {:?}",
+                lvl + 1,
+                t.id_list
+            );
         }
 
         // Поза межами — помилка, а не паніка.

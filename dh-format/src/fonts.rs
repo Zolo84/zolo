@@ -174,8 +174,7 @@ pub fn load_fonts(paths: &GamePaths) -> anyhow::Result<Vec<BitmapFont>> {
 }
 
 fn is_bmp(p: &Path) -> bool {
-    p.extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("bmp"))
+    p.extension().is_some_and(|e| e.eq_ignore_ascii_case("bmp"))
 }
 
 /// Парсить один файл шрифту: 8-бітний палітровий BMP → BitmapFont.
@@ -218,7 +217,11 @@ fn glyph_from_cell(pixels: &[u8], w: usize, k: usize) -> Glyph {
             }
         }
     }
-    let gw = if rightmost < 0 { 1 } else { (rightmost + 1) as usize };
+    let gw = if rightmost < 0 {
+        1
+    } else {
+        (rightmost + 1) as usize
+    };
     let stride = (gw + 7) / 8;
     let mut data = vec![0u8; stride * w];
     for row in 0..w {
@@ -229,7 +232,11 @@ fn glyph_from_cell(pixels: &[u8], w: usize, k: usize) -> Glyph {
             }
         }
     }
-    Glyph { w: gw as u8, h: w as u8, data }
+    Glyph {
+        w: gw as u8,
+        h: w as u8,
+        data,
+    }
 }
 
 /// Чесний розбір 8-бітного палітрового BMP (bottom-up, biCompression=0).
@@ -385,9 +392,15 @@ mod tests {
             "очікувано ≥24 шрифти (8 імен × root/5/7), знайдено {}",
             fonts.len()
         );
-        assert!(fonts.iter().any(|f| f.set == "root" && f.name == "eurostilecond14"));
-        assert!(fonts.iter().any(|f| f.set == "5" && f.name == "eurostilecond14"));
-        assert!(fonts.iter().any(|f| f.set == "7" && f.name == "eurostilecond14"));
+        assert!(fonts
+            .iter()
+            .any(|f| f.set == "root" && f.name == "eurostilecond14"));
+        assert!(fonts
+            .iter()
+            .any(|f| f.set == "5" && f.name == "eurostilecond14"));
+        assert!(fonts
+            .iter()
+            .any(|f| f.set == "7" && f.name == "eurostilecond14"));
     }
 
     /// root/eurostilecond14.bmp: ≈223 клітинки, 'A' не порожній, 'i' < 'm'.

@@ -109,12 +109,10 @@ impl<'a> WgpuCanvas<'a> {
             adapter.get_info().backend
         );
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("dh-engine device"),
-                ..Default::default()
-            },
-        ))
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("dh-engine device"),
+            ..Default::default()
+        }))
         .context("wgpu: створення device")?;
         device.on_uncaptured_error(std::sync::Arc::new(|e| {
             eprintln!("wgpu validation error: {e}");
@@ -263,7 +261,9 @@ impl<'a> WgpuCanvas<'a> {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        self.texture_view = self.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.texture_view = self
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
         // ВАЖЛИВО: bind_group прив'язаний до КОНКРЕТНОГО texture_view —
         // після ресайза пересоздаємо його, інакше шейдер семплює порожню
         // стару текстуру (чорний екран).
@@ -366,7 +366,8 @@ impl RenderSurface for WgpuCanvas<'_> {
         }
 
         let frame = match frame_result {
-            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Timeout
             | wgpu::CurrentSurfaceTexture::Occluded
             | wgpu::CurrentSurfaceTexture::Outdated

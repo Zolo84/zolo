@@ -72,17 +72,13 @@ impl ColorScales {
             // Блок: «Назва» (може містити ';;;'), далі рядок-заголовок
             // «red;green;blue;index», далі 4 рядки даних.
             if i + 1 < lines.len() && lines[i + 1].trim() == "red;green;blue;index" {
-                let name = lines[i]
-                    .split(';')
-                    .next()
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
+                let name = lines[i].split(';').next().unwrap_or("").trim().to_string();
                 i += 2;
                 let mut points = Vec::with_capacity(4);
                 while i < lines.len() && !lines[i].trim().is_empty() {
                     let parts: Vec<&str> = lines[i].trim().split(';').collect();
-                    if parts.len() < 4 || !parts[0].chars().next().is_some_and(|c| c.is_ascii_digit())
+                    if parts.len() < 4
+                        || !parts[0].chars().next().is_some_and(|c| c.is_ascii_digit())
                     {
                         break;
                     }
@@ -258,7 +254,12 @@ mod tests {
             blocks: (0..32)
                 .map(|i| Block {
                     name: format!("b{i}"),
-                    points: vec![(220, 0, 0, 0), (220, 0, 0, 4), (220, 0, 0, 35), (220, 0, 0, 64)],
+                    points: vec![
+                        (220, 0, 0, 0),
+                        (220, 0, 0, 4),
+                        (220, 0, 0, 35),
+                        (220, 0, 0, 64),
+                    ],
                 })
                 .collect(),
         };
@@ -284,7 +285,7 @@ mod tests {
         assert_eq!(color_number("White"), 14); // EST
         assert_eq!(color_number("Black"), 0);
         assert_eq!(color_number("DarkOrange"), 22); // DEN/ROM
-        // невідоме і LightOrange → 0x12
+                                                    // невідоме і LightOrange → 0x12
         assert_eq!(color_number("LightOrange"), 0x12);
         assert_eq!(color_number("Whatever"), 0x12);
         // UserColor
@@ -344,9 +345,8 @@ mod tests {
         assert_eq!(scales.index_of("water"), Some(23));
 
         let pal = scales.build_palette();
-        let dump = std::fs::read(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("data/palette565.bin"),
-        )?;
+        let dump =
+            std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("data/palette565.bin"))?;
         assert_eq!(dump.len(), 16384);
         let dumped: Vec<u16> = dump
             .chunks_exact(2)

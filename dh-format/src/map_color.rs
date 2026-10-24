@@ -77,7 +77,10 @@ impl GameColorModel {
         let pal = std::fs::read(data_dir.join("palette565.bin"))
             .context("палітра palette565.bin (дамп 0xA44C34)")?;
         if pal.len() != 16384 {
-            bail!("palette565.bin: очікувалося 16384 байти, отримано {}", pal.len());
+            bail!(
+                "palette565.bin: очікувалося 16384 байти, отримано {}",
+                pal.len()
+            );
         }
         let palette = pal
             .chunks_exact(2)
@@ -111,11 +114,7 @@ impl GameColorModel {
                 prov.len()
             );
         }
-        Ok(Self {
-            palette,
-            lut,
-            prov,
-        })
+        Ok(Self { palette, lut, prov })
     }
 
     /// Точний колір провінції за світлом lightmap-пікселя (0..63).
@@ -124,11 +123,7 @@ impl GameColorModel {
     /// з відсіканням LUT-індексу до [-64..255] (запис у межах дампу).
     #[inline]
     pub fn color(&self, prov_id: usize, light: u8) -> [u8; 3] {
-        let (off, scale) = self
-            .prov
-            .get(prov_id)
-            .copied()
-            .unwrap_or((15, 0));
+        let (off, scale) = self.prov.get(prov_id).copied().unwrap_or((15, 0));
         self.color_raw(light as i32 - off as i32, scale)
     }
 
@@ -247,8 +242,8 @@ mod tests {
         assert_eq!(m.color_raw(-9, 55), [48, 72, 80]); // LUT(-9)=38
         assert_eq!(m.color_raw(9, 55), [40, 56, 64]); // LUT(9)=56
         assert_eq!(m.color_raw(49, 55), [8, 16, 16]); // LUT(49)=96
-        // Морська провінція з дампу (id 2725 = Балтика, off=15, scale=55):
-        // light 24 → LUT[9] = 56 → рядок 56 колонки 55 = (40,56,64).
+                                                      // Морська провінція з дампу (id 2725 = Балтика, off=15, scale=55):
+                                                      // light 24 → LUT[9] = 56 → рядок 56 колонки 55 = (40,56,64).
         assert_eq!(m.scale_of(2725), 55);
         assert_eq!(m.color_exact(2725, 24), [40, 56, 64]);
         // PROV0 у дампі = (15, 34) — рендериться як 2|0x20, без спецвипадку.

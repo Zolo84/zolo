@@ -40,8 +40,7 @@ impl Default for Palette {
 /// little-endian) — у файлах гри відсутні (`Palette.act` = рівно 768 байт),
 /// тому хвіст ігнорується; валідується лише достатня довжина.
 pub fn load_act(path: &Path) -> anyhow::Result<Palette> {
-    let data = std::fs::read(path)
-        .with_context(|| format!("читання .act: {}", path.display()))?;
+    let data = std::fs::read(path).with_context(|| format!("читання .act: {}", path.display()))?;
     if data.len() < 768 {
         bail!(
             "palette.act замалий: {} байт, потрібно >= 768 (256×3): {}",
@@ -65,28 +64,39 @@ pub fn load_act(path: &Path) -> anyhow::Result<Palette> {
 /// якщо biClrUsed=0 — береться 256 записів; якщо файл містить менше (напр. 16
 /// у beach_palette.bmp) — решта заповнюється чорним, до 256.
 pub fn load_bmp_palette(path: &Path) -> anyhow::Result<Palette> {
-    let data = std::fs::read(path)
-        .with_context(|| format!("читання BMP: {}", path.display()))?;
+    let data = std::fs::read(path).with_context(|| format!("читання BMP: {}", path.display()))?;
     if data.len() < 54 || &data[0..2] != b"BM" {
         bail!("не BMP-файл (сигнатура 'BM'): {}", path.display());
     }
     let pixel_off = u32::from_le_bytes(data[10..14].try_into().unwrap()) as usize;
     let hdr_size = u32::from_le_bytes(data[14..18].try_into().unwrap()) as usize;
     if hdr_size < 40 {
-        bail!("непідтримуваний BMP-заголовок (biSize={hdr_size}): {}", path.display());
+        bail!(
+            "непідтримуваний BMP-заголовок (biSize={hdr_size}): {}",
+            path.display()
+        );
     }
     let bpp = u16::from_le_bytes(data[28..30].try_into().unwrap());
     if bpp != 8 {
-        bail!("палітровий BMP має бути 8-бітним (bpp={bpp}): {}", path.display());
+        bail!(
+            "палітровий BMP має бути 8-бітним (bpp={bpp}): {}",
+            path.display()
+        );
     }
     let compression = u32::from_le_bytes(data[30..34].try_into().unwrap());
     if compression != 0 {
-        bail!("стиснені BMP не підтримуються (biCompression={compression}): {}", path.display());
+        bail!(
+            "стиснені BMP не підтримуються (biCompression={compression}): {}",
+            path.display()
+        );
     }
     let clr_used = u32::from_le_bytes(data[46..50].try_into().unwrap()) as usize;
     let pal_off = 14 + hdr_size;
     if pixel_off < pal_off {
-        bail!("BMP пошкоджено (зміщення пікселів {pixel_off} < палітри {pal_off}): {}", path.display());
+        bail!(
+            "BMP пошкоджено (зміщення пікселів {pixel_off} < палітри {pal_off}): {}",
+            path.display()
+        );
     }
     // Скільки записів можна прочитати: за заголовком (biClrUsed або 256 для 8-біт)
     // і за фактичним простором до даних пікселів.
@@ -200,10 +210,12 @@ pub struct TerrainPalettes {
 impl TerrainPalettes {
     pub fn load(paths: &GamePaths) -> anyhow::Result<Self> {
         let map = map_terrain_palettes(paths)?;
-        let by_name: BTreeMap<&str, &Palette> =
-            map.iter().map(|(k, v)| (k.as_str(), v)).collect();
+        let by_name: BTreeMap<&str, &Palette> = map.iter().map(|(k, v)| (k.as_str(), v)).collect();
         let get = |names: &[&str]| -> Option<Palette> {
-            names.iter().find_map(|n| by_name.get(*n)).map(|p| (*p).clone())
+            names
+                .iter()
+                .find_map(|n| by_name.get(*n))
+                .map(|p| (*p).clone())
         };
         let landscape = get(&["landscape", "plains"])
             .context("жодна палітра місцевості (landscape_palette.bmp) не знайдена")?;
@@ -240,12 +252,12 @@ fn scan_bmps(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
         for ent in rd {
             let ent = ent.with_context(|| format!("читання каталогу: {}", d.display()))?;
             let p = ent.path();
-            let ft = ent.file_type().with_context(|| format!("тип файлу: {}", p.display()))?;
+            let ft = ent
+                .file_type()
+                .with_context(|| format!("тип файлу: {}", p.display()))?;
             if ft.is_dir() {
                 stack.push(p);
-            } else if ft.is_file()
-                && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("bmp"))
-            {
+            } else if ft.is_file() && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("bmp")) {
                 out.push(p);
             }
         }
@@ -257,7 +269,9 @@ fn scan_bmps(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
 fn palette_key(path: &Path) -> Option<String> {
     let name = path.file_name()?.to_str()?;
     let lower = name.to_ascii_lowercase();
-    lower.strip_suffix("_palette.bmp").map(|stem| stem.to_string())
+    lower
+        .strip_suffix("_palette.bmp")
+        .map(|stem| stem.to_string())
 }
 
 #[cfg(test)]
@@ -302,7 +316,11 @@ mod tests {
     fn load_default_real_game() {
         let paths = GamePaths::from_steam().expect("Steam-установка гри");
         let pal = load_default(&paths).expect("palette.act має існувати");
-        assert_eq!(pal.colors.len(), 256, "палітра має містити рівно 256 кольорів");
+        assert_eq!(
+            pal.colors.len(),
+            256,
+            "палітра має містити рівно 256 кольорів"
+        );
         // Реальний Palette.act: 768 байт, перший колір (0,0,0).
         let bmps = map_terrain_palettes(&paths).expect("сканування *_palette.bmp");
         assert!(!bmps.is_empty(), "має бути хоча б одна *_palette.bmp");
