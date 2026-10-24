@@ -21,13 +21,15 @@ use log::LevelFilter;
 
 use dh_core::country::Country;
 use dh_core::time::{GameTime, TimeEvent};
-use dh_core::world::{ProvinceState, World};
+use dh_core::world::{build_world, ProvinceState, World};
 use dh_format::fonts::BitmapFont;
 use dh_format::map::{load as load_map, MapData};
 use dh_format::map_color::GameColorModel;
 use dh_format::palette::Palette;
 use dh_format::scenario::{load_scenario, Scenario};
 use dh_format::{GamePaths, ProvinceCsv};
+
+mod sim_link;
 
 /// Завантажує точну модель кольору гри:
 /// 1) палітра будується з ФАЙЛУ ГРИ `map/Map_1/colorscales.csv` (from_game);
@@ -111,6 +113,15 @@ struct Cli {
     /// Без вікна: завантаження + 1000 денних тіків, друк дати й кінець.
     #[arg(long)]
     headless: bool,
+
+    /// Ганяти симуляцію dh-sim (юніти, рух, бої, постачання, погода, ORG)
+    /// і синхронізувати власників провінцій у рендер.
+    #[arg(long)]
+    sim: bool,
+
+    /// Тривалість headless-прогону в днях.
+    #[arg(long, default_value_t = 1000)]
+    days: u32,
 }
 
 fn init_log() -> Result<()> {
@@ -139,96 +150,6 @@ fn load_static(paths: &GamePaths) -> Result<(MapData, Vec<ProvinceCsv>, Palette,
     Ok((map, prov_csv, palette, fonts))
 }
 
-/// Список id зі сирого значення `{ 1 2 3 }`.
-fn parse_id_list(raw: &str) -> Vec<u16> {
-    raw.trim()
-        .trim_start_matches('{')
-        .trim_end_matches('}')
-        .split_whitespace()
-        .filter_map(|s| s.parse().ok())
-        .collect()
-}
-
-fn build_world(sc: &Scenario, csv: &[ProvinceCsv], speed: u8) -> World {
-    let mut world = World::new();
-    let start = sc
-        .globaldata
-        .startdate
-        .or(sc.header.startdate)
-        .unwrap_or_else(|| dh_format::GameDate::from_ymd(1936, 1, 1));
-    world.date = start;
-    world.set_speed(speed.min(7));
-
-    for cb in &sc.countries {
-        let mut c = Country::new(cb.tag.clone(), cb.tag.as_str().to_string());
-        c.capital = cb.capital;
-        world.add_country(c);
-    }
-
-    for a in &sc.globaldata.alliances {
-        let members: Vec<usize> = a
-            .participants
-            .iter()
-            .filter_map(|t| world.tags.get(t).copied())
-            .collect();
-        if members.is_empty() {
-            continue;
-        }
-        world.create_alliance(a.name.clone().unwrap_or_else(|| a.kind.clone()), members);
-    }
-
-    let mut idx_by_id: HashMap<u16, usize> = HashMap::with_capacity(csv.len());
-    let mut provs: Vec<ProvinceState> = Vec::with_capacity(csv.len());
-    for p in csv {
-        if p.id == 0 {
-            continue; // PROV0 — фіктивна
-        }
-        idx_by_id.insert(p.id, provs.len());
-        provs.push(ProvinceState {
-            id: p.id,
-            owner: None,
-            controller: None,
-            has_vp: false,
-            vp: 0,
-            infra: p.resources.infrastructure,
-            resources: p.resources.clone(),
-            occupied: false,
-        });
-    }
-
-    for cb in &sc.countries {
-        let Some(&ci) = world.tags.get(&cb.tag) else {
-            continue;
-        };
-        for (k, v) in &cb.body {
-            if k.eq_ignore_ascii_case("ownedprovinces") {
-                for id in parse_id_list(v) {
-                    if let Some(&pi) = idx_by_id.get(&id) {
-                        provs[pi].owner = Some(ci);
-                        provs[pi].controller = Some(ci);
-                    }
-                }
-            }
-        }
-    }
-
-    for pb in &sc.provinces {
-        let Some(&pi) = idx_by_id.get(&pb.id) else {
-            continue;
-        };
-        for (k, v) in &pb.body {
-            if k.eq_ignore_ascii_case("points") || k.eq_ignore_ascii_case("vp") {
-                provs[pi].has_vp = true;
-                provs[pi].vp = v.trim().parse::<u16>().unwrap_or(0).min(255) as u8;
-            }
-        }
-    }
-
-    world.provinces = provs;
-    world
-}
-
-// ---------------------------------------------------------------------------
 // Headless
 // ---------------------------------------------------------------------------
 
@@ -257,6 +178,7 @@ fn run_headless(paths: &GamePaths, cli: &Cli) -> Result<()> {
 
     let mut world = build_world(&sc, &prov_csv, cli.speed);
     let owned = world.provinces.iter().filter(|p| p.owner.is_some()).count();
+
     log::info!(
         "світ: країн {}, провінцій {}, з власником {}, старт {}",
         world.countries.len(),
@@ -265,16 +187,47 @@ fn run_headless(paths: &GamePaths, cli: &Cli) -> Result<()> {
         world.date.display()
     );
 
+    // Симуляція dh-sim (юніти, рух, бої, постачання, погода, ORG) — опційно.
+    let mut sim_link = None;
+    if cli.sim {
+        match sim_link::SimLink::build(&paths.root, &cli.scenario) {
+            Ok(link) => {
+                log::info!(
+                    "dh-sim: країн {}, юнітів {}, старт {}",
+                    link.sim.world.countries.len(),
+                    link.sim.world.units.len(),
+                    link.sim.date()
+                );
+                sim_link = Some(link);
+            }
+            Err(e) => log::error!("dh-sim не збудовано (прогін без симуляції): {e:#}"),
+        }
+    }
+
     let start = world.date;
     let mut gt = GameTime::new(start);
-    for day in 1..=1000u32 {
+    for day in 1..=cli.days.max(1) {
         let events = gt.advance(
             dh_core::time::SPEED_MS_PER_DAY[world.speed as usize],
             world.speed,
         );
         for e in events {
             match e {
-                TimeEvent::DayTick(_) => world.tick_day(),
+                TimeEvent::DayTick(_) => {
+                    world.tick_day();
+                    if let Some(sl) = &mut sim_link {
+                        sl.advance_day();
+                        sl.sync_owners(&mut world);
+                        if day % 100 == 0 {
+                            log::info!(
+                                "[headless][sim] {}: юнітів {}, боїв {}",
+                                sl.sim.date(),
+                                sl.sim.world.units.len(),
+                                sl.sim.world.battles.len()
+                            );
+                        }
+                    }
+                }
                 TimeEvent::MonthTick(d) => {
                     log::info!("[headless] день {day}: місяць — {}", d.display())
                 }
@@ -284,10 +237,27 @@ fn run_headless(paths: &GamePaths, cli: &Cli) -> Result<()> {
             }
         }
     }
+    if let Some(sl) = &sim_link {
+        let divs: usize = sl
+            .sim
+            .world
+            .units
+            .iter()
+            .map(|u| u.unit.divisions.len())
+            .sum();
+        log::info!(
+            "[headless][sim] фінал {}: юнітів {} ({} дивізій), боїв {}",
+            sl.sim.date(),
+            sl.sim.world.units.len(),
+            divs,
+            sl.sim.world.battles.len()
+        );
+    }
     log::info!(
-        "ГОТОВО: старт {} → кінець {} (1000 днів на швидкості {})",
+        "ГОТОВО: старт {} → кінець {} ({} днів на швидкості {})",
         start.display(),
         world.date.display(),
+        cli.days,
         world.speed
     );
     Ok(())
@@ -386,6 +356,8 @@ struct AppState {
     /// Відкладена аннексія з оточення: (тег, коли виконати) — тестовий шлях
     /// `DH_ANNEX=SOV` із затримкою `DH_ANNEX_TICK` (сек.).
     annex_pending: Option<(String, Instant)>,
+    /// Симуляція dh-sim (гілка claude): юніти, рух, бої, постачання, погода.
+    sim_link: Option<sim_link::SimLink>,
 }
 
 /// Зібрана міні-карта: буфер ARGB, готовий для blit у канвас.
@@ -470,10 +442,28 @@ impl AppState {
     /// Аннексія країни `tag` гравцем (повертає кількість провінцій).
     fn annex_to_player(&mut self, tag: &str) -> usize {
         let Some(w) = &mut self.world else { return 0 };
-        w.annex(
+        let n = w.annex(
             &dh_format::Tag(tag.to_string()),
             &dh_format::Tag(self.cli.player.clone()),
-        )
+        );
+        // Дзеркало в симуляцію, щоб денний sync_owners не відкотив анексію.
+        if let Some(link) = &mut self.sim_link {
+            let ptag = dh_format::Tag(self.cli.player.clone());
+            if let Some(&pi) = w.tags.get(&ptag) {
+                let player = self.cli.player.clone();
+                for p in &w.provinces {
+                    if p.owner == Some(pi) {
+                        link.sim.world.owner.insert(p.id as u32, player.clone());
+                        link.sim
+                            .world
+                            .controller
+                            .insert(p.id as u32, player.clone());
+                    }
+                }
+                log::info!("dh-sim: аннексію продубльовано ({n} провінцій)");
+            }
+        }
+        n
     }
 
     /// Кольори провінцій для міні-карти в терен-режимі: базовий колір блока
@@ -842,7 +832,22 @@ impl AppState {
                 let dt_ms = dt.as_secs_f64() * 1000.0;
                 for ev in gt.advance(dt_ms, w.speed) {
                     match ev {
-                        TimeEvent::DayTick(_) => w.tick_day(),
+                        TimeEvent::DayTick(_) => {
+                            w.tick_day();
+                            // Крок симуляції dh-sim: доба погодинних тіків +
+                            // власники/контролери → наш World (рендер сам
+                            // помітить зміну FNV-сигнатурою).
+                            if let Some(link) = &mut self.sim_link {
+                                link.advance_day();
+                                if link.sync_owners(w) {
+                                    log::info!(
+                                        "dh-sim: політика оновлена ({}, боїв {})",
+                                        link.sim.date(),
+                                        link.sim.world.battles.len()
+                                    );
+                                }
+                            }
+                        }
                         TimeEvent::MonthTick(d) => log::info!("місяць: {}", d.display()),
                         TimeEvent::YearTick(d) => log::info!("рік: {}", d.display()),
                     }
@@ -936,6 +941,28 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
         );
         game_time = Some(GameTime::new(w.date));
         world = Some(w);
+    }
+
+    // Симуляція dh-sim (юніти, рух, бої, постачання, погода, ORG) — опційно.
+    let mut sim_link = None;
+    if !cli.map_only && cli.sim {
+        match sim_link::SimLink::build(&paths.root, &cli.scenario) {
+            Ok(link) => {
+                log::info!(
+                    "dh-sim: країн {}, юнітів {}, старт {}",
+                    link.sim.world.countries.len(),
+                    link.sim.world.units.len(),
+                    link.sim.date()
+                );
+                // Стартове вирівнювання власників (обидва завантажувачі читають
+                // той самий сценарій; розбіжності логуються sync_owners).
+                if let Some(w) = world.as_mut() {
+                    link.sync_owners(w);
+                }
+                sim_link = Some(link);
+            }
+            Err(e) => log::error!("dh-sim не збудовано (гра без симуляції): {e:#}"),
+        }
     }
 
     struct App(AppState);
@@ -1277,12 +1304,7 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
             let p = skin_dir.join(skin).join("topbar.bmp");
             match dh_render::ui::load_bmp(&p) {
                 Ok(im) => {
-                    log::info!(
-                        "top-бар: {} ({}×{})",
-                        p.display(),
-                        im.w,
-                        im.h
-                    );
+                    log::info!("top-бар: {} ({}×{})", p.display(), im.w, im.h);
                     img = Some(im);
                     break;
                 }
@@ -1332,6 +1354,7 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
             log::info!("відкладена аннексія (test): {tag} через {secs} с");
             (tag, Instant::now() + delay)
         }),
+        sim_link,
     });
 
     let event_loop = EventLoop::new().context("winit: event loop")?;

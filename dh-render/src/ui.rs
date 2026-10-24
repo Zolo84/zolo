@@ -63,8 +63,10 @@ pub fn load_bmp(path: &std::path::Path) -> Result<UiImage> {
             let mut pal = [0u32; 256];
             for i in 0..256 {
                 let o = 54 + i * 4;
-                pal[i] =
-                    0xFF00_0000 | ((raw[o + 2] as u32) << 16) | ((raw[o + 1] as u32) << 8) | raw[o] as u32;
+                pal[i] = 0xFF00_0000
+                    | ((raw[o + 2] as u32) << 16)
+                    | ((raw[o + 1] as u32) << 8)
+                    | raw[o] as u32;
             }
             for y in 0..h {
                 let src_y = if bottom_up { h - 1 - y } else { y };

@@ -352,6 +352,127 @@ impl Default for World {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Побудова світу зі сценарію (з dh-engine, об'єднання гілок 2026-10-24)
+// ---------------------------------------------------------------------------
+
+/// Список id зі сирого значення `{ 1 2 3 }`.
+fn parse_id_list(raw: &str) -> Vec<u16> {
+    raw.trim()
+        .trim_start_matches('{')
+        .trim_end_matches('}')
+        .split_whitespace()
+        .filter_map(|s| s.parse().ok())
+        .collect()
+}
+
+/// Світ зі сценарію: країни, альянси, провінції (власники — з ownedprovinces
+/// країн), VP-блоки провінцій. Спільна точка входу для бінарника, тестів
+/// і прикладів.
+pub fn build_world(
+    sc: &dh_format::scenario::Scenario,
+    csv: &[dh_format::ProvinceCsv],
+    speed: u8,
+) -> World {
+    let mut world = World::new();
+    let start = sc
+        .globaldata
+        .startdate
+        .or(sc.header.startdate)
+        .unwrap_or_else(|| dh_format::GameDate::from_ymd(1936, 1, 1));
+    world.date = start;
+    world.set_speed(speed.min(7));
+
+    for cb in &sc.countries {
+        let mut c = Country::new(cb.tag.clone(), cb.tag.as_str().to_string());
+        c.capital = cb.capital;
+        world.add_country(c);
+    }
+
+    for a in &sc.globaldata.alliances {
+        let members: Vec<usize> = a
+            .participants
+            .iter()
+            .filter_map(|t| world.tags.get(t).copied())
+            .collect();
+        if members.is_empty() {
+            continue;
+        }
+        world.create_alliance(a.name.clone().unwrap_or_else(|| a.kind.clone()), members);
+    }
+
+    let mut idx_by_id: HashMap<u16, usize> = HashMap::with_capacity(csv.len());
+    let mut provs: Vec<ProvinceState> = Vec::with_capacity(csv.len());
+    for p in csv {
+        if p.id == 0 {
+            continue; // PROV0 — фіктивна
+        }
+        idx_by_id.insert(p.id, provs.len());
+        provs.push(ProvinceState {
+            id: p.id,
+            owner: None,
+            controller: None,
+            has_vp: false,
+            vp: 0,
+            infra: p.resources.infrastructure,
+            resources: p.resources.clone(),
+            occupied: false,
+        });
+    }
+
+    for cb in &sc.countries {
+        let Some(&ci) = world.tags.get(&cb.tag) else {
+            continue;
+        };
+        for (k, v) in &cb.body {
+            if k.eq_ignore_ascii_case("ownedprovinces") {
+                for id in parse_id_list(v) {
+                    if let Some(&pi) = idx_by_id.get(&id) {
+                        provs[pi].owner = Some(ci);
+                        provs[pi].controller = Some(ci);
+                    }
+                }
+            }
+        }
+    }
+
+    // Контроль (окупації/повстання на старті): controlledprovinces країни
+    // перевизначає контролера, власник лишається. Дефолт — контролер = власник.
+    // RE: RE-eug-format.md; dh-data::scenario CountrySetup::controlled.
+    for cb in &sc.countries {
+        let Some(&ci) = world.tags.get(&cb.tag) else {
+            continue;
+        };
+        for (k, v) in &cb.body {
+            if k.eq_ignore_ascii_case("controlledprovinces") {
+                for id in parse_id_list(v) {
+                    if let Some(&pi) = idx_by_id.get(&id) {
+                        provs[pi].controller = Some(ci);
+                    }
+                }
+            }
+        }
+    }
+    for p in provs.iter_mut() {
+        p.occupied = matches!((p.owner, p.controller), (Some(o), Some(c)) if o != c);
+    }
+
+    for pb in &sc.provinces {
+        let Some(&pi) = idx_by_id.get(&pb.id) else {
+            continue;
+        };
+        for (k, v) in &pb.body {
+            if k.eq_ignore_ascii_case("points") || k.eq_ignore_ascii_case("vp") {
+                provs[pi].has_vp = true;
+                provs[pi].vp = v.trim().parse::<u16>().unwrap_or(0).min(255) as u8;
+            }
+        }
+    }
+
+    world.provinces = provs;
+    world
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

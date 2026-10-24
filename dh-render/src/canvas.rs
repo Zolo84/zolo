@@ -302,8 +302,8 @@ mod tests {
                 assert_eq!(c.buf()[y * 8 + x], 0xFFFF_0000);
             }
         }
-        assert_eq!(c.buf()[2 * 8 + 0], 0);
-        assert_eq!(c.buf()[0 * 8 + 2], 0);
+        assert_eq!(c.buf()[2 * 8], 0);
+        assert_eq!(c.buf()[2], 0);
         // Праворуч/знизу за межами.
         c.fill_rect(6, 6, 10, 10, GREEN);
         assert_eq!(c.buf()[6 * 8 + 6], 0xFF00_FF00);
@@ -332,12 +332,12 @@ mod tests {
         // 2×2 маска: ## / #.
         let mask = [0b1100_0000, 0b1000_0000];
         c.draw_bitmap_mask(1, 0, 2, 2, &mask, RED);
-        assert_eq!(c.buf()[0 * 4 + 1], 0xFFFF_0000);
-        assert_eq!(c.buf()[0 * 4 + 2], 0xFFFF_0000);
-        assert_eq!(c.buf()[1 * 4 + 1], 0xFFFF_0000);
-        assert_eq!(c.buf()[1 * 4 + 2], 0); // (1,1) маски = 0
-        assert_eq!(c.buf()[0 * 4 + 0], 0);
-        assert_eq!(c.buf()[2 * 4 + 1], 0);
+        assert_eq!(c.buf()[1], 0xFFFF_0000); // ряд 0
+        assert_eq!(c.buf()[2], 0xFFFF_0000); // ряд 0
+        assert_eq!(c.buf()[5], 0xFFFF_0000); // ряд 1
+        assert_eq!(c.buf()[6], 0); // ряд 1: (1,1) маски = 0
+        assert_eq!(c.buf()[0], 0); // ряд 0
+        assert_eq!(c.buf()[9], 0); // ряд 2
     }
 
     #[test]

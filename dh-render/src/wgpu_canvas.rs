@@ -118,7 +118,7 @@ impl<'a> WgpuCanvas<'a> {
             eprintln!("wgpu validation error: {e}");
         }));
 
-        let mut config = surface
+        let config = surface
             .get_default_config(&adapter, width.max(1), height.max(1))
             .context("wgpu: surface config")?;
         // Канвас тримає сирі коди гри (не-sRGB, як і палітра в wgpu_map).

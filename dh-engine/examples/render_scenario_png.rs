@@ -117,11 +117,7 @@ fn main() -> anyhow::Result<()> {
     renderer.render(&mut canvas);
     // Top-бар інтерфейсу оригіналу (gfx/SKINS/<player>/topbar.bmp, fallback default).
     for skin in [player.to_lowercase().as_str(), "default"] {
-        let p = paths
-            .root
-            .join("gfx/SKINS")
-            .join(skin)
-            .join("topbar.bmp");
+        let p = paths.root.join("gfx/SKINS").join(skin).join("topbar.bmp");
         if let Ok(tb) = dh_render::ui::load_bmp(&p) {
             eprintln!("topbar: {} ({}×{})", p.display(), tb.w, tb.h);
             tb.draw(&mut canvas, 0, 0);

@@ -5,17 +5,32 @@ members = [
     "dh-core",     # ігрове ядро: світ, час, фази, команди
     "dh-render",   # рендер мапи/UI (softbuffer)
     "dh-engine",   # бінарник: збирає все разом
+    # — крейти гілки claude (симуляція, об'єднано 2026-10-24) —
+    "dh-text",     # CP1252, парсер/записувач Paradox script
+    "dh-vfs",      # віртуальна ФС: шари модів
+    "dh-data",     # типізовані дані: сценарії, дипломатія, юніти, погода
+    "dh-map",      # lightmap1-4, adjacency, відстані, colorscales
+    "dh-sim",      # детермінована симуляція: погодинні тіки, бій, рух, постачання
+    "dh-tool",     # CLI: scan/sim/march/map/probe
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+rust-version = "1.83"
+publish = false
 
 [workspace.dependencies]
 dh-format = { path = "dh-format" }
 dh-core = { path = "dh-core" }
 dh-render = { path = "dh-render" }
+dh-text = { path = "dh-text" }
+dh-vfs = { path = "dh-vfs" }
+dh-data = { path = "dh-data" }
+dh-map = { path = "dh-map" }
+dh-sim = { path = "dh-sim" }
+dh-tool = { path = "dh-tool" }
 anyhow = "1"
 bzip2 = "0.5"
 byteorder = "1"

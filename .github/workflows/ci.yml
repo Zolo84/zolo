@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all --check
+      # Жорсткий clippy-гейт — для крейтів симуляції (гілка claude):
+      # вони й далі тримають свій стандарт -D warnings.
+      - run: cargo clippy -p dh-text -p dh-vfs -p dh-data -p dh-map -p dh-sim -p dh-tool --all-targets -- -D warnings
+      # Крейти рендера/ядра: поки fmt + тести; clippy-нісанос — окремий сеанс.
+      - run: cargo test --workspace

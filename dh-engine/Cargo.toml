@@ -5,8 +5,10 @@ edition = "2021"
 
 [dependencies]
 dh-core = { workspace = true }
+dh-data = { workspace = true }
 dh-format = { workspace = true }
 dh-render = { workspace = true }
+dh-sim = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 log = { workspace = true }
