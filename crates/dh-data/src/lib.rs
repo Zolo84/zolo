@@ -25,7 +25,7 @@ pub use leaders::{Leader, Leaders};
 pub use localisation::Localisation;
 pub use misc::Misc;
 pub use province::{Province, Provinces};
-pub use scenario::{CountrySetup, ProvinceSetup, Scenario, ScenarioInfo};
+pub use scenario::{CountrySetup, ProvinceSetup, Scenario, ScenarioInfo, Stockpiles};
 pub use settings::{open_install, Settings};
 pub use tech::Techs;
 pub use unitdb::{DivisionStats, UnitDb};

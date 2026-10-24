@@ -191,3 +191,28 @@ fn ardennes_scenario_weather() {
         .iter()
         .all(|p| p.weather != Some(Weather::Clear)));
 }
+
+/// Germany's stockpiles in the 1936 scenario (`scenarios/1936/germany.inc`).
+#[test]
+fn scenario_stockpiles() {
+    let Some(vfs) = vfs() else { return };
+    let mut warnings = Vec::new();
+    let s = Scenario::load(&vfs, "scenarios/1936.eug", &mut warnings).unwrap();
+    let ger = s.countries.iter().find(|c| c.tag == "GER").unwrap();
+    let st = ger.stockpiles;
+    assert_eq!(
+        (
+            st.supplies,
+            st.oil,
+            st.manpower,
+            st.money,
+            st.transports,
+            st.escorts
+        ),
+        (2000.0, 500.0, 850.0, 70.0, 35.0, 23.0)
+    );
+    assert_eq!(
+        (st.energy, st.metal, st.rare_materials),
+        (1000.0, 1000.0, 500.0)
+    );
+}

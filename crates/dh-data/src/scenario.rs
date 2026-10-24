@@ -50,8 +50,40 @@ pub struct CountrySetup {
     pub national: Vec<u32>,
     pub units: Vec<Unit>,
     pub relations: Vec<Relation>,
+    pub stockpiles: Stockpiles,
     /// The full block, for fields not yet modelled.
     pub raw: Block,
+}
+
+/// National stockpiles a scenario starts a country with.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Stockpiles {
+    pub supplies: f64,
+    pub oil: f64,
+    pub manpower: f64,
+    pub energy: f64,
+    pub metal: f64,
+    pub rare_materials: f64,
+    pub money: f64,
+    pub transports: f64,
+    pub escorts: f64,
+}
+
+impl Stockpiles {
+    pub fn from_block(b: &Block) -> Self {
+        let v = |key: &str| b.get_f64(key).unwrap_or(0.0);
+        Stockpiles {
+            supplies: v("supplies"),
+            oil: v("oil"),
+            manpower: v("manpower"),
+            energy: v("energy"),
+            metal: v("metal"),
+            rare_materials: v("rare_materials"),
+            money: v("money"),
+            transports: v("transports"),
+            escorts: v("escorts"),
+        }
+    }
 }
 
 impl CountrySetup {
@@ -69,6 +101,7 @@ impl CountrySetup {
             national: ids("nationalprovinces"),
             units: Unit::all_in(b),
             relations: Relation::all_in(b),
+            stockpiles: Stockpiles::from_block(b),
             raw: b.clone(),
         })
     }

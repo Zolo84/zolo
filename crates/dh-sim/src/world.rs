@@ -1,6 +1,6 @@
 //! Mutable game state.
 
-use dh_data::{Diplomacy, GameDate, Scenario, Techs, Unit, Vfs, Weather};
+use dh_data::{Diplomacy, GameDate, Scenario, Stockpiles, Techs, Unit, Vfs, Weather};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[derive(Debug, Clone)]
@@ -19,6 +19,8 @@ pub struct Country {
     /// Chance of surprise in land battles (§3.7): `country[32]` (1.0),
     /// raised by `surprise` commands with `which = land`.
     pub land_surprise: f32,
+    /// National stockpiles (supplies, oil, manpower…).
+    pub stock: Stockpiles,
 }
 
 impl Country {
@@ -33,6 +35,7 @@ impl Country {
             techs: BTreeSet::new(),
             allow_dig_in: false,
             land_surprise: crate::Params::default().land_surprise,
+            stock: Stockpiles::default(),
         }
     }
 }
@@ -193,6 +196,7 @@ impl World {
                         .unwrap_or_default(),
                     // The key a saved game writes (§4.4).
                     allow_dig_in: c.raw.get_bool("allow_dig_in").unwrap_or(false),
+                    stock: c.stockpiles,
                     ..Country::new(&c.tag)
                 },
             );
