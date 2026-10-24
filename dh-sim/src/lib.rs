@@ -34,7 +34,10 @@ pub use world::{Country, UnitState, World};
 use dh_data::GameDate;
 
 /// A piece of game logic driven by the clock.
-pub trait System {
+///
+/// `Send` so a [`Simulation`] can live in its own thread (the game engine
+/// advances it off the render loop).
+pub trait System: Send {
     fn name(&self) -> &str;
     fn on_hour(&mut self, _world: &mut World, _rng: &mut Rng) {}
     fn on_day(&mut self, _world: &mut World, _rng: &mut Rng) {}

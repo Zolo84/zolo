@@ -19,14 +19,13 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use log::LevelFilter;
 
-use dh_core::country::Country;
 use dh_core::time::{GameTime, TimeEvent};
-use dh_core::world::{build_world, ProvinceState, World};
+use dh_core::world::{build_world, World};
 use dh_format::fonts::BitmapFont;
 use dh_format::map::{load as load_map, MapData};
 use dh_format::map_color::GameColorModel;
 use dh_format::palette::Palette;
-use dh_format::scenario::{load_scenario, Scenario};
+use dh_format::scenario::load_scenario;
 use dh_format::{GamePaths, ProvinceCsv};
 
 mod sim_link;
@@ -356,9 +355,11 @@ struct AppState {
     /// Відкладена аннексія з оточення: (тег, коли виконати) — тестовий шлях
     /// `DH_ANNEX=SOV` із затримкою `DH_ANNEX_TICK` (сек.).
     annex_pending: Option<(String, Instant)>,
-    /// Симуляція dh-sim (гілка claude): юніти, рух, бої, постачання, погода.
-    sim_link: Option<sim_link::SimLink>,
-    /// Стопки юнітів для лічильників (оновлюється після доби симуляції).
+    /// Симуляція dh-sim в окремому потоці (знімки стану раз на добу).
+    sim: Option<sim_link::SimThread>,
+    /// Локалізовані назви провінцій (з dh-data, для панелі вибору).
+    prov_names: HashMap<u32, String>,
+    /// Стопки юнітів для лічильників (оновлюється зі знімків симуляції).
     unit_stacks: Vec<sim_link::UnitStack>,
 }
 
@@ -449,6 +450,13 @@ impl AppState {
 
     /// Назва провінції за id (з Province.csv) або "?".
     fn province_name(&self, id: u16) -> &str {
+        // Спочатку локалізована назва з файлів гри (dh-data), потім Province.csv.
+        if let Some(name) = self.prov_names.get(&(id as u32)) {
+            let n = name.as_str();
+            if !n.is_empty() && !n.starts_with("PROV") {
+                return n;
+            }
+        }
         self.prov_csv
             .iter()
             .find(|p| p.id == id)
@@ -470,10 +478,43 @@ impl AppState {
         h
     }
 
-    /// Оновити стопки юнітів з симуляції (дешево: ~750 юнітів).
-    fn refresh_unit_stacks(&mut self) {
-        if let Some(link) = &self.sim_link {
-            self.unit_stacks = link.unit_stacks();
+    /// Застосувати знімок симуляції: власники/контролери → наш World
+    /// (FNV-сигнатура сам перебудує політику), стопки → лічильники.
+    fn apply_snapshot(&mut self, snap: sim_link::SimSnapshot) {
+        if let Some(w) = self.world.as_mut() {
+            let changed = sim_link::sync_owner_maps(w, &snap.owner, &snap.controller);
+            if changed {
+                log::info!(
+                    "dh-sim: політика оновлена ({}, боїв {})",
+                    snap.date,
+                    snap.battles
+                );
+            }
+        }
+        self.unit_stacks = snap.stacks;
+        // Профіль: повільна доба симуляції — сигнал для оптимізації.
+        if snap.day_ms > 300 {
+            log::warn!(
+                "dh-sim: повільна доба {} мс ({}) — профілювати системи",
+                snap.day_ms,
+                snap.date
+            );
+        }
+    }
+
+    /// Дзеркало анексії в симуляційний потік (щоб знімки не відкотили).
+    fn mirror_annex_to_sim(&mut self) {
+        let Some(w) = &self.world else { return };
+        let ptag = dh_format::Tag(self.cli.player.clone());
+        let Some(&pi) = w.tags.get(&ptag) else { return };
+        let list: Vec<(u32, String)> = w
+            .provinces
+            .iter()
+            .filter(|p| p.owner == Some(pi))
+            .map(|p| (p.id as u32, self.cli.player.clone()))
+            .collect();
+        if let Some(sim) = &self.sim {
+            sim.mirror_provinces(list);
         }
     }
 
@@ -519,23 +560,9 @@ impl AppState {
             &dh_format::Tag(tag.to_string()),
             &dh_format::Tag(self.cli.player.clone()),
         );
-        // Дзеркало в симуляцію, щоб денний sync_owners не відкотив анексію.
-        if let Some(link) = &mut self.sim_link {
-            let ptag = dh_format::Tag(self.cli.player.clone());
-            if let Some(&pi) = w.tags.get(&ptag) {
-                let player = self.cli.player.clone();
-                for p in &w.provinces {
-                    if p.owner == Some(pi) {
-                        link.sim.world.owner.insert(p.id as u32, player.clone());
-                        link.sim
-                            .world
-                            .controller
-                            .insert(p.id as u32, player.clone());
-                    }
-                }
-                log::info!("dh-sim: аннексію продубльовано ({n} провінцій)");
-            }
-        }
+        // Дзеркало в симуляційний потік, щоб знімки не відкотили анексію.
+        self.mirror_annex_to_sim();
+        log::info!("dh-sim: аннексію продубльовано ({n} провінцій)");
         n
     }
 
@@ -952,18 +979,10 @@ impl AppState {
                     match ev {
                         TimeEvent::DayTick(_) => {
                             w.tick_day();
-                            // Крок симуляції dh-sim: доба погодинних тіків +
-                            // власники/контролери → наш World (рендер сам
-                            // помітить зміну FNV-сигнатурою).
-                            if let Some(link) = &mut self.sim_link {
-                                link.advance_day();
-                                if link.sync_owners(w) {
-                                    log::info!(
-                                        "dh-sim: політика оновлена ({}, боїв {})",
-                                        link.sim.date(),
-                                        link.sim.world.battles.len()
-                                    );
-                                }
+                            // Крок симуляції dh-sim: замовити добу (неблокувально;
+                            // знімок стану забирається у tick() кожен кадр).
+                            if let Some(sim) = &self.sim {
+                                sim.advance_day();
                             }
                         }
                         TimeEvent::MonthTick(d) => log::info!("місяць: {}", d.display()),
@@ -973,8 +992,11 @@ impl AppState {
             }
         }
 
-        // Стопки юнітів з симуляції — раз на кадр (дешево, ~750 юнітів).
-        self.refresh_unit_stacks();
+        // Знімки з симуляційного потоку (раз на добу): власники → World,
+        // стопки → лічильники.
+        while let Some(snap) = self.sim.as_ref().and_then(|s| s.try_snapshot()) {
+            self.apply_snapshot(snap);
+        }
         // Рантайм-політика: тестова аннексія з оточення (DH_ANNEX, DH_ANNEX_TICK).
         if let Some((tag, t)) = &self.annex_pending {
             if Instant::now() >= *t {
@@ -1063,8 +1085,11 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
         world = Some(w);
     }
 
-    // Симуляція dh-sim (юніти, рух, бої, постачання, погода, ORG) — опційно.
-    let mut sim_link = None;
+    // Симуляція dh-sim (юніти, рух, бої, постачання, погода, ORG) — опційно;
+    // живе в ОКРЕМОМУ потоці (рендер не блокується), стан — знімками раз на добу.
+    let mut sim = None;
+    let mut prov_names = HashMap::new();
+    let mut unit_stacks = Vec::new();
     if !cli.map_only && cli.sim {
         match sim_link::SimLink::build(&paths.root, &cli.scenario) {
             Ok(link) => {
@@ -1079,7 +1104,9 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
                 if let Some(w) = world.as_mut() {
                     link.sync_owners(w);
                 }
-                sim_link = Some(link);
+                prov_names = link.prov_names();
+                unit_stacks = link.unit_stacks();
+                sim = Some(sim_link::SimThread::spawn(link));
             }
             Err(e) => log::error!("dh-sim не збудовано (гра без симуляції): {e:#}"),
         }
@@ -1434,10 +1461,6 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
         img
     };
 
-    let unit_stacks = sim_link
-        .as_ref()
-        .map(|l| l.unit_stacks())
-        .unwrap_or_default();
     let mut app = App(AppState {
         cli: cli.clone(),
         map,
@@ -1484,7 +1507,8 @@ fn run_windowed(paths: &GamePaths, cli: &Cli) -> Result<()> {
             log::info!("відкладена аннексія (test): {tag} через {secs} с");
             (tag, Instant::now() + delay)
         }),
-        sim_link,
+        sim,
+        prov_names,
         unit_stacks,
     });
 
