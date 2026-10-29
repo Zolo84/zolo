@@ -16,6 +16,7 @@ pub mod march;
 pub mod movement;
 pub mod org;
 pub mod params;
+pub mod reinforce;
 pub mod rng;
 pub mod supply;
 pub mod weather;
@@ -29,9 +30,10 @@ pub use leaders::LeaderState;
 pub use logistics::Logistics;
 pub use org::OrgRegain;
 pub use params::Params;
+pub use reinforce::Reinforce;
 pub use rng::Rng;
 pub use weather::WeatherSystem;
-pub use world::{Country, UnitState, World};
+pub use world::{Country, IcSliders, UnitState, World};
 
 use dh_data::GameDate;
 

@@ -1074,3 +1074,60 @@ fn germany_ic_and_transport_capacity_in_1936() {
     let ese = (ger.tc as f32 / ger.load as f32).min(1.0);
     assert_eq!(ger.ese, ese);
 }
+
+/// Reinforcement on the 1936 map: with no IC on the slider (the starting
+/// split) nothing happens; with all of it, a VIII. Armeekorps division at
+/// half strength gains `100 / time` a day, `time` being its model's build
+/// time · 0.5, and costs `0.8 · manpower / time` manpower.
+#[test]
+fn divisions_reinforce_from_ic_and_manpower() {
+    use dh_sim::{Logistics, Reinforce};
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let ctx = Arc::new(ctx);
+    let dir = std::env::var_os("DH_GAME_DIR").unwrap();
+    let (mut world, _) = World::from_scenario(&scenario);
+    world.load_policies(&Vfs::new(&dir)).unwrap();
+    let corps = world
+        .units
+        .iter()
+        .position(|u| u.unit.name == "VIII. Armeekorps")
+        .unwrap();
+    world.units[corps].unit.divisions[0].strength = Some(50.0);
+    world.update_logistics(&ctx);
+    let mut idle = Simulation::new(world.clone(), 1);
+    idle.add_system(Reinforce::new(ctx.clone()));
+    idle.run_hours(24);
+    assert_eq!(
+        idle.world.units[corps].unit.divisions[0].strength,
+        Some(50.0)
+    );
+
+    world
+        .countries
+        .get_mut("GER")
+        .unwrap()
+        .sliders
+        .reinforcement = 1.0;
+    let d = &world.units[corps].unit.divisions[0];
+    let model = ctx.units.division_model(&d.kind, d.model).unwrap();
+    let time = (model.get("buildtime") * 0.5).max(1.0) as f32;
+    let manpower = 0.8 * model.get("manpower") as f32 / time;
+    let before = world.countries["GER"].stock.manpower as f32;
+    let mut sim = Simulation::new(world, 1);
+    sim.add_system(Logistics::new(ctx.clone()));
+    sim.add_system(Reinforce::new(ctx.clone()));
+    sim.run_hours(24);
+    let w = &sim.world;
+    assert_eq!(w.countries["GER"].ese, 1.0);
+    let gained = w.units[corps].unit.divisions[0].strength.unwrap() as f32 - 50.0;
+    let used = before - w.countries["GER"].stock.manpower as f32;
+    // Berlin is the corps' own province, so the distance factor is 1.
+    assert!(
+        (gained - 100.0 / time).abs() < 1e-3,
+        "{gained} vs {}",
+        100.0 / time
+    );
+    assert!((used - manpower).abs() < 1e-3, "{used} vs {manpower}");
+}

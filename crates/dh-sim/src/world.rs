@@ -3,6 +3,30 @@
 use dh_data::{Diplomacy, GameDate, Scenario, Stockpiles, Techs, Unit, Vfs, Weather};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+/// How a country splits its IC (`consumer`, `production`, `supplies`,
+/// `reinforcement`, `upgrading`): shares of the whole.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IcSliders {
+    pub consumer: f32,
+    pub production: f32,
+    pub supplies: f32,
+    pub reinforcement: f32,
+    pub upgrade: f32,
+}
+
+impl Default for IcSliders {
+    /// The constructor's split (`0x445AF3`).
+    fn default() -> Self {
+        IcSliders {
+            consumer: 0.4,
+            production: 0.2,
+            supplies: 0.4,
+            reinforcement: 0.0,
+            upgrade: 0.0,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Country {
     pub tag: String,
@@ -38,6 +62,7 @@ pub struct Country {
     pub load: i64,
     /// National supply efficiency: TC over load, at most 1.
     pub ese: f32,
+    pub sliders: IcSliders,
 }
 
 impl Country {
@@ -64,6 +89,7 @@ impl Country {
             tc: 0,
             load: 0,
             ese: 1.0,
+            sliders: IcSliders::default(),
         }
     }
 }
@@ -244,6 +270,18 @@ impl World {
                     industrial_modifier: c.raw.get_f64("industrial_modifier").unwrap_or(1.0) as f32,
                     // Read like `atoi`.
                     extra_tc: c.raw.get_f64("extra_tc").map_or(0.0, f64::trunc) as f32,
+                    sliders: {
+                        let d = IcSliders::default();
+                        let v = |k: &str, d: f32| c.raw.get_f64(k).map_or(d, |x| x as f32);
+                        IcSliders {
+                            consumer: v("consumer", d.consumer),
+                            production: v("production", d.production),
+                            // `supplies` is the stockpile key.
+                            supplies: d.supplies,
+                            reinforcement: v("reinforcement", d.reinforcement),
+                            upgrade: v("upgrading", d.upgrade),
+                        }
+                    },
                     free_ic: c
                         .raw
                         .get_block("free")

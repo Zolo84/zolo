@@ -89,6 +89,12 @@ pub struct Params {
     /// Transport capacity modifiers every country starts with.
     pub tc_modifier: f32, // country[6]
     pub occupied_tc_modifier: f32,      // country[7]
+    /// Reinforcement: manpower share, cost and time factors, and the
+    /// country "repair" modifier dividing the time.
+    pub reinforce_manpower: f32, // economy[35]
+    pub reinforce_cost: f32,            // economy[36]
+    pub reinforce_time: f32,            // economy[37]
+    pub repair_modifier: f32,           // country[11]
     /// Friendly-province ORG regain: `min(2 · infra + bonus, cap)`
     /// (organisation.md §2, old logic).
     pub org_friendly_bonus: f32, // combat[165]
@@ -198,6 +204,10 @@ impl Default for Params {
             load_naval: 0.3333,
             tc_modifier: 1.0,
             occupied_tc_modifier: 1.0,
+            reinforce_manpower: 0.8,
+            reinforce_cost: 0.8,
+            reinforce_time: 0.5,
+            repair_modifier: 1.0,
             org_friendly_bonus: 0.0,
             org_friendly_cap: 1.2,
             new_org_logic: false,
@@ -364,6 +374,10 @@ impl Params {
         f("economy", 21, &mut p.load_naval);
         f("country", 6, &mut p.tc_modifier);
         f("country", 7, &mut p.occupied_tc_modifier);
+        f("economy", 35, &mut p.reinforce_manpower);
+        f("economy", 36, &mut p.reinforce_cost);
+        f("economy", 37, &mut p.reinforce_time);
+        f("country", 11, &mut p.repair_modifier);
         f("country", 10, &mut p.country_supply_distance);
         f("mod", 21, &mut p.rebel_org);
         p
