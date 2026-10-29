@@ -1052,8 +1052,10 @@ fn no_fuel_triples_the_hop() {
 }
 
 /// Germany at the start of 1936: IC 128 (142 national IC, peacetime
-/// modifier 0.9), TC 192 (1.5 per IC), a load from its divisions' daily
-/// needs, and the national supply efficiency TC/load at most 1.
+/// modifier 0.9; the game has 135 with Hess's +5 %, ministers are not
+/// modelled), TC 211 (1.5 per IC, ×1.1 from technology 1310's `tc_mod`),
+/// load 62 from its divisions' daily needs (as the independent
+/// derivation got), and the national supply efficiency TC/load at most 1.
 #[test]
 fn germany_ic_and_transport_capacity_in_1936() {
     let Some((ctx, scenario)) = load() else {
@@ -1062,6 +1064,7 @@ fn germany_ic_and_transport_capacity_in_1936() {
     let dir = std::env::var_os("DH_GAME_DIR").unwrap();
     let (mut world, _) = World::from_scenario(&scenario);
     world.load_policies(&Vfs::new(&dir)).unwrap();
+    world.load_techs(&Vfs::new(&dir));
     world.update_logistics(&ctx);
     let ger = &world.countries["GER"];
     eprintln!(
@@ -1069,8 +1072,9 @@ fn germany_ic_and_transport_capacity_in_1936() {
         ger.ic, ger.tc, ger.load, ger.ese
     );
     assert_eq!(ger.ic, 128);
-    assert_eq!(ger.tc, 192);
-    assert!(ger.load > 0);
+    assert!((ger.tc_bonus - 0.1).abs() < 1e-6);
+    assert_eq!(ger.tc, 211);
+    assert_eq!(ger.load, 62);
     let ese = (ger.tc as f32 / ger.load as f32).min(1.0);
     assert_eq!(ger.ese, ese);
 }

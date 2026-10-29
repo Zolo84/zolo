@@ -63,6 +63,11 @@ pub struct Country {
     /// National supply efficiency: TC over load, at most 1.
     pub ese: f32,
     pub sliders: IcSliders,
+    /// What `tc_mod` / `tc_occupied_mod` commands added to the transport
+    /// capacity modifiers (`country[6]`, `country[7]` at the start), as
+    /// fractions.
+    pub tc_bonus: f32,
+    pub occupied_tc_bonus: f32,
 }
 
 impl Country {
@@ -90,6 +95,8 @@ impl Country {
             load: 0,
             ese: 1.0,
             sliders: IcSliders::default(),
+            tc_bonus: 0.0,
+            occupied_tc_bonus: 0.0,
         }
     }
 }
@@ -345,6 +352,14 @@ impl World {
                         "allow_dig_in" => country.allow_dig_in = true,
                         "surprise" if which.eq_ignore_ascii_case("land") => {
                             country.land_surprise += (command.value.unwrap_or(0.0) * 0.01) as f32;
+                        }
+                        // Event 0x193 without `which`: added (logistics.md §2).
+                        "tc_mod" => {
+                            country.tc_bonus += (command.value.unwrap_or(0.0) * 0.01) as f32
+                        }
+                        "tc_occupied_mod" => {
+                            country.occupied_tc_bonus +=
+                                (command.value.unwrap_or(0.0) * 0.01) as f32;
                         }
                         _ => {}
                     }

@@ -2,6 +2,7 @@
 //! supply efficiency (`docs/spec/logistics.md`): worked out at the start and
 //! then daily (`0x49A740`, `0x49AD70`).
 //!
+//! Technologies' `tc_mod` / `tc_occupied_mod` raise the TC modifiers.
 //! Not modelled yet (their terms are 0 or 1): ministers, revolt risk and
 //! partisans, the undeployed pool, queued buildings, offensive supply,
 //! puppets, difficulty (0 at Normal) and the dissent penalty, which only
@@ -84,7 +85,7 @@ impl World {
     /// Daily supply need of a division for the load (`0x4FD380(0)` plus
     /// `0x4FD570(0)`): combat is ignored. Air and naval divisions count as
     /// at their base or in port when they stand on land.
-    fn load_need(&self, ctx: &MoveContext, unit: usize, d: &Division) -> f32 {
+    fn load_need(&self, ctx: &MoveContext, unit: usize, d: &Division) -> (f32, f32) {
         let p = &self.params;
         let u = &self.units[unit];
         let stats = ctx.units.division_stats(d);
@@ -98,7 +99,10 @@ impl World {
             Branch::Land => {
                 let mut cond = self.need_conditions(ctx, unit);
                 cond.in_battle = false;
-                self.fuel_need(ctx, &cond, d) + self.supply_need(ctx, &cond, d)
+                (
+                    self.fuel_need(ctx, &cond, d),
+                    self.supply_need(ctx, &cond, d),
+                )
             }
             Branch::Air => {
                 let share = d.strength.unwrap_or(100.0) as f32 / 100.0;
@@ -108,7 +112,7 @@ impl World {
                 let supplies = get("supplyconsumption")
                     * share
                     * if at_base { p.air_supply_base } else { 1.0 };
-                fuel + supplies
+                (fuel, supplies)
             }
             Branch::Naval => {
                 let fuel = get("fuelconsumption")
@@ -123,7 +127,7 @@ impl World {
                     } else {
                         1.0
                     };
-                fuel + supplies
+                (fuel, supplies)
             }
         }
     }
@@ -134,7 +138,9 @@ impl World {
         let Some(c) = self.countries.get(tag) else {
             return (0, 0);
         };
-        let tc = (c.extra_tc + (c.ic as f32 * p.ic_to_tc).max(10.0)) * p.tc_modifier;
+        let tc_mod = (p.tc_modifier + c.tc_bonus).max(0.01);
+        let occupied_mod = (p.occupied_tc_modifier + c.occupied_tc_bonus).max(0.01);
+        let tc = (c.extra_tc + (c.ic as f32 * p.ic_to_tc).max(10.0)) * tc_mod;
         let mut divisions = 0.0f32;
         for (i, u) in self.units.iter().enumerate() {
             if u.owner != tag {
@@ -146,7 +152,10 @@ impl World {
                 Branch::Naval => p.load_naval,
             };
             for d in &u.unit.divisions {
-                divisions += self.load_need(ctx, i, d) * k;
+                // Fuel and supplies are added one after the other, in f32.
+                let (fuel, supplies) = self.load_need(ctx, i, d);
+                divisions += fuel * k;
+                divisions += supplies * k;
             }
         }
         let occupied = self
@@ -157,7 +166,7 @@ impl World {
             })
             .count() as f32
             * p.load_occupied
-            / p.occupied_tc_modifier;
+            / occupied_mod;
         (fistp(tc), fistp(divisions + occupied))
     }
 
@@ -182,15 +191,13 @@ impl System for Logistics {
         "logistics"
     }
 
+    /// At the start, and at 00:00: the day message comes before the
+    /// hour's (`0x42CF30`), so add this system before [`crate::Reinforce`]
+    /// for reinforcement to see the day's values.
     fn on_hour(&mut self, world: &mut World, _rng: &mut Rng) {
-        // The game also works them out when the game is set up.
-        if !self.started {
+        if !self.started || world.date.hour == 0 {
             self.started = true;
             world.update_logistics(&self.ctx);
         }
-    }
-
-    fn on_day(&mut self, world: &mut World, _rng: &mut Rng) {
-        world.update_logistics(&self.ctx);
     }
 }
