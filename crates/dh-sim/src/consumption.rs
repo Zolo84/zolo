@@ -12,6 +12,9 @@ use crate::World;
 use dh_data::leaders::traits;
 use dh_data::{Climate, Division};
 
+/// The hour's share of a daily need: `need · f32(1/24)` (`0x7E5DCC`).
+const HOUR: f32 = 1.0 / 24.0;
+
 /// Extra supplies a division needs in hard terrain (`0x4FD62A`): marsh and
 /// jungle, and deserts by climate.
 fn terrain_supply(t: u8, c: Climate) -> Option<f32> {
@@ -106,10 +109,10 @@ impl World {
     /// (`0x44CCB0`): fails when the stack is cut off or the stockpile is
     /// short, and a short stockpile is still drained to 0.
     pub fn draw_supplies(&mut self, tag: &str, need: f32, in_supply: bool) -> bool {
-        let h = need / 24.0;
-        if h <= 0.0 {
+        if need <= 0.0 {
             return true;
         }
+        let h = need * HOUR;
         if !in_supply {
             return false;
         }
@@ -122,20 +125,18 @@ impl World {
     }
 
     /// Draws an hour's fuel (oil) for country `tag` (`0x44D190`): a short
-    /// stockpile is left as it is.
+    /// stockpile is left as it is. Unlike supplies, a cut-off stack fails
+    /// even with nothing to draw (the source is looked up first).
     pub fn draw_fuel(&mut self, tag: &str, need: f32, in_supply: bool) -> bool {
-        let h = need.max(0.0) / 24.0;
-        if h <= 0.0 {
-            return true;
-        }
         if !in_supply {
             return false;
         }
+        let h = need.max(0.0) * HOUR;
         let Some(c) = self.countries.get_mut(tag) else {
             return false;
         };
         let ok = c.stock.oil >= f64::from(h);
-        if ok {
+        if ok && h > 0.0 {
             c.stock.oil -= f64::from(h);
         }
         ok
@@ -161,7 +162,10 @@ impl World {
                 self.fuel_need(ctx, &cond, d),
                 self.supply_need(ctx, &cond, d),
             );
-            let no_fuel = fuel > 0.0 && !self.draw_fuel(&tag, fuel, in_supply);
+            // The old ORG rules draw fuel in combat even with no need
+            // (`0x504283`), so a cut-off stack there goes short of it.
+            let try_fuel = fuel > 0.0 || cond.in_battle && !self.params.new_org_logic;
+            let no_fuel = try_fuel && !self.draw_fuel(&tag, fuel, in_supply);
             let no_supplies = supplies > 0.0 && !self.draw_supplies(&tag, supplies, in_supply);
             let d = &mut self.units[unit].unit.divisions[j];
             (d.no_fuel, d.no_supplies) = (no_fuel, no_supplies);
