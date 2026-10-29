@@ -114,6 +114,8 @@ pub struct ProvinceSetup {
     /// Current land fort level.
     pub land_fort: f64,
     pub coastal_fort: f64,
+    /// Current IC (`ic = { size current_size }` or `ic = n`), when set.
+    pub ic: Option<f64>,
     /// Current weather, when the block sets it.
     pub weather: Option<crate::Weather>,
 }
@@ -133,6 +135,7 @@ impl ProvinceSetup {
             id: u32::try_from(b.get_i64("id")?).ok()?,
             land_fort: size("landfort"),
             coastal_fort: size("coastalfort"),
+            ic: b.get("ic").map(|_| size("ic")),
             weather: b.get_str("weather").and_then(crate::Weather::from_name),
         })
     }

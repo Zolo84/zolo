@@ -2,8 +2,8 @@
 //! applied by `0x51CB40` at 01:00): deserts, jungles and winter weather wear
 //! down troops where infrastructure is poor, and so does being out of supply.
 //!
-//! The country's own supply efficiency is 1.0 here (stockpiles and transport
-//! capacity are not modelled), so poor infrastructure alone drives it.
+//! `X` is the country's supply efficiency ([`crate::Logistics`]) times the
+//! province's infrastructure.
 
 use crate::movement::{terrain, MoveContext};
 use crate::{Rng, System, World};
@@ -64,7 +64,9 @@ impl World {
         }
         let tag = u.controller();
         let weather = self.weather_at(p);
-        let bare = 1.0 - info.infra;
+        // `X`: the national supply efficiency times infrastructure.
+        let ese = self.countries.get(tag).map_or(1.0, |c| c.ese);
+        let bare = 1.0 - ese * info.infra;
         let a = match info.terrain {
             terrain::DESERT => desert_climate(info.climate).map_or(0.0, |c| bare + c),
             terrain::JUNGLE => {

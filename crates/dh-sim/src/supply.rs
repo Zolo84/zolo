@@ -79,10 +79,10 @@ impl World {
         Some(seen)
     }
 
-    /// Supply efficiency of a land stack standing in `province` (spec §2):
-    /// `(infrastructure + country ESE) · 0.5` on land, with country ESE 1.0.
-    pub fn supply_efficiency(&self, ctx: &MoveContext, province: u32) -> f32 {
-        let country = 1.0;
+    /// Supply efficiency of a land stack of `tag` standing in `province`
+    /// (spec §2): `(infrastructure + national ESE) · 0.5` on land.
+    pub fn supply_efficiency(&self, ctx: &MoveContext, tag: &str, province: u32) -> f32 {
+        let country = self.countries.get(tag).map_or(1.0, |c| c.ese);
         match ctx.province(province) {
             Some(p) if !p.is_water() => (p.infra + country) * 0.5,
             _ => country,
@@ -103,7 +103,7 @@ impl World {
         hq: bool,
     ) -> f32 {
         let u = &self.units[unit];
-        let mut ese = self.supply_efficiency(ctx, u.unit.location.unwrap_or(0));
+        let mut ese = self.supply_efficiency(ctx, &u.owner, u.unit.location.unwrap_or(0));
         let within = u.unit.divisions.len() <= leader.command_limit(&self.params) as usize;
         if ese < 1.0 && within && leader.has_trait(traits::LOGISTICS_WIZARD) {
             ese = (ese + self.params.logistics_wizard_ese).min(1.0);
@@ -118,7 +118,7 @@ impl World {
     /// `min(ESE, 1)` in supply, `combat[208]` out of supply.
     pub fn supply_speed_factor(&self, ctx: &MoveContext, tag: &str, province: u32) -> f32 {
         if self.in_supply(ctx, tag, province) {
-            self.supply_efficiency(ctx, province).min(1.0)
+            self.supply_efficiency(ctx, tag, province).min(1.0)
         } else {
             self.params.out_of_supply_speed
         }
@@ -147,6 +147,7 @@ mod tests {
             infra: 1.0,
             army_pos: (0, 0),
             climate: Default::default(),
+            ic: 0.0,
             centre: (0, 0),
             north: true,
         });

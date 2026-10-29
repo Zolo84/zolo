@@ -1050,3 +1050,27 @@ fn no_fuel_triples_the_hop() {
     let h = ctx.hop_hours(&divisions, 300, link, false, &cond).unwrap();
     assert!((63..66).contains(&h), "{h}");
 }
+
+/// Germany at the start of 1936: IC 128 (142 national IC, peacetime
+/// modifier 0.9), TC 192 (1.5 per IC), a load from its divisions' daily
+/// needs, and the national supply efficiency TC/load at most 1.
+#[test]
+fn germany_ic_and_transport_capacity_in_1936() {
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let dir = std::env::var_os("DH_GAME_DIR").unwrap();
+    let (mut world, _) = World::from_scenario(&scenario);
+    world.load_policies(&Vfs::new(&dir)).unwrap();
+    world.update_logistics(&ctx);
+    let ger = &world.countries["GER"];
+    eprintln!(
+        "GER ic {} tc {} load {} ese {}",
+        ger.ic, ger.tc, ger.load, ger.ese
+    );
+    assert_eq!(ger.ic, 128);
+    assert_eq!(ger.tc, 192);
+    assert!(ger.load > 0);
+    let ese = (ger.tc as f32 / ger.load as f32).min(1.0);
+    assert_eq!(ger.ese, ese);
+}

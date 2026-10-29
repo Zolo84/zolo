@@ -70,6 +70,25 @@ pub struct Params {
     /// Land fuel need factors: standing still, in combat.
     pub fuel_idle: f32, // economy[65]
     pub fuel_combat: f32,               // economy[66]
+    /// Air supply need at its base, air and naval fuel at base / in port,
+    /// naval supply in port, naval fuel idle at sea.
+    pub air_supply_base: f32, // economy[67]
+    pub fuel_at_base: f32,              // economy[69]
+    pub naval_supply_port: f32,         // economy[71]
+    pub naval_fuel_idle: f32,           // economy[73]
+    /// IC to transport capacity.
+    pub ic_to_tc: f32, // economy[1]
+    /// IC of provinces outside the national ones: owned, not owned.
+    pub non_national_ic: f32, // economy[10]
+    pub non_owned_ic: f32,              // economy[11]
+    /// Supply load: per occupied province; land, air, naval needs.
+    pub load_occupied: f32, // economy[18]
+    pub load_land: f32,                 // economy[19]
+    pub load_air: f32,                  // economy[20]
+    pub load_naval: f32,                // economy[21]
+    /// Transport capacity modifiers every country starts with.
+    pub tc_modifier: f32, // country[6]
+    pub occupied_tc_modifier: f32,      // country[7]
     /// Friendly-province ORG regain: `min(2 · infra + bonus, cap)`
     /// (organisation.md §2, old logic).
     pub org_friendly_bonus: f32, // combat[165]
@@ -166,6 +185,19 @@ impl Default for Params {
             supply_combat: 1.0,
             fuel_idle: 0.25,
             fuel_combat: 1.0,
+            air_supply_base: 1.0,
+            fuel_at_base: 0.01,
+            naval_supply_port: 0.5,
+            naval_fuel_idle: 0.25,
+            ic_to_tc: 1.5,
+            non_national_ic: 0.2,
+            non_owned_ic: 0.2,
+            load_occupied: 1.0,
+            load_land: 1.0,
+            load_air: 1.0,
+            load_naval: 0.3333,
+            tc_modifier: 1.0,
+            occupied_tc_modifier: 1.0,
             org_friendly_bonus: 0.0,
             org_friendly_cap: 1.2,
             new_org_logic: false,
@@ -319,6 +351,19 @@ impl Params {
         f("economy", 64, &mut p.supply_combat);
         f("economy", 65, &mut p.fuel_idle);
         f("economy", 66, &mut p.fuel_combat);
+        f("economy", 67, &mut p.air_supply_base);
+        f("economy", 69, &mut p.fuel_at_base);
+        f("economy", 71, &mut p.naval_supply_port);
+        f("economy", 73, &mut p.naval_fuel_idle);
+        f("economy", 1, &mut p.ic_to_tc);
+        f("economy", 10, &mut p.non_national_ic);
+        f("economy", 11, &mut p.non_owned_ic);
+        f("economy", 18, &mut p.load_occupied);
+        f("economy", 19, &mut p.load_land);
+        f("economy", 20, &mut p.load_air);
+        f("economy", 21, &mut p.load_naval);
+        f("country", 6, &mut p.tc_modifier);
+        f("country", 7, &mut p.occupied_tc_modifier);
         f("country", 10, &mut p.country_supply_distance);
         f("mod", 21, &mut p.rebel_org);
         p

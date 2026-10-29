@@ -77,6 +77,8 @@ pub struct ProvinceInfo {
     /// Army position in level-1 map pixels.
     pub army_pos: (i64, i64),
     pub climate: dh_data::Climate,
+    /// IC building size from `Province.csv` (read as an integer), at most 100.
+    pub ic: f32,
     /// Centre of its bounding box (`boundbox.tbl`), level-1 pixels, y down.
     pub centre: (i64, i64),
     /// Northern hemisphere: city `YPos` (the box centre's when the city is
@@ -205,6 +207,7 @@ impl MoveContext {
                 infra: num("infrastructure").unwrap_or(0) as f32 / 100.0,
                 army_pos,
                 climate: dh_data::Climate::from_name(f("climate").unwrap_or("")),
+                ic: num("ic").unwrap_or(0).clamp(0, 100) as f32,
                 centre,
                 north: city_y < 7200,
             });

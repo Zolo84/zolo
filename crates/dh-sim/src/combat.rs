@@ -840,6 +840,7 @@ mod tests {
                 infra: 1.0,
                 army_pos: (0, 0),
                 climate: Default::default(),
+                ic: 0.0,
                 centre: (0, 0),
                 north: true,
             })

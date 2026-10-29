@@ -21,6 +21,23 @@ pub struct Country {
     pub land_surprise: f32,
     /// National stockpiles (supplies, oil, manpower…).
     pub stock: Stockpiles,
+    /// Policy slider positions 1..=10.
+    pub policy: dh_data::policy::Sliders,
+    /// National (core) provinces.
+    pub national: BTreeSet<u32>,
+    pub peacetime_ic_mod: f32,
+    pub wartime_ic_mod: f32,
+    pub industrial_modifier: f32,
+    /// Scenario `extra_tc` and `free = { ic }`.
+    pub extra_tc: f32,
+    pub free_ic: f32,
+    /// Effective IC, transport capacity and supply load (logistics.md),
+    /// worked out daily by [`crate::Logistics`].
+    pub ic: i64,
+    pub tc: i64,
+    pub load: i64,
+    /// National supply efficiency: TC over load, at most 1.
+    pub ese: f32,
 }
 
 impl Country {
@@ -36,6 +53,17 @@ impl Country {
             allow_dig_in: false,
             land_surprise: crate::Params::default().land_surprise,
             stock: Stockpiles::default(),
+            policy: [5; 7],
+            national: BTreeSet::new(),
+            peacetime_ic_mod: 1.0,
+            wartime_ic_mod: 1.0,
+            industrial_modifier: 1.0,
+            extra_tc: 0.0,
+            free_ic: 0.0,
+            ic: 0,
+            tc: 0,
+            load: 0,
+            ese: 1.0,
         }
     }
 }
@@ -68,6 +96,10 @@ pub struct World {
     pub weather_fronts: Vec<crate::weather::WeatherFront>,
     /// The scenario's `static = yes`: weather never changes.
     pub weather_static: bool,
+    /// `db/policy_effects.csv`, once loaded with [`World::load_policies`].
+    pub policies: dh_data::PolicyEffects,
+    /// Province IC the scenario sets, over `Province.csv`.
+    pub province_ic: BTreeMap<u32, f32>,
 }
 
 /// A unit on the map and the country it belongs to.
@@ -141,6 +173,8 @@ impl World {
             weather: Vec::new(),
             weather_fronts: Vec::new(),
             weather_static: false,
+            policies: dh_data::PolicyEffects::default(),
+            province_ic: BTreeMap::new(),
         }
     }
 
@@ -170,6 +204,12 @@ impl World {
         self.params = params;
     }
 
+    /// Loads `db/policy_effects.csv`.
+    pub fn load_policies(&mut self, vfs: &Vfs) -> std::io::Result<()> {
+        self.policies = dh_data::PolicyEffects::load(vfs)?;
+        Ok(())
+    }
+
     /// Loads the constants of `db/misc.txt` as [`World::set_params`] does.
     pub fn load_misc(&mut self, vfs: &Vfs) -> std::io::Result<()> {
         let misc = dh_data::Misc::load(vfs)?;
@@ -197,6 +237,18 @@ impl World {
                     // The key a saved game writes (§4.4).
                     allow_dig_in: c.raw.get_bool("allow_dig_in").unwrap_or(false),
                     stock: c.stockpiles,
+                    policy: dh_data::policy::sliders_from(c.raw.get_block("policy")),
+                    national: c.national.iter().copied().collect(),
+                    peacetime_ic_mod: c.raw.get_f64("peacetime_ic_mod").unwrap_or(1.0) as f32,
+                    wartime_ic_mod: c.raw.get_f64("wartime_ic_mod").unwrap_or(1.0) as f32,
+                    industrial_modifier: c.raw.get_f64("industrial_modifier").unwrap_or(1.0) as f32,
+                    // Read like `atoi`.
+                    extra_tc: c.raw.get_f64("extra_tc").map_or(0.0, f64::trunc) as f32,
+                    free_ic: c
+                        .raw
+                        .get_block("free")
+                        .and_then(|f| f.get_f64("ic"))
+                        .unwrap_or(0.0) as f32,
                     ..Country::new(&c.tag)
                 },
             );
@@ -220,6 +272,9 @@ impl World {
         for p in &scenario.provinces {
             if let Some(w) = p.weather {
                 world.set_weather(p.id, w);
+            }
+            if let Some(ic) = p.ic {
+                world.province_ic.insert(p.id, ic as f32);
             }
         }
         // Provinces without an explicit controller are controlled by their owner.
