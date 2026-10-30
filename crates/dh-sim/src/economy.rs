@@ -9,12 +9,14 @@
 //! adds its scenario's `free` resources and earns money from consumer
 //! goods, all on yesterday's IC. Once the hour's systems have run (the
 //! day's IC is known), consumer goods use their resources and the AI sets
-//! the sliders for the next day.
+//! the sliders for the next day. With the scenario's `rules = { production
+//! = no }` only the `free` resources come in and consumer goods use theirs.
 //!
-//! Every country is played by the AI, and all output goes to the national
-//! stockpile. Not modelled yet: provincial depots and their pools, convoys
-//! and trade; the production queue (its IC is wasted and uses no
-//! resources); the energy-to-oil conversion; puppets; tech team salaries;
+//! Every country is played by the AI. Not modelled yet: provincial depots
+//! and their pools (output of provinces cut off from the capital's allied
+//! area, which the game keeps in a depot, is lost here), convoys and trade;
+//! the production queue (its IC is wasted and uses no resources); the
+//! energy-to-oil conversion; puppets; spy upkeep (nothing for the AI);
 //! stockpile limits (off in the shipped game); dissent; and output lost to
 //! bombing or conquest (a province always yields its `Province.csv`
 //! amounts). The AI's sliders are simplified (see [`World::set_ai_sliders`]).
@@ -26,6 +28,7 @@
 use crate::movement::MoveContext;
 use crate::{IcSliders, Rng, System, World};
 use dh_data::Difficulty;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 
 /// The share of the IC the AI puts on reinforcement at most while AI files
@@ -86,6 +89,39 @@ pub struct ResourceOutput {
 }
 
 impl World {
+    /// The land provinces joined to the capital of `tag` by land it
+    /// controls: the game's region of the capital (`+0x482`). With
+    /// `allies`, also by land its alliance controls: the capital's allied
+    /// area (`+0x6C`), whose provinces deliver to the national stockpile.
+    /// `None` when `tag` does not control its capital (the game then
+    /// measures from a stand-in, not modelled).
+    pub fn capital_area(&self, ctx: &MoveContext, tag: &str, allies: bool) -> Option<HashSet<u32>> {
+        let capital = self.countries.get(tag).and_then(|c| c.capital)?;
+        if self.controller.get(&capital).map(String::as_str) != Some(tag) {
+            return None;
+        }
+        let joins = |p: u32| {
+            ctx.province(p).is_some_and(|i| !i.is_water())
+                && self
+                    .controller
+                    .get(&p)
+                    .is_some_and(|c| c == tag || (allies && self.diplomacy.allied(tag, c)))
+        };
+        let mut area = HashSet::from([capital]);
+        let mut queue = VecDeque::from([capital]);
+        while let Some(p) = queue.pop_front() {
+            for link in ctx.adjacency.neighbours(p) {
+                if link.kind != dh_map::AdjKind::Impassable
+                    && joins(link.to)
+                    && area.insert(link.to)
+                {
+                    queue.push_back(link.to);
+                }
+            }
+        }
+        Some(area)
+    }
+
     /// Uses the resources of `x` IC (`0x44AD50`): `x` metal, `2x` energy
     /// and `x/2` rare materials, each stockpile at least 0. Nothing checks
     /// that they suffice.
@@ -155,16 +191,17 @@ impl World {
     ///
     /// Each controlled province adds its `Province.csv` manpower times
     /// `economy[26]` (national) or `economy[27]` (else, plus `economy[26]`
-    /// times the cabinet's non-national population growth). A province
-    /// outside the capital's supply network ([`World::supply_network`]
-    /// stands in for the game's supply component) gives nothing at war,
-    /// or `economy[30]` of it when that is above 0; one also on another
-    /// continent than the capital is colonial, `economy[28]` of it. The sum
-    /// is scaled by the cabinet's national population growth, the policy's
-    /// `MODIFIER_MP_GROWTH`, `1 + MANPOWER` difficulty, the country's
-    /// relative manpower and `economy[31]` (peace) or `economy[32]` (war);
-    /// `economy[33]` of the pool retires; the scenario's `free` manpower
-    /// comes on top. Not limited to 0 (as in the game).
+    /// times the cabinet's non-national population growth), the sum
+    /// rounded to single precision after each. A province outside the
+    /// capital's region ([`World::capital_area`] without allies) gives
+    /// nothing at war, or `economy[30]` of it when that is above 0; one
+    /// also on another continent than the capital is colonial,
+    /// `economy[28]` of it. The sum is scaled by the cabinet's national
+    /// population growth, the policy's `MODIFIER_MP_GROWTH`, `1 + MANPOWER`
+    /// difficulty, the country's relative manpower and `economy[31]`
+    /// (peace) or `economy[32]` (war); `economy[33]` of the pool retires;
+    /// the scenario's `free` manpower comes on top. Not limited to 0 (as in
+    /// the game).
     pub fn manpower_growth(&self, ctx: &MoveContext, tag: &str, difficulty: f32) -> f64 {
         let Some(c) = self.countries.get(tag) else {
             return 0.0;
@@ -173,14 +210,14 @@ impl World {
         let war = self.diplomacy.in_war(tag);
         // With the capital lost the game measures from its stand-in (not
         // modelled); every province then counts as home.
-        let network = self.supply_network(ctx, tag).filter(|n| !n.is_empty());
+        let region = self.capital_area(ctx, tag, false);
         let continent = c
             .capital
             .and_then(|cap| ctx.province(cap))
             .map(|i| i.continent);
         let non_national = f64::from(c.ministers.non_national_population_growth);
         let national = f64::from(p.manpower_national);
-        let mut s = 0.0f64;
+        let mut s = 0.0f32;
         for (&prov, ctrl) in &self.controller {
             if ctrl != tag {
                 continue;
@@ -192,7 +229,7 @@ impl World {
             if mp == 0.0 {
                 continue;
             }
-            let home = network.as_ref().is_none_or(|n| n.contains(&prov));
+            let home = region.as_ref().is_none_or(|r| r.contains(&prov));
             let colonial = if !home && Some(info.continent) != continent {
                 f64::from(p.manpower_colonial)
             } else {
@@ -207,17 +244,18 @@ impl World {
                 colonial
             };
             if c.national.contains(&prov) {
-                s += national * mp * k;
+                s = (f64::from(s) + national * mp * k) as f32;
             } else {
-                s += f64::from(p.manpower_non_national) * mp * k;
+                s = (f64::from(s) + f64::from(p.manpower_non_national) * mp * k) as f32;
                 if non_national > 0.0 {
-                    s += national * mp * non_national * k;
+                    s = (f64::from(s) + national * mp * non_national * k) as f32;
                 }
             }
         }
         let policy = f64::from(self.policies.factor("MODIFIER_MP_GROWTH", &c.policy));
-        let mut g = s * f64::from(c.ministers.population_growth) * policy;
-        g *= f64::from(1.0 + difficulty) * f64::from(c.relative_manpower);
+        let s = f64::from(s) * f64::from(c.ministers.population_growth) * policy;
+        let mut g = f64::from(1.0 + difficulty) * f64::from(s as f32);
+        g *= f64::from(c.relative_manpower);
         g *= f64::from(if war {
             p.manpower_war
         } else {
@@ -249,12 +287,25 @@ impl World {
     /// The part of the day at 00:00 (`0x49C480`) for `tag`, on yesterday's
     /// IC: supplies from the supplies slider (using their resources),
     /// manpower growth up to `economy[61]`, the output of the provinces it
-    /// controls, the `free` resources, and money from consumer goods (at
-    /// least 0, as for the AI).
+    /// controls in the capital's allied area ([`World::capital_area`]),
+    /// the `free` resources, and money from consumer goods (at least 0, as
+    /// for the AI). With the `production` rule off, only the `free`
+    /// resources and money.
     pub fn produce(&mut self, ctx: &MoveContext, tag: &str, difficulty: EconomyDifficulty) {
         let Some(c) = self.countries.get(tag) else {
             return;
         };
+        if !self.rules.production {
+            let free = c.free;
+            let s = &mut self.countries.get_mut(tag).unwrap().stock;
+            s.supplies = (s.supplies + free.supplies).max(0.0);
+            s.oil = (s.oil + free.oil).max(0.0);
+            s.rare_materials = (s.rare_materials + free.rare_materials).max(0.0);
+            s.metal = (s.metal + free.metal).max(0.0);
+            s.energy = (s.energy + free.energy).max(0.0);
+            s.money = (s.money + free.money).max(0.0);
+            return;
+        }
         let p = &self.params;
         let ic = c.ic as f32;
         let x = ic * c.sliders.supplies;
@@ -270,10 +321,11 @@ impl World {
             * f64::from(p.ic_to_money);
         let max_manpower = f64::from(p.max_manpower);
         let growth = self.manpower_growth(ctx, tag, difficulty.manpower);
+        let area = self.capital_area(ctx, tag, true);
         let output: Vec<ResourceOutput> = self
             .controller
             .iter()
-            .filter(|(_, ctrl)| *ctrl == tag)
+            .filter(|(prov, ctrl)| *ctrl == tag && area.as_ref().is_none_or(|a| a.contains(prov)))
             .map(|(&prov, _)| self.resource_output(ctx, tag, prov, difficulty.resources))
             .collect();
 
@@ -363,15 +415,17 @@ impl System for Economy {
         }
     }
 
-    /// After the hour's systems, so on the day's IC: consumer goods, then
-    /// the AI's sliders. In the game reinforcement comes after consumer
+    /// After the hour's systems, so on the day's IC: consumer goods (even
+    /// with the `production` rule off), then the AI's sliders. In the game reinforcement comes after consumer
     /// goods; here it uses its resources first.
     fn on_day(&mut self, world: &mut World, _rng: &mut Rng) {
         let tags: Vec<String> = world.countries.keys().cloned().collect();
         for tag in tags {
             world.spend_consumer_goods(&tag);
-            let d = self.difficulty_of(world, &tag);
-            world.set_ai_sliders(&self.ctx, &tag, d.dissent, self.ai_reinforcement);
+            if world.rules.production {
+                let d = self.difficulty_of(world, &tag);
+                world.set_ai_sliders(&self.ctx, &tag, d.dissent, self.ai_reinforcement);
+            }
         }
     }
 }
@@ -495,12 +549,13 @@ mod tests {
         let s = world.countries["AAA"].stock;
         let close = |a: f64, b: f64| (a - b).abs() < 1e-4;
         // 40 IC on supplies: 4 · 40 supplies for 40 metal, 80 energy (all
-        // there is) and 20 rare materials; then the provinces' output (9 +
-        // 6.75 + 6.75 + 9 = 31.5 energy).
+        // there is) and 20 rare materials; then the output of the provinces
+        // joined to the capital (9 + 6.75 + 6.75 = 22.5 energy): the
+        // island's stays in its depot.
         assert!(close(s.supplies, 160.0 + 5.0), "{s:?}");
-        assert!(close(s.metal, 100.0 - 40.0 + 0.4 * 31.5));
-        assert!(close(s.energy, 31.5));
-        assert!(close(s.rare_materials, 100.0 - 20.0 + 0.2 * 31.5));
+        assert!(close(s.metal, 100.0 - 40.0 + 0.4 * 22.5));
+        assert!(close(s.energy, 22.5));
+        assert!(close(s.rare_materials, 100.0 - 20.0 + 0.2 * 22.5));
         // Free oil takes the stockpile to 0 at most.
         assert_eq!(s.oil, 0.0);
         // 40 IC on consumer goods: 0.25 money each.
@@ -511,8 +566,51 @@ mod tests {
         world.countries.get_mut("AAA").unwrap().ic = 50;
         world.spend_consumer_goods("AAA");
         let s = world.countries["AAA"].stock;
-        assert!(close(s.metal, 60.0 + 12.6 - 20.0));
+        assert!(close(s.metal, 60.0 + 9.0 - 20.0));
         assert_eq!(s.energy, 0.0);
+    }
+
+    #[test]
+    fn without_the_production_rule_only_free_resources_come() {
+        let (ctx, mut world) = setup();
+        world.rules.production = false;
+        let c = world.countries.get_mut("AAA").unwrap();
+        c.ic = 100;
+        c.stock.metal = 100.0;
+        c.free.metal = 3.0;
+        c.free.money = 2.0;
+        world.produce(&ctx, "AAA", EconomyDifficulty::default());
+        let s = world.countries["AAA"].stock;
+        assert_eq!((s.metal, s.money, s.supplies), (103.0, 2.0, 0.0));
+        assert_eq!((s.energy, s.manpower), (0.0, 0.0));
+    }
+
+    #[test]
+    fn the_allied_area_reaches_through_allies_only() {
+        let (ctx, mut world) = setup();
+        world.controller.insert(2, "BBB".into());
+        let area = |w: &World, allies| {
+            let mut a: Vec<_> = w
+                .capital_area(&ctx, "AAA", allies)
+                .unwrap()
+                .into_iter()
+                .collect();
+            a.sort();
+            a
+        };
+        assert_eq!(area(&world, true), [1]);
+        world
+            .diplomacy
+            .alliances
+            .push(dh_data::diplomacy::Alliance {
+                faction: dh_data::diplomacy::Faction::Other,
+                id: None,
+                name: None,
+                members: vec!["AAA".into(), "BBB".into()],
+                defensive: false,
+            });
+        assert_eq!(area(&world, true), [1, 2, 3]);
+        assert_eq!(area(&world, false), [1]);
     }
 
     #[test]

@@ -151,6 +151,39 @@ pub struct Scenario {
     pub provinces: Vec<ProvinceSetup>,
     /// The `weather` block (`globaldata.weather`, or a top-level one).
     pub weather: crate::WeatherSetup,
+    pub rules: Rules,
+}
+
+/// The scenario's `rules` block (`globaldata.rules`, or a top-level one):
+/// which parts of the game run. A missing key means `yes`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rules {
+    pub diplomacy: bool,
+    /// Off: provinces yield nothing, the IC makes no supplies or money and
+    /// manpower does not grow (economy.md §1).
+    pub production: bool,
+    pub technology: bool,
+}
+
+impl Default for Rules {
+    fn default() -> Self {
+        Rules {
+            diplomacy: true,
+            production: true,
+            technology: true,
+        }
+    }
+}
+
+impl Rules {
+    pub fn from_block(b: &Block) -> Self {
+        let get = |k| b.get_bool(k).unwrap_or(true);
+        Rules {
+            diplomacy: get("diplomacy"),
+            production: get("production"),
+            technology: get("technology"),
+        }
+    }
 }
 
 impl Scenario {
@@ -179,9 +212,16 @@ impl Scenario {
             .or_else(|| root.get_block("weather"))
             .map(crate::WeatherSetup::from_block)
             .unwrap_or_default();
+        let rules = root
+            .get_block("globaldata")
+            .and_then(|g| g.get_block("rules"))
+            .or_else(|| root.get_block("rules"))
+            .map(Rules::from_block)
+            .unwrap_or_default();
         Ok(Scenario {
             info: ScenarioInfo::from_root(path, &root),
             weather,
+            rules,
             diplomacy: Diplomacy::from_globaldata(root.get_block("globaldata")),
             provinces: root
                 .get_all("province")
@@ -261,6 +301,7 @@ mod tests {
         fs::write(
             dir.join("Scenarios/1936.eug"),
             "header = { name = \"Test 1936\" startdate = { year = 1936 month = january day = 0 } selectable = { GER } }\n\
+             globaldata = { rules = { production = no } }\n\
              include = \"scenarios\\1936\\ger.inc\"\ninclude = \"missing.inc\"\n",
         )
         .unwrap();
@@ -279,6 +320,11 @@ mod tests {
 
         let s = Scenario::load(&vfs, &list[0].path, &mut warnings).unwrap();
         assert_eq!(s.info.name, "Test 1936");
+        assert_eq!(
+            (s.rules.production, s.rules.diplomacy),
+            (false, true),
+            "a missing rule is on"
+        );
         assert_eq!(s.countries.len(), 1);
         let ger = &s.countries[0];
         assert_eq!(

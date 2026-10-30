@@ -1245,14 +1245,19 @@ fn germany_first_day_of_the_economy() {
         "GER before {before:?}\nGER after  {after:?}\nsliders {:?}",
         ger.sliders
     );
+    // East Prussia (304, 510) is cut off by Poland: its output stays in a
+    // depot, so 0.9 · (759 − 6) energy, 0.9 · (159 − 3) metal and
+    // 0.9 · (70 − 2) rare materials reach the stockpile.
+    let area = sim.world.capital_area(&ctx, "GER", true).unwrap();
+    assert!(!area.contains(&304) && !area.contains(&510) && area.contains(&299));
     assert!(close(
         delta(after.energy, before.energy),
-        683.1 - 108.0 - 108.0
+        677.7 - 108.0 - 108.0
     ));
-    assert!(close(delta(after.metal, before.metal), 143.1 - 54.0 - 54.0));
+    assert!(close(delta(after.metal, before.metal), 140.4 - 54.0 - 54.0));
     assert!(close(
         delta(after.rare_materials, before.rare_materials),
-        63.0 - 27.0 - 27.0
+        61.2 - 27.0 - 27.0
     ));
     assert!(close(delta(after.oil, before.oil), 1.8));
     assert!(close(delta(after.supplies, before.supplies), 216.0));

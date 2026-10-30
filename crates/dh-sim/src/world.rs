@@ -164,6 +164,8 @@ pub struct World {
     pub policies: dh_data::PolicyEffects,
     /// Province IC the scenario sets, over `Province.csv`.
     pub province_ic: BTreeMap<u32, f32>,
+    /// The scenario's `rules`.
+    pub rules: dh_data::Rules,
 }
 
 /// A unit on the map and the country it belongs to.
@@ -239,6 +241,7 @@ impl World {
             weather_static: false,
             policies: dh_data::PolicyEffects::default(),
             province_ic: BTreeMap::new(),
+            rules: dh_data::Rules::default(),
         }
     }
 
@@ -405,6 +408,7 @@ impl World {
                 .units
                 .extend(c.units.iter().map(|u| UnitState::new(&c.tag, u.clone())));
         }
+        world.rules = scenario.rules;
         world.weather_static = scenario.weather.is_static;
         world.weather_fronts = crate::weather::fronts_from(&scenario.weather);
         for p in &scenario.provinces {

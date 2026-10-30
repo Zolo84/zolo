@@ -42,15 +42,19 @@ impl World {
     }
 
     /// Effective IC of `tag` (`0x49A740`): the IC of the provinces it
-    /// controls (a fifth outside its national ones), times its IC
-    /// modifiers, capped by what its energy, metal and rare materials can
-    /// feed.
+    /// controls (a fifth outside its national ones) and its `free` IC (with
+    /// the `production` rule on), times its IC modifiers, capped by what
+    /// its energy, metal and rare materials can feed.
     pub fn effective_ic(&self, ctx: &MoveContext, tag: &str) -> i64 {
         let p = &self.params;
         let Some(c) = self.countries.get(tag) else {
             return 0;
         };
-        let mut b = c.free_ic;
+        let mut b = if self.rules.production {
+            c.free_ic
+        } else {
+            0.0
+        };
         for (&prov, ctrl) in &self.controller {
             if ctrl != tag {
                 continue;

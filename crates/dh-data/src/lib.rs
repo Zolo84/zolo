@@ -29,7 +29,7 @@ pub use ministers::{Minister, Ministers, Personalities};
 pub use misc::Misc;
 pub use policy::PolicyEffects;
 pub use province::{Province, Provinces};
-pub use scenario::{CountrySetup, ProvinceSetup, Scenario, ScenarioInfo, Stockpiles};
+pub use scenario::{CountrySetup, ProvinceSetup, Rules, Scenario, ScenarioInfo, Stockpiles};
 pub use settings::{open_install, Settings};
 pub use tech::Techs;
 pub use unitdb::{DivisionStats, UnitDb};
