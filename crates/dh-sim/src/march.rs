@@ -100,6 +100,10 @@ impl World {
             leader,
             fuel_speed: (p.fuel_speed >= 0.0).then_some(p.fuel_speed),
             no_fuel_travel: p.no_fuel_travel,
+            country: self
+                .countries
+                .get(self.units[unit].controller())
+                .map_or(1.0, |c| c.ministers.speed),
         }
     }
 }

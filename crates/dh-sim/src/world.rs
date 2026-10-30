@@ -68,6 +68,10 @@ pub struct Country {
     /// fractions.
     pub tc_bonus: f32,
     pub occupied_tc_bonus: f32,
+    /// Minister IDs in the ten cabinet posts.
+    pub cabinet: [Option<i64>; 10],
+    /// What the cabinet adds up to ([`World::load_ministers`]).
+    pub ministers: crate::MinisterModifiers,
 }
 
 impl Country {
@@ -97,6 +101,8 @@ impl Country {
             sliders: IcSliders::default(),
             tc_bonus: 0.0,
             occupied_tc_bonus: 0.0,
+            cabinet: [None; 10],
+            ministers: crate::MinisterModifiers::default(),
         }
     }
 }
@@ -237,6 +243,28 @@ impl World {
         self.params = params;
     }
 
+    /// Loads the ministers and their personalities and works out each
+    /// country's cabinet modifiers, as the game does when it starts
+    /// (`0x451390`); returns load warnings. A post whose minister or
+    /// personality is unknown adds nothing.
+    pub fn load_ministers(&mut self, vfs: &Vfs, units: &dh_data::UnitDb) -> Vec<String> {
+        let mut warnings = Vec::new();
+        let ministers = dh_data::Ministers::load(vfs, &mut warnings);
+        let personalities = dh_data::Personalities::load(vfs).unwrap_or_default();
+        for c in self.countries.values_mut() {
+            let commands = c
+                .cabinet
+                .iter()
+                .flatten()
+                .filter_map(|id| ministers.by_id.get(id))
+                .filter_map(|m| personalities.get(&m.personality))
+                .flat_map(|p| &p.commands);
+            c.ministers = crate::MinisterModifiers::from_commands(commands, units);
+            c.leader_skill = c.ministers.leader_skill;
+        }
+        warnings.iter().map(ToString::to_string).collect()
+    }
+
     /// Loads `db/policy_effects.csv`.
     pub fn load_policies(&mut self, vfs: &Vfs) -> std::io::Result<()> {
         self.policies = dh_data::PolicyEffects::load(vfs)?;
@@ -270,6 +298,7 @@ impl World {
                     // The key a saved game writes (§4.4).
                     allow_dig_in: c.raw.get_bool("allow_dig_in").unwrap_or(false),
                     stock: c.stockpiles,
+                    cabinet: dh_data::ministers::cabinet_from(&c.raw),
                     policy: dh_data::policy::sliders_from(c.raw.get_block("policy")),
                     national: c.national.iter().copied().collect(),
                     peacetime_ic_mod: c.raw.get_f64("peacetime_ic_mod").unwrap_or(1.0) as f32,

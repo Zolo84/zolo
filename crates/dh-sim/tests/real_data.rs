@@ -886,7 +886,7 @@ fn organisation_recovers_at_home_and_wears_on_the_march() {
     for d in &sim.world.units[corps].unit.divisions {
         assert_eq!(
             d.organisation.unwrap() as f32,
-            sim.world.max_org(&ctx, d),
+            sim.world.max_org(&ctx, "GER", d),
             "back to full"
         );
     }
@@ -1134,4 +1134,35 @@ fn divisions_reinforce_from_ic_and_manpower() {
         100.0 / time
     );
     assert!((used - manpower).abs() < 1e-3, "{used} vs {manpower}");
+}
+
+/// Germany's 1936 cabinet: Hess (Silent Workhorse) +5 % production gives
+/// IC 135 and so TC 223, as the independent derivation found; Beck (School
+/// of Manoeuvre) ×1.1 land speed; Fritsch (Armoured Spearhead Doctrine)
+/// armour time and cost ×0.95 and attack +0.05; Frick (Prince of Terror)
+/// +0.15 non-national production and ×1.1 consumer goods.
+#[test]
+fn german_cabinet_modifiers() {
+    use dh_sim::ministers::{ATTACK, COST, TIME};
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let dir = std::env::var_os("DH_GAME_DIR").unwrap();
+    let vfs = Vfs::new(&dir);
+    let (mut world, _) = World::from_scenario(&scenario);
+    world.load_policies(&vfs).unwrap();
+    world.load_techs(&vfs);
+    world.load_ministers(&vfs, &ctx.units);
+    let m = &world.countries["GER"].ministers;
+    assert_eq!(m.production, 1.05);
+    assert!((m.non_national_production - 0.15).abs() < 1e-6);
+    assert!((m.consumer - 1.1).abs() < 1e-6);
+    assert!((m.speed - 1.1).abs() < 1e-6);
+    let armor = m.unit("armor");
+    assert!((armor[TIME] - 0.95).abs() < 1e-6 && (armor[COST] - 0.95).abs() < 1e-6);
+    assert!((armor[ATTACK] - 0.05).abs() < 1e-6);
+    assert_eq!(m.unit("infantry")[ATTACK], 0.0);
+    world.update_logistics(&ctx);
+    let ger = &world.countries["GER"];
+    assert_eq!((ger.ic, ger.tc), (135, 223));
 }

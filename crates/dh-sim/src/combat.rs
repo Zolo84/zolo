@@ -23,8 +23,8 @@
 //! (with WinterSpecialist), night, leader skill with the PanzerLeader and Commando
 //! traits, command limits by direction, envelopment, encirclement, dig-in,
 //! land forts (with FortressBuster), dissent and difficulty. Not yet:
-//! paratroopers and invasion size, shore bombardment, country bonuses by
-//! type, army detection, mission efficiency. Supply and fuel shortage use
+//! paratroopers and invasion size, shore bombardment, army detection,
+//! mission efficiency. Supply and fuel shortage use
 //! the models' default modifiers. Misc
 //! values come from the world's [`crate::Params`].
 
@@ -505,6 +505,21 @@ impl Combat {
                 }
                 if over_limit {
                     a *= 1.0 + p.over_command_limit;
+                }
+                // Row 17 (`combat[164]` = 1): the command country's cabinet
+                // bonus for the division type, else its brigades' sum.
+                if let Some(c) = world.countries.get(k) {
+                    let column = if attacking {
+                        crate::ministers::ATTACK
+                    } else {
+                        crate::ministers::DEFENCE
+                    };
+                    let v =
+                        c.ministers
+                            .combat_bonus(&d.kind, &crate::org::brigade_kinds(d), column);
+                    if v != 0.0 {
+                        a *= 1.0 + v;
+                    }
                 }
                 if directions > 2 {
                     a *= 1.0 + (directions - 2) as f32 * p.envelopment;

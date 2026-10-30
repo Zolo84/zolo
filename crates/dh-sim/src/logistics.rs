@@ -3,7 +3,8 @@
 //! then daily (`0x49A740`, `0x49AD70`).
 //!
 //! Technologies' `tc_mod` / `tc_occupied_mod` raise the TC modifiers.
-//! Not modelled yet (their terms are 0 or 1): ministers, revolt risk and
+//! Ministers' production and `tc_mod` apply.
+//! Not modelled yet (their terms are 0 or 1): revolt risk and
 //! partisans, the undeployed pool, queued buildings, offensive supply,
 //! puppets, difficulty (0 at Normal) and the dissent penalty, which only
 //! human players pay.
@@ -60,7 +61,7 @@ impl World {
                     p.non_national_ic
                 } else {
                     p.non_owned_ic
-                };
+                } + c.ministers.non_national_production;
                 f = if m < 0.0 { 0.0 } else { f * m };
             }
             b += f;
@@ -72,7 +73,11 @@ impl World {
             c.peacetime_ic_mod
         };
         let policy = self.policies.factor("MODIFIER_TOTAL_IC", &c.policy);
-        let t = b + (c.industrial_modifier - 1.0) * b + (policy - 1.0) * b + (mode - 1.0) * b;
+        let t = b
+            + (c.ministers.production - 1.0) * b
+            + (c.industrial_modifier - 1.0) * b
+            + (policy - 1.0) * b
+            + (mode - 1.0) * b;
         let ic = fistp(t);
         let s = &c.stock;
         let cap = (s.energy * 0.5)
@@ -140,7 +145,7 @@ impl World {
         };
         let tc_mod = (p.tc_modifier + c.tc_bonus).max(0.01);
         let occupied_mod = (p.occupied_tc_modifier + c.occupied_tc_bonus).max(0.01);
-        let tc = (c.extra_tc + (c.ic as f32 * p.ic_to_tc).max(10.0)) * tc_mod;
+        let tc = (c.extra_tc + (c.ic as f32 * p.ic_to_tc).max(10.0)) * c.ministers.tc * tc_mod;
         let mut divisions = 0.0f32;
         for (i, u) in self.units.iter().enumerate() {
             if u.owner != tag {

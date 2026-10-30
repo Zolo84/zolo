@@ -12,6 +12,11 @@ use dh_data::{Branch, Difficulty, Division, Weather};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+/// Brigade types attached to a division.
+pub(crate) fn brigade_kinds(d: &Division) -> Vec<&str> {
+    d.brigades.iter().map(|b| b.kind.as_str()).collect()
+}
+
 /// Tag of the rebels, who regain a flat `mod[21]` an hour.
 pub const REBELS: &str = "REB";
 
@@ -71,18 +76,28 @@ impl OrgRegain {
 }
 
 impl World {
-    /// Maximum ORG of a division (`0x4FD2C0`): the model's with its
-    /// brigades, times the policy and minister factors (1 here).
-    pub fn max_org(&self, ctx: &MoveContext, d: &Division) -> f32 {
-        ctx.units
+    /// Maximum ORG of a division of country `tag` (`0x4FD2C0`): the model's
+    /// with its brigades, times the policy and minister factors.
+    pub fn max_org(&self, ctx: &MoveContext, tag: &str, d: &Division) -> f32 {
+        let base = ctx
+            .units
             .division_stats(d)
-            .map_or(0.0, |s| s.get("defaultorganisation") as f32)
+            .map_or(0.0, |s| s.get("defaultorganisation") as f32);
+        let Some(c) = self.countries.get(tag) else {
+            return base;
+        };
+        // `K`: the policy sliders' MODIFIER_ORG; `M2`: the cabinet's.
+        let k = self.policies.factor("MODIFIER_ORG", &c.policy);
+        let m2 =
+            c.ministers
+                .division_factor(&d.kind, &brigade_kinds(d), crate::ministers::ORGANISATION);
+        base * k * m2
     }
 
     /// Current ORG; a division the scenario leaves unset is at its maximum.
-    pub fn org(&self, ctx: &MoveContext, d: &Division) -> f32 {
+    pub fn org(&self, ctx: &MoveContext, tag: &str, d: &Division) -> f32 {
         d.organisation
-            .map_or_else(|| self.max_org(ctx, d), |o| o as f32)
+            .map_or_else(|| self.max_org(ctx, tag, d), |o| o as f32)
     }
 
     /// Whether `owner`'s provinces count as friendly to a stack of country
@@ -191,10 +206,12 @@ impl World {
     /// ORG division `d` gains this hour (`0x5033C0`) in a stack under
     /// `cond`; negative values are losses. `difficulty` is the country's
     /// ORGANISATION modifier as a fraction.
+    /// `owner` is the division's country, `command` the stack's.
     pub fn org_regain(
         &self,
         ctx: &MoveContext,
         cond: &OrgConditions,
+        (owner, command): (&str, &str),
         d: &Division,
         difficulty: f32,
     ) -> f32 {
@@ -209,9 +226,9 @@ impl World {
             .units
             .division_stats(d)
             .map_or(0.0, |s| s.get("morale") as f32);
-        let max = self.max_org(ctx, d);
+        let max = self.max_org(ctx, owner, d);
         let q = if max > 0.0 {
-            self.org(ctx, d) / max
+            self.org(ctx, owner, d) / max
         } else {
             1.0
         };
@@ -246,7 +263,8 @@ impl World {
                 x *= march;
             }
             if x > 0.0 {
-                x *= p.org_weather[cond.weather as usize] * (1.0 + difficulty) / 24.0;
+                x *= p.org_weather[cond.weather as usize] * self.morale_factor(command, d);
+                x *= (1.0 + difficulty) / 24.0;
             }
             return x;
         }
@@ -283,12 +301,23 @@ impl World {
         x -= weather_penalty(cond.weather);
         if !cond.in_supply {
             x = -0.5;
+        } else if x > 0.0 {
+            x *= self.morale_factor(command, d);
         }
         if x >= 0.0 {
             x * (1.0 + difficulty) * 0.1
         } else {
             x * (1.0 - difficulty) * 0.1
         }
+    }
+
+    /// The cabinet's morale factor for a division (`0x44C7F0`, k = 3) of
+    /// the stack's command country.
+    fn morale_factor(&self, command: &str, d: &Division) -> f32 {
+        self.countries.get(command).map_or(1.0, |c| {
+            c.ministers
+                .division_factor(&d.kind, &brigade_kinds(d), crate::ministers::MORALE)
+        })
     }
 
     /// `D` (`0x509350`): regain falls off with the distance to the last
@@ -322,6 +351,7 @@ impl System for OrgRegain {
                 continue;
             }
             let tag = world.units[i].controller().to_owned();
+            let owner = world.units[i].owner.clone();
             let difficulty = self.difficulty.modifier(
                 "ORGANISATION",
                 self.difficulty_level,
@@ -347,8 +377,11 @@ impl System for OrgRegain {
                 .divisions
                 .iter()
                 .map(|d| {
-                    let r = world.org_regain(&self.ctx, &cond, d, difficulty);
-                    (world.org(&self.ctx, d) + r, world.max_org(&self.ctx, d))
+                    let r = world.org_regain(&self.ctx, &cond, (&owner, &tag), d, difficulty);
+                    (
+                        world.org(&self.ctx, &owner, d) + r,
+                        world.max_org(&self.ctx, &owner, d),
+                    )
                 })
                 .collect();
             for (d, (org, max)) in world.units[i].unit.divisions.iter_mut().zip(changes) {

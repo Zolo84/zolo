@@ -55,6 +55,9 @@ pub struct MoveConditions {
     /// Travel time factor while any division has no fuel (`combat[210]`,
     /// `0x431184`).
     pub no_fuel_travel: f32,
+    /// The command country's speed multiplier (`+0x13C2C`, §3.4): its
+    /// cabinet's `unit when = speed`.
+    pub country: f32,
 }
 
 impl Default for MoveConditions {
@@ -65,6 +68,7 @@ impl Default for MoveConditions {
             leader: 1.0,
             fuel_speed: None,
             no_fuel_travel: 3.0,
+            country: 1.0,
         }
     }
 }
@@ -330,6 +334,7 @@ impl MoveContext {
             best /= 2.0;
         }
         best *= cond.supply;
+        best *= cond.country;
         best.max(1.0) * 0.75 * cond.leader
     }
 

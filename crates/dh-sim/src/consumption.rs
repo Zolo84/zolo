@@ -40,6 +40,8 @@ pub struct NeedConditions {
     pub logistics: bool,
     pub terrain: u8,
     pub climate: Climate,
+    /// The country's `supply_consumption` minister modifier.
+    pub consumption: f32,
 }
 
 impl World {
@@ -53,6 +55,10 @@ impl World {
                 && self.stack_leader(unit).has_trait(traits::LOGISTICS_WIZARD),
             terrain: info.map_or(terrain::PLAINS, |i| i.terrain),
             climate: info.map_or(Climate::None, |i| i.climate),
+            consumption: self
+                .countries
+                .get(&u.owner)
+                .map_or(1.0, |c| c.ministers.supply_consumption),
         }
     }
 
@@ -75,15 +81,15 @@ impl World {
         f
     }
 
-    /// Supplies a land division needs a day (`0x4FD570`); the country's
-    /// `supply_consumption` minister modifier is 1 here.
+    /// Supplies a land division needs a day (`0x4FD570`), times its
+    /// country's `supply_consumption` minister modifier.
     pub fn supply_need(&self, ctx: &MoveContext, cond: &NeedConditions, d: &Division) -> f32 {
         let p = &self.params;
         let stats = ctx.units.division_stats(d);
         let use_ = stats
             .as_ref()
             .map_or(0.0, |s| s.get("supplyconsumption") as f32);
-        let mut s = use_ * strength_share(d);
+        let mut s = use_ * cond.consumption * strength_share(d);
         if cond.in_battle {
             s *= p.supply_combat;
         } else if !cond.moving {

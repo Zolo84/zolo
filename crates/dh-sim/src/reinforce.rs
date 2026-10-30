@@ -5,8 +5,8 @@
 //!
 //! Not modelled yet: the undeployed pool, divisions of other countries
 //! under this one's command, the `prioritized` and `can_reinforce` flags
-//! (every stack may reinforce), ministers and technology deltas (factors of
-//! 1 and 0), and the automatic IC sliders.
+//! (every stack may reinforce), technology deltas (0), and the automatic
+//! IC sliders.
 
 use crate::movement::MoveContext;
 use crate::{Rng, System, World};
@@ -91,8 +91,9 @@ impl World {
         };
         let mut ic = c.sliders.reinforcement * c.ic as f32;
         let ese = c.ese;
-        let cost_factor = p.reinforce_cost;
-        let time_factor = p.reinforce_time / p.repair_modifier;
+        let ministers = c.ministers.clone();
+        let cost_factor = p.reinforce_cost * ministers.reinforcement;
+        let time_factor = p.reinforce_time / p.repair_modifier * ministers.reinforcement;
         let new_exp = (self.policies.factor("MODIFIER_MP_EXPERIENCE", &c.policy) - 1.0) * 100.0;
 
         let mut queue: Vec<(f64, usize, usize)> = Vec::new();
@@ -114,12 +115,18 @@ impl World {
             let Some(model) = ctx.units.division_model(&d.kind, d.model) else {
                 continue;
             };
-            let cost =
-                (model.get("cost") as f32 * cost_factor * model.get("reinforce_cost") as f32)
-                    .max(0.001);
-            let time =
-                (model.get("buildtime") as f32 * time_factor * model.get("reinforce_time") as f32)
-                    .max(1.0);
+            // The cabinet's time and cost factors for the division type.
+            let unit = ministers.unit(&d.kind);
+            let cost = (model.get("cost") as f32
+                * unit[crate::ministers::COST]
+                * cost_factor
+                * model.get("reinforce_cost") as f32)
+                .max(0.001);
+            let time = (model.get("buildtime") as f32
+                * unit[crate::ministers::TIME]
+                * time_factor
+                * model.get("reinforce_time") as f32)
+                .max(1.0);
             let mp_full = p.reinforce_manpower * (model.get("manpower") as f32).max(0.001);
             let max = d.max_strength.unwrap_or(100.0) as f32;
             let str = d.strength.unwrap_or(100.0) as f32;

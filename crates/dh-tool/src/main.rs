@@ -445,6 +445,10 @@ fn march(args: &Args) -> Result<(), String> {
         .map_err(|e| format!("db/misc.txt: {e}"))?;
     world.load_leaders(&vfs)?;
     world.load_techs(&vfs);
+    world
+        .load_policies(&vfs)
+        .map_err(|e| format!("policy_effects.csv: {e}"))?;
+    world.load_ministers(&vfs, &ctx.units);
     if let Some(enemy) = args.options.get("war") {
         let owner = world
             .units
