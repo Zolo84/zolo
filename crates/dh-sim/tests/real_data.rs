@@ -1176,8 +1176,9 @@ fn german_cabinet_modifiers() {
 /// 135 with the starting sliders (consumer goods 0.4, supplies 0.4).
 /// - Resources: output · 0.9, less 54 IC of supplies and 54 of consumer
 ///   goods (metal 1, energy 2, rare materials 0.5 each). The game also
-///   spends ~8.8 IC on its production queue and turns up to 135 energy into
-///   13.5 oil (technology 5190); neither is modelled.
+///   spends 8.8 IC on its production queue (not loaded here; see
+///   `germany_1936_production_in_the_economy`) and turns up to 135 energy
+///   into 13.5 oil (technology 5190, not modelled).
 /// - Supplies: 4 · 0.4 · 135 = +216, no troops drawing (OrgRegain is off).
 ///   East Prussia (304, 510) is cut off by the Polish corridor; the game
 ///   may send its output to a provincial depot and merges Elbing's
@@ -1314,4 +1315,212 @@ fn reinforcement_need_sets_the_ai_slider() {
     assert_eq!(world.reinforcement_need(&ctx, "GER"), 0.0);
     slider(&mut world, 0.0);
     assert!(world.reinforcement_need(&ctx, "GER") > 0.0);
+}
+
+/// Germany's production queue in 1936 (production.md §7): three ships
+/// under construction, read on 1936-01-01 (the game's `day = 0`).
+/// - Graf Spee (heavy cruiser model 3: cost 7, build time 310, manpower 1)
+///   is due on 1936-01-06, six days away: progress `1 − 6/310`; destroyers
+///   and submarines (model 1: cost 2, 120 and 110 days, manpower 0.5) on
+///   1936-03-01, 61 days away. The ministers' TIME and COST and the
+///   policy's PRODUCTION_TIME are 1 for these types, so the days are the
+///   models' build times; the IC is the file's (5.6, 1.6), lower than the
+///   models' (the AI only ever lowers it); manpower is not taken.
+/// - Day 1 at IC 135 and the starting production slider 0.2: 27 IC, of
+///   which the items use 5.6, 1.6 and 1.6 (metal 8.8, energy 17.6, rare
+///   materials 4.4) and the rest is lost; progress grows by 1/310, 1/120
+///   and 1/110, the continuity accumulator to 1.2 − 1.
+/// - Fully funded, Graf Spee is done on day 6 and goes to the undeployed
+///   pool; the destroyers and submarines stop a hair below 1 after 61 days
+///   (single precision) and are done on day 62, a day after their date.
+#[test]
+fn germany_1936_production_queue() {
+    use dh_data::production::Build;
+    use dh_sim::Undeployed;
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let vfs = game_vfs().unwrap();
+    let (mut world, _) = World::from_scenario(&scenario);
+    world.load_misc(&vfs).unwrap();
+    world.load_policies(&vfs).unwrap();
+    world.load_techs(&vfs);
+    world.load_ministers(&vfs, &ctx.units);
+    assert!(world.load_production_costs(&vfs).is_empty());
+    world.load_production(&scenario, &ctx.units);
+    let ger = &world.countries["GER"];
+    let q = &ger.production;
+    let names: Vec<&str> = q.iter().map(|i| i.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "KMS Admiral Graf Spee",
+            "8. Zerstörergeschwader",
+            "4. Unterseebootsflottille"
+        ]
+    );
+    assert!(
+        matches!(&q[0].build, Build::Division { kind, model: 3, .. } if kind == "heavy_cruiser")
+    );
+    let days: Vec<i32> = q.iter().map(|i| i.days).collect();
+    assert_eq!(days, [310, 120, 110]);
+    // The notes' values, written to more digits than an f32 holds.
+    let f = |x: f64| x as f32;
+    let progress: Vec<f32> = q.iter().map(|i| i.progress).collect();
+    assert_eq!(progress, [f(0.98064518), f(0.49166667), f(0.44545454)]);
+    let ic: Vec<f32> = q.iter().map(|i| i.ic).collect();
+    assert_eq!(ic, [5.6, 1.6, 1.6]);
+    let manpower: Vec<f32> = q.iter().map(|i| i.manpower).collect();
+    assert_eq!(manpower, [1.0, 0.5, 0.5]);
+    assert!(q
+        .iter()
+        .all(|i| (i.size, i.done, i.halted, i.gearing) == (1, 0, false, 0.0)));
+    // The policy's gearing bonus (professional army 7: −0.04).
+    let rates = world.production_rates("GER", &ctx.units).unwrap();
+    assert_eq!((rates.time, rates.cost, rates.gearing), (1.0, 1.0, 0.96));
+    assert_eq!(rates.ic(&q[0].build), 7.0);
+
+    let mut w = world.clone();
+    w.countries.get_mut("GER").unwrap().ic = 135;
+    assert_eq!(w.countries["GER"].sliders.production, 0.2);
+    let before = w.countries["GER"].stock;
+    w.run_production("GER");
+    let ger = &w.countries["GER"];
+    let progress: Vec<f32> = ger.production.iter().map(|i| i.progress).collect();
+    assert_eq!(progress, [f(0.98387098), 0.5, f(0.45454544)]);
+    // f32(1.2) − 1, in single precision.
+    let continuity = (f64::from(1.2f32) - 1.0) as f32;
+    assert_eq!(continuity, 0.20000005);
+    assert!(ger
+        .production
+        .iter()
+        .all(|i| i.continuity == continuity && i.funded == 1.0));
+    let after = ger.stock;
+    assert!((before.metal - after.metal - 8.8).abs() < 1e-5);
+    assert!((before.energy - after.energy - 17.6).abs() < 1e-5);
+    assert!((before.rare_materials - after.rare_materials - 4.4).abs() < 1e-5);
+    assert_eq!(before.manpower, after.manpower);
+
+    let day = |w: &mut World| w.run_production("GER");
+    for _ in 2..6 {
+        day(&mut w);
+    }
+    assert_eq!(w.countries["GER"].production.len(), 3, "after day 5");
+    day(&mut w);
+    let ger = &w.countries["GER"];
+    assert_eq!(ger.production.len(), 2, "Graf Spee is done on day 6");
+    let [Undeployed::Division(spee)] = ger.undeployed.as_slice() else {
+        panic!("{:?}", ger.undeployed);
+    };
+    assert_eq!(
+        (spee.name.as_str(), spee.kind.as_str(), spee.model),
+        ("KMS Admiral Graf Spee", "heavy_cruiser", Some(3))
+    );
+    assert_eq!(
+        (spee.strength, spee.max_strength),
+        (Some(100.0), Some(100.0))
+    );
+    for _ in 7..62 {
+        day(&mut w);
+    }
+    let progress: Vec<f32> = w.countries["GER"]
+        .production
+        .iter()
+        .map(|i| i.progress)
+        .collect();
+    assert_eq!(progress, [f(0.99999952), f(0.99999946)], "after day 61");
+    day(&mut w);
+    let ger = &w.countries["GER"];
+    assert!(ger.production.is_empty(), "done on day 62");
+    let kinds: Vec<&str> = ger
+        .undeployed
+        .iter()
+        .map(|u| match u {
+            Undeployed::Division(d) => d.kind.as_str(),
+            Undeployed::Brigade { .. } => "brigade",
+        })
+        .collect();
+    assert_eq!(kinds, ["heavy_cruiser", "destroyer", "submarine"]);
+}
+
+/// The queue in the daily economy: the 23 hourly recomputations before
+/// day 1 leave the AI's IC at the file's 5.6 / 1.6 / 1.6 (the models' 7
+/// and 2 are not lower), so on day 1 the starting slider's 27 IC funds the
+/// three ships with 8.8 (the resources of 8.8 IC more are used than
+/// without the queue; a human would pay 11); every hour the ships draw
+/// half their model's supply consumption (naval) a day. Then the AI gives
+/// production what the queue asks for, 8.8 / 135 of the IC, which still
+/// funds every item fully: Graf Spee joins the pool on day 6 (1936-01-07
+/// 00:00), the destroyers and submarines on day 62 (1936-03-03 00:00).
+#[test]
+fn germany_1936_production_in_the_economy() {
+    use dh_sim::{Economy, Logistics};
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let ctx = Arc::new(ctx);
+    let vfs = game_vfs().unwrap();
+    let (mut world, _) = World::from_scenario(&scenario);
+    world.load_misc(&vfs).unwrap();
+    world.load_policies(&vfs).unwrap();
+    world.load_techs(&vfs);
+    world.load_ministers(&vfs, &ctx.units);
+    world.load_production_costs(&vfs);
+    let without = world.clone();
+    world.load_production(&scenario, &ctx.units);
+    let sim = |world: World| {
+        let mut economy = Economy::new(ctx.clone());
+        economy.difficulty = dh_data::Difficulty::load(&vfs).unwrap();
+        let mut sim = Simulation::new(world, 1);
+        sim.add_system(economy);
+        sim.add_system(Logistics::new(ctx.clone()));
+        sim
+    };
+    let mut a = sim(without);
+    let mut b = sim(world);
+    a.run_days(1);
+    b.run_days(1);
+    let (sa, sb) = (
+        a.world.countries["GER"].stock,
+        b.world.countries["GER"].stock,
+    );
+    assert!((sa.metal - sb.metal - 8.8).abs() < 1e-4, "{sa:?} {sb:?}");
+    assert!((sa.energy - sb.energy - 17.6).abs() < 1e-4);
+    assert!((sa.rare_materials - sb.rare_materials - 4.4).abs() < 1e-4);
+    let ships: f64 = [("heavy_cruiser", 3), ("destroyer", 1), ("submarine", 1)]
+        .into_iter()
+        .map(|(k, m)| {
+            let model = ctx.units.division_model(k, Some(m)).unwrap();
+            model.get("supplyconsumption") * 0.5
+        })
+        .sum();
+    assert!(ships > 0.0);
+    let drawn = sa.supplies - sb.supplies;
+    assert!((drawn - ships).abs() < 1e-3, "{drawn} vs {ships}");
+    let ger = &b.world.countries["GER"];
+    assert_eq!(ger.ic, 135);
+    let ic: Vec<f32> = ger.production.iter().map(|i| i.ic).collect();
+    assert_eq!(ic, [5.6, 1.6, 1.6]);
+    let s = ger.sliders;
+    assert_eq!(s.production, (8.8f32 / 135.0));
+    assert!((s.consumer + s.production + s.supplies - 1.0).abs() < 1e-6);
+    assert_eq!(a.world.countries["GER"].sliders.production, 0.0);
+
+    b.run_days(4);
+    assert!(b.world.countries["GER"].undeployed.is_empty());
+    b.run_days(1);
+    assert_eq!(b.date().to_string(), "1936-01-07 00:00");
+    let ger = &b.world.countries["GER"];
+    assert_eq!((ger.production.len(), ger.undeployed.len()), (2, 1));
+    assert!(ger.production.iter().all(|i| i.funded == 1.0));
+    b.run_days(55);
+    let ger = &b.world.countries["GER"];
+    assert_eq!(ger.production.len(), 2);
+    assert!(ger.production.iter().all(|i| i.funded == 1.0));
+    b.run_days(1);
+    assert_eq!(b.date().to_string(), "1936-03-03 00:00");
+    let ger = &b.world.countries["GER"];
+    assert!(ger.production.is_empty());
+    assert_eq!(ger.undeployed.len(), 3);
+    assert_eq!(ger.sliders.production, 0.0);
 }

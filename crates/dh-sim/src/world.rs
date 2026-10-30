@@ -88,6 +88,16 @@ pub struct Country {
     pub cabinet: [Option<i64>; 10],
     /// What the cabinet adds up to ([`World::load_ministers`]).
     pub ministers: crate::MinisterModifiers,
+    /// The production queue, in order (`C+0x3B7E`; [`crate::production`]).
+    pub production: Vec<crate::production::QueueItem>,
+    /// Units the queue finished, not deployed yet (`C+0x451C`).
+    pub undeployed: Vec<crate::production::Undeployed>,
+    /// Build time factors of province buildings by index (`C+0xE32C`,
+    /// `country[36]` at the start) and of transports and escorts
+    /// (`C+0xE358`, `country[37]`); `building_prod_mod` / `convoy_prod_mod`
+    /// commands lower them.
+    pub building_time: [f32; 11],
+    pub convoy_time: [f32; 2],
 }
 
 impl Country {
@@ -128,6 +138,10 @@ impl Country {
             occupied_tc_bonus: 0.0,
             cabinet: [None; 10],
             ministers: crate::MinisterModifiers::default(),
+            production: Vec::new(),
+            undeployed: Vec::new(),
+            building_time: [p.building_time; 11],
+            convoy_time: [p.convoy_time; 2],
         }
     }
 }
@@ -166,6 +180,13 @@ pub struct World {
     pub province_ic: BTreeMap<u32, f32>,
     /// The scenario's `rules`.
     pub rules: dh_data::Rules,
+    /// `db/building_costs.txt` and `db/convoy_costs.txt` (the shipped
+    /// values until [`World::load_production_costs`]).
+    pub production_costs: dh_data::ProductionCosts,
+    /// What the production queue has built in each province, by building
+    /// index (`dh_data::production::BUILDINGS`): the levels it added.
+    /// Province buildings are not modelled otherwise.
+    pub buildings_built: BTreeMap<u32, [f32; 11]>,
 }
 
 /// A unit on the map and the country it belongs to.
@@ -242,6 +263,8 @@ impl World {
             policies: dh_data::PolicyEffects::default(),
             province_ic: BTreeMap::new(),
             rules: dh_data::Rules::default(),
+            production_costs: dh_data::ProductionCosts::default(),
+            buildings_built: BTreeMap::new(),
         }
     }
 
@@ -275,8 +298,16 @@ impl World {
             params.supply_modifier - old.supply_modifier,
             params.relative_manpower - old.relative_manpower,
         ];
+        let building_time = params.building_time - old.building_time;
+        let convoy_time = params.convoy_time - old.convoy_time;
         for c in self.countries.values_mut() {
             c.land_surprise += surprise;
+            for x in &mut c.building_time {
+                *x += building_time;
+            }
+            for x in &mut c.convoy_time {
+                *x += convoy_time;
+            }
             for (x, d) in [
                 &mut c.oil_modifier,
                 &mut c.metal_modifier,
@@ -314,6 +345,14 @@ impl World {
             c.ministers = crate::MinisterModifiers::from_commands(commands, units);
             c.leader_skill = c.ministers.leader_skill;
         }
+        warnings.iter().map(ToString::to_string).collect()
+    }
+
+    /// Loads `db/building_costs.txt` and `db/convoy_costs.txt`; returns
+    /// load warnings.
+    pub fn load_production_costs(&mut self, vfs: &Vfs) -> Vec<String> {
+        let mut warnings = Vec::new();
+        self.production_costs = dh_data::ProductionCosts::load(vfs, &mut warnings);
         warnings.iter().map(ToString::to_string).collect()
     }
 
@@ -440,8 +479,9 @@ impl World {
     /// land-combat.md §7 question 11). Only the commands of combat and
     /// the economy so far: `allow_dig_in`, `surprise` for land battles,
     /// `tc_mod`, `tc_occupied_mod`, `relative_manpower` and
-    /// `industrial_modifier which = supplies` (each `+= value · 0.01`).
-    /// Call it once.
+    /// `industrial_modifier which = supplies` (each `+= value · 0.01`), and
+    /// `building_prod_mod` / `convoy_prod_mod` (`−= value · 0.01`, at least
+    /// 0.1). Call it once.
     pub fn add_techs(&mut self, techs: &Techs) {
         for country in self.countries.values_mut() {
             for &id in &country.techs {
@@ -465,6 +505,25 @@ impl World {
                             country.relative_manpower = (country.relative_manpower
                                 + (command.value.unwrap_or(0.0) * 0.01) as f32)
                                 .max(0.01);
+                        }
+                        // `0x490BB0` / `0x490C00`: build time of a building
+                        // type or convoy kind (the `which` index assumed to
+                        // follow the scenario's names).
+                        "building_prod_mod" | "convoy_prod_mod" => {
+                            let v =
+                                f64::from(command.value.unwrap_or(0.0) as f32) * f64::from(0.01f32);
+                            let x = if command.kind == "building_prod_mod" {
+                                country
+                                    .building_time
+                                    .get_mut(dh_data::production::building_index(which))
+                            } else {
+                                country
+                                    .convoy_time
+                                    .get_mut(dh_data::production::convoy_index(which))
+                            };
+                            if let Some(x) = x {
+                                *x = ((f64::from(*x) - v) as f32).max(0.1);
+                            }
                         }
                         // `0x48D990`; the other `which`s are not modelled.
                         "industrial_modifier" if which.eq_ignore_ascii_case("supplies") => {

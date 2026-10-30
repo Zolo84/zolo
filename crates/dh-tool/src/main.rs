@@ -449,6 +449,9 @@ fn march(args: &Args) -> Result<(), String> {
         .load_policies(&vfs)
         .map_err(|e| format!("policy_effects.csv: {e}"))?;
     world.load_ministers(&vfs, &ctx.units);
+    world.load_production_costs(&vfs);
+    // After the policies, misc and costs: the queue's days depend on them.
+    world.load_production(&scenario, &ctx.units);
     if let Some(enemy) = args.options.get("war") {
         let owner = world
             .units
@@ -479,8 +482,8 @@ fn march(args: &Args) -> Result<(), String> {
             .collect::<Vec<_>>()
             .join(" → ")
     );
-    // The day's economy comes before its IC, TC and supply efficiency, and
-    // those before reinforcement.
+    // The day's economy (with the production queue) comes before its IC,
+    // TC and supply efficiency, and those before reinforcement.
     let mut economy = dh_sim::Economy::new(ctx.clone());
     economy.difficulty = dh_data::Difficulty::load(&vfs).unwrap_or_default();
     sim.add_system(economy);

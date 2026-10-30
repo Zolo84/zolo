@@ -6,8 +6,9 @@
 //! at 1, the rest at 0, and most are then kept within 0.01..=10. Only the
 //! modifiers the simulation uses are kept: production, resources and
 //! money, population growth, transport capacity, supply consumption,
-//! leader skill, land speed, dissent and the per-type unit and brigade
-//! tables (time, cost, organisation, morale, attack, defence).
+//! leader skill, land speed, dissent, the per-type unit and brigade
+//! tables (time, cost, organisation, morale, attack, defence) and the
+//! time and cost of province buildings.
 
 use dh_data::ministers::MinisterCommand;
 use dh_data::unitdb::DIVISION_TYPES;
@@ -58,6 +59,10 @@ pub struct MinisterModifiers {
     /// attack, defence.
     pub divisions: BTreeMap<String, [f32; 6]>,
     pub brigades: BTreeMap<String, [f32; 6]>,
+    /// Time and cost factors of province buildings by index
+    /// (`dh_data::production::BUILDINGS`; `C+0x11A2C`), from `province`
+    /// commands.
+    pub buildings: [[f32; 2]; 11],
 }
 
 impl Default for MinisterModifiers {
@@ -83,6 +88,7 @@ impl Default for MinisterModifiers {
             supply_consumption: 1.0,
             divisions: BTreeMap::new(),
             brigades: BTreeMap::new(),
+            buildings: [[1.0; 2]; 11],
         }
     }
 }
@@ -191,6 +197,27 @@ impl MinisterModifiers {
                     add_columns(row, when, v);
                 }
             }
+            // `0x451791`: `all` is every row (and the "all" slot 0).
+            "province" => {
+                let rows = match which.unwrap_or("all") {
+                    "all" => 0..11,
+                    w => match MINISTER_BUILDINGS.iter().position(|b| *b == w) {
+                        Some(i) => i..i + 1,
+                        None => 0..0,
+                    },
+                };
+                let cols: &[usize] = match when.unwrap_or("all") {
+                    "all" => &[TIME, COST],
+                    "time" => &[TIME],
+                    "cost" => &[COST],
+                    _ => &[],
+                };
+                for row in &mut self.buildings[rows] {
+                    for &k in cols {
+                        row[k] += v;
+                    }
+                }
+            }
             "leader_skill" => self.leader_skill += v,
             "dissent" => self.dissent += v,
             "tc_mod" => self.tc += v,
@@ -231,6 +258,10 @@ impl MinisterModifiers {
             c(&mut row[TIME]);
             c(&mut row[COST]);
         }
+        for row in &mut self.buildings {
+            c(&mut row[TIME]);
+            c(&mut row[COST]);
+        }
     }
 
     /// `0x44C7F0`: the factor of column `k` for a division, `1 + v` at
@@ -258,6 +289,22 @@ impl MinisterModifiers {
         brigades.iter().map(|b| self.brigade(b)[k]).sum()
     }
 }
+
+/// Building names of the `province` command by row (`0x451791`); row 0
+/// is the "all" slot.
+const MINISTER_BUILDINGS: [&str; 11] = [
+    "",
+    "ic",
+    "coastalfort",
+    "landfort",
+    "flak",
+    "infra",
+    "air_base",
+    "naval_base",
+    "radar_station",
+    "nuclear_reactor",
+    "rocket_test",
+];
 
 fn branch_named(w: &str) -> Option<Branch> {
     match w {
@@ -317,6 +364,8 @@ mod tests {
                 cmd("populationgrowth", None, None, 0.1),
                 cmd("populationgrowth", None, Some("national"), 0.25),
                 cmd("populationgrowth", None, Some("non_national"), 0.05),
+                cmd("province", Some("landfort"), None, -0.1),
+                cmd("province", None, Some("cost"), 0.2),
             ],
             &units,
         );
@@ -337,5 +386,10 @@ mod tests {
         assert_eq!(m.unit("infantry"), [1.0, 1.0, 0.1, 0.0, 0.0, 0.0]);
         assert!((m.division_factor("armor", &[], ORGANISATION) - 1.1).abs() < 1e-6);
         assert_eq!(m.combat_bonus("cavalry", &[], ATTACK), 0.0);
+        // Land forts: time 0.9, cost 0.9 + 0.2; others' cost 1.2.
+        let fort = m.buildings[3];
+        assert!((fort[TIME] - 0.9).abs() < 1e-6 && (fort[COST] - 1.1).abs() < 1e-6);
+        assert_eq!(m.buildings[1][TIME], 1.0);
+        assert!((m.buildings[1][COST] - 1.2).abs() < 1e-6);
     }
 }

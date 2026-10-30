@@ -8,15 +8,16 @@
 //! the oil, metal, energy and rare materials of the provinces it controls,
 //! adds its scenario's `free` resources and earns money from consumer
 //! goods, all on yesterday's IC. Once the hour's systems have run (the
-//! day's IC is known), consumer goods use their resources and the AI sets
-//! the sliders for the next day. With the scenario's `rules = { production
-//! = no }` only the `free` resources come in and consumer goods use theirs.
+//! day's IC is known), consumer goods use their resources, the production
+//! queue gets the IC of the production slider ([`crate::production`],
+//! economy.md §8) and the AI sets the sliders for the next day. With the
+//! scenario's `rules = { production = no }` only the `free` resources come
+//! in, consumer goods use theirs and the queue does not advance.
 //!
 //! Every country is played by the AI. Not modelled yet: provincial depots
 //! and their pools (output of provinces cut off from the capital's allied
 //! area, which the game keeps in a depot, is lost here), convoys and trade;
-//! the production queue (its IC is wasted and uses no resources); the
-//! energy-to-oil conversion; puppets; spy upkeep (nothing for the AI);
+//! the energy-to-oil conversion; puppets; spy upkeep (nothing for the AI);
 //! stockpile limits (off in the shipped game); dissent; and output lost to
 //! bombing or conquest (a province always yields its `Province.csv`
 //! amounts). The AI's sliders are simplified (see [`World::set_ai_sliders`]).
@@ -364,14 +365,14 @@ impl World {
     }
 
     /// The AI's IC sliders for `tag`, simplified from `0x676D10` and
-    /// `0x67A010` (economy.md §4.4): consumer goods get their need
+    /// `0x67A010` (economy.md §7.4): consumer goods get their need
     /// ([`World::consumer_goods_need`]), reinforcement the share of the IC
     /// [`World::reinforcement_need`] asks for, at most `reinforcement_cap`
-    /// (the AI file's) and what consumer goods leave, and supplies the
-    /// rest. Production gets nothing, as no queue is modelled, nor does
-    /// upgrading; the game's corrections for dissent (more consumer goods),
-    /// the supply need of the troops and the desired stockpiles are left
-    /// out.
+    /// (the AI file's) and what consumer goods leave, production the share
+    /// its queue asks for ([`World::production_need`]) out of what is left,
+    /// and supplies the rest. Upgrading gets nothing; the game's
+    /// corrections for dissent (more consumer goods), the supply need of
+    /// the troops and the desired stockpiles are left out.
     pub fn set_ai_sliders(
         &mut self,
         ctx: &MoveContext,
@@ -387,10 +388,13 @@ impl World {
         let reinforcement = (self.reinforcement_need(ctx, tag) / ic)
             .min(reinforcement_cap.min(1.0 - consumer))
             .max(0.0);
+        let production = (self.production_need(tag) / ic)
+            .min(1.0 - consumer - reinforcement)
+            .max(0.0);
         self.countries.get_mut(tag).unwrap().sliders = IcSliders {
             consumer,
-            production: 0.0,
-            supplies: 1.0 - consumer - reinforcement,
+            production,
+            supplies: 1.0 - consumer - reinforcement - production,
             reinforcement,
             upgrade: 0.0,
         };
@@ -403,12 +407,16 @@ impl System for Economy {
     }
 
     /// 00:00: the day's output on yesterday's IC. Add this system before
-    /// [`crate::Logistics`].
+    /// [`crate::Logistics`]. Other hours: the production queue's hourly
+    /// part ([`World::production_hour`]).
     fn on_hour(&mut self, world: &mut World, _rng: &mut Rng) {
+        let tags: Vec<String> = world.countries.keys().cloned().collect();
         if world.date.hour != 0 {
+            for tag in &tags {
+                world.production_hour(&self.ctx.units, tag);
+            }
             return;
         }
-        let tags: Vec<String> = world.countries.keys().cloned().collect();
         for tag in tags {
             let d = self.difficulty_of(world, &tag);
             world.produce(&self.ctx, &tag, d);
@@ -416,12 +424,17 @@ impl System for Economy {
     }
 
     /// After the hour's systems, so on the day's IC: consumer goods (even
-    /// with the `production` rule off), then the AI's sliders. In the game reinforcement comes after consumer
-    /// goods; here it uses its resources first.
+    /// with the `production` rule off), the production queue
+    /// ([`World::run_production`]) and its 00:00 hour
+    /// ([`World::production_hour`]), then the AI's sliders. In the game
+    /// reinforcement comes after consumer goods and production; here it
+    /// uses its resources first.
     fn on_day(&mut self, world: &mut World, _rng: &mut Rng) {
         let tags: Vec<String> = world.countries.keys().cloned().collect();
         for tag in tags {
             world.spend_consumer_goods(&tag);
+            world.run_production(&tag);
+            world.production_hour(&self.ctx.units, &tag);
             if world.rules.production {
                 let d = self.difficulty_of(world, &tag);
                 world.set_ai_sliders(&self.ctx, &tag, d.dissent, self.ai_reinforcement);
@@ -624,6 +637,46 @@ mod tests {
         let s = world.countries["AAA"].sliders;
         assert!(close(s.consumer, 0.16) && close(s.supplies, 0.84), "{s:?}");
         assert_eq!((s.production, s.reinforcement, s.upgrade), (0.0, 0.0, 0.0));
+        // Production gets what the queue asks for (items waiting for
+        // manpower do not count), at most what consumer goods leave.
+        let mut item = crate::QueueItem {
+            name: "x".into(),
+            id: None,
+            build: dh_data::production::Build::Convoy(0),
+            location: 0,
+            days: 75,
+            ic: 8.0,
+            size: 1,
+            done: 0,
+            state: 0,
+            halted: false,
+            continuity: 0.0,
+            funded: 1.0,
+            progress: 0.0,
+            manpower: 1.0,
+            gearing: 0.0,
+            upgrade: false,
+            new_model: true,
+            unitcost: true,
+        };
+        let mut waiting = item.clone();
+        waiting.halted = true;
+        world.countries.get_mut("AAA").unwrap().production = vec![item.clone(), waiting];
+        world.set_ai_sliders(&ctx, "AAA", 0.2, AI_REINFORCEMENT);
+        let s = world.countries["AAA"].sliders;
+        assert!(
+            close(s.production, 0.08) && close(s.supplies, 0.76),
+            "{s:?}"
+        );
+        item.ic = 200.0;
+        world.countries.get_mut("AAA").unwrap().production = vec![item];
+        world.set_ai_sliders(&ctx, "AAA", 0.2, AI_REINFORCEMENT);
+        let s = world.countries["AAA"].sliders;
+        assert!(
+            close(s.production, 0.84) && s.supplies.abs() < 1e-6,
+            "{s:?}"
+        );
+        world.countries.get_mut("AAA").unwrap().production.clear();
         // 0.1 at war; within 0.01..=0.9.
         world.declare_war("AAA", "BBB");
         assert!(close(world.consumer_goods_need("AAA", 0.0), 0.1));

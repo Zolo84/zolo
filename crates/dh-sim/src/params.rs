@@ -117,6 +117,12 @@ pub struct Params {
     pub manpower_war: f32,              // economy[32]
     pub manpower_retired: f32,          // economy[33]
     pub max_manpower: f32,              // economy[61]
+    /// Production (production.md §2.2, §3.3): the series discount never
+    /// takes a unit below `1 − gearing policy + max_gearing_bonus` of the
+    /// first one's time, and each finished unit adds `gearing_increment`
+    /// to the gearing bonus, up to `gearing policy − max_gearing_bonus`.
+    pub max_gearing_bonus: f32, // economy[8]
+    pub gearing_increment: f32,         // economy[9]
     /// Friendly-province ORG regain: `min(2 · infra + bonus, cap)`
     /// (organisation.md §2, old logic).
     pub org_friendly_bonus: f32, // combat[165]
@@ -171,6 +177,10 @@ pub struct Params {
     pub rare_modifier: f32,   // country[27]
     pub money_modifier: f32,  // country[28]
     pub supply_modifier: f32, // country[29]
+    /// Build time factors of province buildings and of convoys
+    /// (`building_prod_mod` / `convoy_prod_mod` commands lower them).
+    pub building_time: f32, // country[36]
+    pub convoy_time: f32,     // country[37]
 
     /// Efficiency of amphibious assaults every country starts with
     /// (`task_efficiency` technologies raise it; not applied yet).
@@ -255,6 +265,8 @@ impl Default for Params {
             manpower_war: 1.0,
             manpower_retired: 0.0,
             max_manpower: 9999.0,
+            max_gearing_bonus: 0.65,
+            gearing_increment: 0.05,
             org_friendly_bonus: 0.0,
             org_friendly_cap: 1.2,
             new_org_logic: false,
@@ -295,6 +307,8 @@ impl Default for Params {
             rare_modifier: 1.0,
             money_modifier: 1.0,
             supply_modifier: 1.0,
+            building_time: 1.0,
+            convoy_time: 1.0,
             amphibious_assault: 0.5,
         }
     }
@@ -397,6 +411,8 @@ impl Params {
             (27, &mut p.rare_modifier),
             (28, &mut p.money_modifier),
             (29, &mut p.supply_modifier),
+            (36, &mut p.building_time),
+            (37, &mut p.convoy_time),
         ] {
             f("country", n, v);
         }
@@ -415,6 +431,8 @@ impl Params {
             (32, &mut p.manpower_war),
             (33, &mut p.manpower_retired),
             (61, &mut p.max_manpower),
+            (8, &mut p.max_gearing_bonus),
+            (9, &mut p.gearing_increment),
         ] {
             f("economy", n, v);
         }

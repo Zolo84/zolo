@@ -51,6 +51,9 @@ pub struct CountrySetup {
     pub units: Vec<Unit>,
     pub relations: Vec<Relation>,
     pub stockpiles: Stockpiles,
+    /// Its production queue (`division_development` and the other item
+    /// blocks), in queue order.
+    pub production: Vec<crate::Development>,
     /// The full block, for fields not yet modelled.
     pub raw: Block,
 }
@@ -102,6 +105,7 @@ impl CountrySetup {
             units: Unit::all_in(b),
             relations: Relation::all_in(b),
             stockpiles: Stockpiles::from_block(b),
+            production: crate::Development::all_in(b),
             raw: b.clone(),
         })
     }
