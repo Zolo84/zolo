@@ -216,3 +216,32 @@ fn scenario_stockpiles() {
         (1000.0, 1000.0, 500.0)
     );
 }
+
+/// Germany's 1936 cabinet resolves to its ministers and their personalities:
+/// Rudolf Hess, head of government, is a Silent Workhorse (+5 % production).
+#[test]
+fn german_cabinet_and_personalities() {
+    use dh_data::ministers::cabinet_from;
+    use dh_data::{Ministers, Personalities};
+    let Some(vfs) = vfs() else { return };
+    let mut warnings = Vec::new();
+    let ministers = Ministers::load(&vfs, &mut warnings);
+    let personalities = Personalities::load(&vfs).unwrap();
+    assert_eq!(personalities.by_name.len(), 81);
+    let s = Scenario::load(&vfs, "scenarios/1936.eug", &mut warnings).unwrap();
+    let ger = s.countries.iter().find(|c| c.tag == "GER").unwrap();
+    let cabinet = cabinet_from(&ger.raw);
+    assert_eq!(cabinet, std::array::from_fn(|i| Some(i as i64 + 1)));
+    for (slot, id) in cabinet.iter().enumerate() {
+        let m = &ministers.by_id[&id.unwrap()];
+        assert_eq!((m.country.as_str(), m.post), ("GER", Some(slot)), "{m:?}");
+        assert!(personalities.get(&m.personality).is_some(), "{m:?}");
+    }
+    let hess = &ministers.by_id[&2];
+    assert_eq!(hess.name, "Rudolf Hess");
+    let p = personalities.get(&hess.personality).unwrap();
+    assert!(p
+        .commands
+        .iter()
+        .any(|c| c.kind == "production" && c.value == 0.05));
+}
