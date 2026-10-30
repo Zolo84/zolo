@@ -120,20 +120,18 @@ impl Ministers {
             let post = POSTS
                 .iter()
                 .position(|(_, n)| n.eq_ignore_ascii_case(&row[1]));
-            self.by_id.insert(
+            // A repeated ID keeps the first record (`0x76D721`).
+            self.by_id.entry(id).or_insert(Minister {
                 id,
-                Minister {
-                    id,
-                    country: tag.clone(),
-                    post,
-                    name: row[2].clone(),
-                    start_year: start,
-                    end_year: if years >= 2 { num(4, 1970) } else { 1970 },
-                    ideology: row[rest].to_ascii_uppercase(),
-                    personality: row[rest + 1].to_ascii_lowercase(),
-                    loyalty: row[rest + 2].clone(),
-                },
-            );
+                country: tag.clone(),
+                post,
+                name: row[2].clone(),
+                start_year: start,
+                end_year: if years >= 2 { num(4, 1970) } else { 1970 },
+                ideology: row[rest].to_ascii_uppercase(),
+                personality: row[rest + 1].to_ascii_lowercase(),
+                loyalty: row[rest + 2].clone(),
+            });
         }
     }
 }
