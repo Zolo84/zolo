@@ -95,6 +95,28 @@ pub struct Params {
     pub reinforce_cost: f32,            // economy[36]
     pub reinforce_time: f32,            // economy[37]
     pub repair_modifier: f32,           // country[11]
+    /// Daily economy (`economy.md`): supplies per IC on the supplies
+    /// slider, the consumer-goods need divisor, money per IC on consumer
+    /// goods.
+    pub ic_to_supplies: f32, // economy[2]
+    pub ic_to_consumer_goods: f32,      // economy[3]
+    pub ic_to_money: f32,               // economy[4]
+    /// Resource output of provinces outside the national ones: owned,
+    /// occupied, and any of them for AI countries (−1: off).
+    pub resource_non_national: f32, // economy[13]
+    pub resource_occupied: f32,         // economy[14]
+    pub resource_non_national_ai: f32,  // economy[15]
+    /// Daily manpower per point of a province's: national, non-national;
+    /// the colonial factor, the factor of overseas provinces at war (0:
+    /// none), the peace and war factors, and the retired share of the pool.
+    pub manpower_national: f32, // economy[26]
+    pub manpower_non_national: f32,     // economy[27]
+    pub manpower_colonial: f32,         // economy[28]
+    pub manpower_overseas_war: f32,     // economy[30]
+    pub manpower_peace: f32,            // economy[31]
+    pub manpower_war: f32,              // economy[32]
+    pub manpower_retired: f32,          // economy[33]
+    pub max_manpower: f32,              // economy[61]
     /// Friendly-province ORG regain: `min(2 · infra + bonus, cap)`
     /// (organisation.md §2, old logic).
     pub org_friendly_bonus: f32, // combat[165]
@@ -138,6 +160,17 @@ pub struct Params {
     pub land_surprise: f32,   // country[32]
     pub dig_in_max: f32,      // country[44]
     pub dig_in_daily: f32,    // country[45]
+    /// Manpower growth factor ("MP boost"; `relative_manpower` commands
+    /// change it).
+    pub relative_manpower: f32, // country[5]
+    /// Output of oil, metal, energy and rare materials, money from
+    /// consumer goods, supplies.
+    pub oil_modifier: f32, // country[24]
+    pub metal_modifier: f32,  // country[25]
+    pub energy_modifier: f32, // country[26]
+    pub rare_modifier: f32,   // country[27]
+    pub money_modifier: f32,  // country[28]
+    pub supply_modifier: f32, // country[29]
 
     /// Efficiency of amphibious assaults every country starts with
     /// (`task_efficiency` technologies raise it; not applied yet).
@@ -208,6 +241,20 @@ impl Default for Params {
             reinforce_cost: 0.8,
             reinforce_time: 0.5,
             repair_modifier: 1.0,
+            ic_to_supplies: 4.0,
+            ic_to_consumer_goods: 1.0,
+            ic_to_money: 0.25,
+            resource_non_national: 0.5,
+            resource_occupied: 0.4,
+            resource_non_national_ai: 0.75,
+            manpower_national: 0.01,
+            manpower_non_national: 0.001,
+            manpower_colonial: 0.1,
+            manpower_overseas_war: 0.0,
+            manpower_peace: 1.0,
+            manpower_war: 1.0,
+            manpower_retired: 0.0,
+            max_manpower: 9999.0,
             org_friendly_bonus: 0.0,
             org_friendly_cap: 1.2,
             new_org_logic: false,
@@ -241,6 +288,13 @@ impl Default for Params {
             land_surprise: 1.0,
             dig_in_max: 20.0,
             dig_in_daily: 1.0,
+            relative_manpower: 0.9,
+            oil_modifier: 1.0,
+            metal_modifier: 1.0,
+            energy_modifier: 1.0,
+            rare_modifier: 1.0,
+            money_modifier: 1.0,
+            supply_modifier: 1.0,
             amphibious_assault: 0.5,
         }
     }
@@ -336,8 +390,33 @@ impl Params {
             (32, &mut p.land_surprise),
             (44, &mut p.dig_in_max),
             (45, &mut p.dig_in_daily),
+            (5, &mut p.relative_manpower),
+            (24, &mut p.oil_modifier),
+            (25, &mut p.metal_modifier),
+            (26, &mut p.energy_modifier),
+            (27, &mut p.rare_modifier),
+            (28, &mut p.money_modifier),
+            (29, &mut p.supply_modifier),
         ] {
             f("country", n, v);
+        }
+        for (n, v) in [
+            (2, &mut p.ic_to_supplies),
+            (3, &mut p.ic_to_consumer_goods),
+            (4, &mut p.ic_to_money),
+            (13, &mut p.resource_non_national),
+            (14, &mut p.resource_occupied),
+            (15, &mut p.resource_non_national_ai),
+            (26, &mut p.manpower_national),
+            (27, &mut p.manpower_non_national),
+            (28, &mut p.manpower_colonial),
+            (30, &mut p.manpower_overseas_war),
+            (31, &mut p.manpower_peace),
+            (32, &mut p.manpower_war),
+            (33, &mut p.manpower_retired),
+            (61, &mut p.max_manpower),
+        ] {
+            f("economy", n, v);
         }
         f("mission", 73, &mut p.amphibious_assault);
         f("combat", 165, &mut p.org_friendly_bonus);
@@ -395,9 +474,13 @@ mod tests {
         combat[40] = "6"; // combat[41]
         combat[72] = "0.9"; // combat[73]
         combat[234] = "2.5"; // combat[235]
+        let mut economy = vec!["0"; 61];
+        economy[1] = "5.0"; // economy[2]
+        economy[60] = "500"; // economy[61]
         let text = format!(
-            "combat = {{ {} }}\ncountry = {{ 0 0 1.0 }}",
-            combat.join(" ")
+            "combat = {{ {} }}\ncountry = {{ 0 0 1.0 }}\neconomy = {{ {} }}",
+            combat.join(" "),
+            economy.join(" ")
         );
         let p = Params::from_misc(&Misc::parse(text.as_bytes()));
         assert_eq!(p.surprise, -0.4);
@@ -405,6 +488,7 @@ mod tests {
         assert_eq!(p.evade_with_defences, 90.0);
         assert_eq!(p.event_damage[0][1], 2.5);
         assert_eq!(p.ground_defence_efficiency, 1.0);
+        assert_eq!((p.ic_to_supplies, p.max_manpower), (5.0, 500.0));
         // Absent from the file: the default.
         assert_eq!(p.dig_in_max, 20.0);
     }

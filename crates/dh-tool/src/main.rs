@@ -479,6 +479,13 @@ fn march(args: &Args) -> Result<(), String> {
             .collect::<Vec<_>>()
             .join(" → ")
     );
+    // The day's economy comes before its IC, TC and supply efficiency, and
+    // those before reinforcement.
+    let mut economy = dh_sim::Economy::new(ctx.clone());
+    economy.difficulty = dh_data::Difficulty::load(&vfs).unwrap_or_default();
+    sim.add_system(economy);
+    sim.add_system(dh_sim::Logistics::new(ctx.clone()));
+    sim.add_system(dh_sim::Reinforce::new(ctx.clone()));
     sim.add_system(dh_sim::WeatherSystem::new(ctx.clone()));
     sim.add_system(dh_sim::OrgRegain::new(ctx.clone()));
     sim.add_system(March::new(ctx.clone()));

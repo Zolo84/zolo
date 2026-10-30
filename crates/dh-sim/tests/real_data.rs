@@ -1166,3 +1166,147 @@ fn german_cabinet_modifiers() {
     let ger = &world.countries["GER"];
     assert_eq!((ger.ic, ger.tc), (135, 223));
 }
+
+/// Germany's first day of 1936 (economy.md §7), at 1936-01-02 00:00 with
+/// the cabinet, policies and technologies loaded and the AI on Normal.
+/// Expected values come from the game files: Germany controls 38
+/// provinces, all national, whose `Province.csv` columns sum to energy
+/// 759, metal 159, rare materials 70, oil 2 and manpower 61 (worked out
+/// with a separate script); the peacetime IC modifier is 0.9 and its IC
+/// 135 with the starting sliders (consumer goods 0.4, supplies 0.4).
+/// - Resources: output · 0.9, less 54 IC of supplies and 54 of consumer
+///   goods (metal 1, energy 2, rare materials 0.5 each). The game also
+///   spends ~8.8 IC on its production queue and turns up to 135 energy into
+///   13.5 oil (technology 5190); neither is modelled.
+/// - Supplies: 4 · 0.4 · 135 = +216, no troops drawing (OrgRegain is off).
+///   East Prussia (304, 510) is cut off by the Polish corridor; the game
+///   may send its output to a provincial depot and merges Elbing's
+///   `supplypool = 100`; here all goes to the national stockpile and pools
+///   are not read.
+/// - Money: CG_TO_MONEY 0.9 (free_market 5) · 135 · 0.4 · 0.25 = 12.15
+///   (tech team salaries are not modelled).
+/// - Manpower: 0.01 · 61 · MP_GROWTH 1.02 (defense_lobby 6) · relative
+///   manpower 1.0 (0.9 + 0.05 from each of technologies 5010 and 5020).
+/// - The AI then asks for 0.8 · 0.2 · 1.36 · 1.1 = 0.23936 consumer goods
+///   (difficulty DISSENT +20 for the AI, CG_DEMAND 1.36, Frick ×1.1) and
+///   puts the rest on supplies, no division needing reinforcement.
+#[test]
+fn germany_first_day_of_the_economy() {
+    use dh_sim::{Economy, Logistics};
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let ctx = Arc::new(ctx);
+    let vfs = game_vfs().unwrap();
+    let (mut world, _) = World::from_scenario(&scenario);
+    world.load_misc(&vfs).unwrap();
+    world.load_policies(&vfs).unwrap();
+    world.load_techs(&vfs);
+    world.load_ministers(&vfs, &ctx.units);
+    let ger = &world.countries["GER"];
+    assert!((ger.relative_manpower - 1.0).abs() < 1e-6);
+    assert_eq!((ger.supply_modifier, ger.ministers.supplies), (1.0, 1.0));
+    assert_eq!((ger.ministers.money, ger.ministers.energy), (1.0, 1.0));
+    let man = &world.countries["MAN"].free;
+    assert_eq!(
+        (man.energy, man.metal, man.rare_materials),
+        (14.0, 7.0, 4.0)
+    );
+
+    let mut sums = [0.0f32; 5];
+    for (&p, tag) in &world.controller {
+        if tag == "GER" {
+            let i = ctx.province(p).unwrap();
+            assert!(world.countries["GER"].national.contains(&p));
+            for (s, v) in
+                sums.iter_mut()
+                    .zip([i.energy, i.metal, i.rare_materials, i.oil, i.manpower])
+            {
+                *s += v;
+            }
+        }
+    }
+    assert_eq!(sums, [759.0, 159.0, 70.0, 2.0, 61.0]);
+
+    let before = world.countries["GER"].stock;
+    let mut economy = Economy::new(ctx.clone());
+    economy.difficulty = dh_data::Difficulty::load(&vfs).unwrap();
+    let mut sim = Simulation::new(world, 1);
+    sim.add_system(economy);
+    sim.add_system(Logistics::new(ctx.clone()));
+    sim.run_hours(24);
+    assert_eq!(sim.date().to_string(), "1936-01-02 00:00");
+    let ger = &sim.world.countries["GER"];
+    assert_eq!(ger.ic, 135);
+    let after = ger.stock;
+    let delta = |a: f64, b: f64| a - b;
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-3;
+    eprintln!(
+        "GER before {before:?}\nGER after  {after:?}\nsliders {:?}",
+        ger.sliders
+    );
+    assert!(close(
+        delta(after.energy, before.energy),
+        683.1 - 108.0 - 108.0
+    ));
+    assert!(close(delta(after.metal, before.metal), 143.1 - 54.0 - 54.0));
+    assert!(close(
+        delta(after.rare_materials, before.rare_materials),
+        63.0 - 27.0 - 27.0
+    ));
+    assert!(close(delta(after.oil, before.oil), 1.8));
+    assert!(close(delta(after.supplies, before.supplies), 216.0));
+    assert!(close(delta(after.money, before.money), 12.15));
+    assert!((delta(after.manpower, before.manpower) - 0.6222).abs() < 1e-4);
+    let s = ger.sliders;
+    assert!((s.consumer - 0.23936).abs() < 1e-5, "{s:?}");
+    assert_eq!((s.production, s.reinforcement, s.upgrade), (0.0, 0.0, 0.0));
+    assert!((s.supplies - (1.0 - s.consumer)).abs() < 1e-6);
+}
+
+/// The reinforcement IC need the AI's slider follows (`C+0x39F4`): a
+/// VIII. Armeekorps division at half strength needs half its reinforcement
+/// cost a day (full rate: supply efficiency 1, manpower to spare, Berlin);
+/// the AI gives it that share of the IC up to its cap of 0.1. With the IC
+/// on the slider to finish it today, it no longer counts (`0x450368`).
+#[test]
+fn reinforcement_need_sets_the_ai_slider() {
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let dir = std::env::var_os("DH_GAME_DIR").unwrap();
+    let (mut world, _) = World::from_scenario(&scenario);
+    world.load_policies(&Vfs::new(&dir)).unwrap();
+    world.update_logistics(&ctx);
+    assert_eq!(world.reinforcement_need(&ctx, "GER"), 0.0);
+    let corps = world
+        .units
+        .iter()
+        .position(|u| u.unit.name == "VIII. Armeekorps")
+        .unwrap();
+    world.units[corps].unit.divisions[0].strength = Some(50.0);
+    let d = &world.units[corps].unit.divisions[0];
+    let model = ctx.units.division_model(&d.kind, d.model).unwrap();
+    let cost = (model.get("cost") * 0.8 * model.get("reinforce_cost")) as f32;
+    let need = world.reinforcement_need(&ctx, "GER");
+    assert!((need - 0.5 * cost).abs() < 1e-4, "{need} vs {}", 0.5 * cost);
+
+    let ic = world.countries["GER"].ic as f32;
+    world.set_ai_sliders(&ctx, "GER", 0.0, 0.1);
+    let s = world.countries["GER"].sliders;
+    assert!(
+        (s.reinforcement - (need / ic).min(0.1)).abs() < 1e-6,
+        "{s:?}"
+    );
+    assert!((s.consumer + s.supplies + s.reinforcement - 1.0).abs() < 1e-6);
+
+    // All the IC cannot bring it back faster than `100 / time` a day…
+    let slider = |w: &mut World, x| w.countries.get_mut("GER").unwrap().sliders.reinforcement = x;
+    slider(&mut world, 1.0);
+    assert_eq!(world.reinforcement_need(&ctx, "GER"), need);
+    // …but finishes one a hair below full strength, which then needs nothing.
+    world.units[corps].unit.divisions[0].strength = Some(99.99);
+    assert_eq!(world.reinforcement_need(&ctx, "GER"), 0.0);
+    slider(&mut world, 0.0);
+    assert!(world.reinforcement_need(&ctx, "GER") > 0.0);
+}

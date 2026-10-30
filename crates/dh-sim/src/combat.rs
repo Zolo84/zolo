@@ -858,6 +858,7 @@ mod tests {
                 ic: 0.0,
                 centre: (0, 0),
                 north: true,
+                ..Default::default()
             })
         };
         let (land, sea) = (province(terrain::PLAINS), province(terrain::OCEAN));

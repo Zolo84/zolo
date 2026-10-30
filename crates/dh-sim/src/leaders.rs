@@ -621,6 +621,7 @@ mod tests {
             ic: 0.0,
             centre: (0, 0),
             north: true,
+            ..Default::default()
         });
         let ctx = MoveContext {
             adjacency: Adjacency::from_lists(vec![

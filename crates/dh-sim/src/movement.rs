@@ -73,7 +73,7 @@ impl Default for MoveConditions {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct ProvinceInfo {
     pub terrain: u8,
     /// 0.0..=1.0
@@ -88,6 +88,16 @@ pub struct ProvinceInfo {
     /// Northern hemisphere: city `YPos` (the box centre's when the city is
     /// at 0;0) below 7200, y growing southward (weather.md §1).
     pub north: bool,
+    /// Daily manpower and resource output from `Province.csv` (read as
+    /// integers): `Manpower`, `Oil`, `Metal`, `Energy`, `Rare Materials`.
+    pub manpower: f32,
+    pub oil: f32,
+    pub metal: f32,
+    pub energy: f32,
+    pub rare_materials: f32,
+    /// Its `Continent`: equal numbers for equal names (case aside), 0 for
+    /// none.
+    pub continent: u8,
 }
 
 impl ProvinceInfo {
@@ -188,6 +198,7 @@ impl MoveContext {
             .read(&format!("{dir}/boundbox.tbl"))
             .map(|b| dh_map::BoundBox::parse(&b))
             .unwrap_or_default();
+        let mut continents: Vec<String> = Vec::new();
         for (id, p) in &table.by_id {
             let f = |k: &str| p.fields.get(k).map(String::as_str);
             let num = |k: &str| f(k).and_then(|v| v.parse::<i64>().ok());
@@ -206,6 +217,17 @@ impl MoveContext {
             });
             let city = (num("city xpos").unwrap_or(0), num("city ypos").unwrap_or(0));
             let city_y = if city == (0, 0) { centre.1 } else { city.1 };
+            let continent = match f("continent").map(str::to_ascii_lowercase) {
+                Some(c) if c != "-" => {
+                    let i = continents.iter().position(|n| *n == c).unwrap_or_else(|| {
+                        continents.push(c);
+                        continents.len() - 1
+                    });
+                    u8::try_from(i + 1).unwrap_or(u8::MAX)
+                }
+                _ => 0,
+            };
+            let amount = |k: &str| num(k).unwrap_or(0) as f32;
             provinces[*id as usize] = Some(ProvinceInfo {
                 terrain,
                 infra: num("infrastructure").unwrap_or(0) as f32 / 100.0,
@@ -214,6 +236,12 @@ impl MoveContext {
                 ic: num("ic").unwrap_or(0).clamp(0, 100) as f32,
                 centre,
                 north: city_y < 7200,
+                manpower: amount("manpower"),
+                oil: amount("oil"),
+                metal: amount("metal"),
+                energy: amount("energy"),
+                rare_materials: amount("rare materials"),
+                continent,
             });
         }
 

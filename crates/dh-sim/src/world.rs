@@ -45,6 +45,22 @@ pub struct Country {
     pub land_surprise: f32,
     /// National stockpiles (supplies, oil, manpower…).
     pub stock: Stockpiles,
+    /// What the scenario's `free = { … }` adds every day (supplies, oil,
+    /// energy, metal, rare materials, money, manpower; its `ic` is
+    /// [`Country::free_ic`]).
+    pub free: Stockpiles,
+    /// Output factors of provinces' oil, metal, energy and rare materials,
+    /// of money from consumer goods and of supplies (`country[24..=29]` at
+    /// the start; `industrial_modifier which = supplies` raises the last).
+    pub oil_modifier: f32,
+    pub metal_modifier: f32,
+    pub energy_modifier: f32,
+    pub rare_modifier: f32,
+    pub money_modifier: f32,
+    pub supply_modifier: f32,
+    /// Manpower growth factor (`country[5]` at the start, raised by
+    /// `relative_manpower` commands; at least 0.01).
+    pub relative_manpower: f32,
     /// Policy slider positions 1..=10.
     pub policy: dh_data::policy::Sliders,
     /// National (core) provinces.
@@ -78,6 +94,7 @@ impl Country {
     /// A country as the game creates it, before scenario values and
     /// technologies.
     pub fn new(tag: &str) -> Self {
+        let p = crate::Params::default();
         Country {
             tag: tag.to_owned(),
             capital: None,
@@ -85,8 +102,16 @@ impl Country {
             dissent: 0.0,
             techs: BTreeSet::new(),
             allow_dig_in: false,
-            land_surprise: crate::Params::default().land_surprise,
+            land_surprise: p.land_surprise,
             stock: Stockpiles::default(),
+            free: Stockpiles::default(),
+            oil_modifier: p.oil_modifier,
+            metal_modifier: p.metal_modifier,
+            energy_modifier: p.energy_modifier,
+            rare_modifier: p.rare_modifier,
+            money_modifier: p.money_modifier,
+            supply_modifier: p.supply_modifier,
+            relative_manpower: p.relative_manpower,
             policy: [5; 7],
             national: BTreeSet::new(),
             peacetime_ic_mod: 1.0,
@@ -236,9 +261,33 @@ impl World {
     /// Replaces the `misc.txt` constants (e.g. with a mod's). Countries keep
     /// what technologies added to their starting values.
     pub fn set_params(&mut self, params: crate::Params) {
-        let surprise = params.land_surprise - self.params.land_surprise;
+        let old = &self.params;
+        let surprise = params.land_surprise - old.land_surprise;
+        let modifiers = [
+            params.oil_modifier - old.oil_modifier,
+            params.metal_modifier - old.metal_modifier,
+            params.energy_modifier - old.energy_modifier,
+            params.rare_modifier - old.rare_modifier,
+            params.money_modifier - old.money_modifier,
+            params.supply_modifier - old.supply_modifier,
+            params.relative_manpower - old.relative_manpower,
+        ];
         for c in self.countries.values_mut() {
             c.land_surprise += surprise;
+            for (x, d) in [
+                &mut c.oil_modifier,
+                &mut c.metal_modifier,
+                &mut c.energy_modifier,
+                &mut c.rare_modifier,
+                &mut c.money_modifier,
+                &mut c.supply_modifier,
+                &mut c.relative_manpower,
+            ]
+            .into_iter()
+            .zip(modifiers)
+            {
+                *x += d;
+            }
         }
         self.params = params;
     }
@@ -323,9 +372,24 @@ impl World {
                         .get_block("free")
                         .and_then(|f| f.get_f64("ic"))
                         .unwrap_or(0.0) as f32,
+                    // Its `transport` and `escort` are not modelled.
+                    free: c
+                        .raw
+                        .get_block("free")
+                        .map(Stockpiles::from_block)
+                        .unwrap_or_default(),
                     ..Country::new(&c.tag)
                 },
             );
+            // Keys of the country loader over the `misc.txt` starting values
+            // (assumed to replace them).
+            let country = world.countries.get_mut(&c.tag).unwrap();
+            if let Some(x) = c.raw.get_f64("supply_modifier") {
+                country.supply_modifier = x as f32;
+            }
+            if let Some(x) = c.raw.get_f64("relative_manpower") {
+                country.relative_manpower = x as f32;
+            }
             for &p in &c.owned {
                 if let Some(prev) = world.owner.insert(p, c.tag.clone()) {
                     conflicts.push(format!("province {p} owned by both {prev} and {}", c.tag));
@@ -369,8 +433,10 @@ impl World {
 
     /// Applies the effects of the technologies each country has, as if it
     /// had just researched them (assumed for the scenario start,
-    /// land-combat.md §7 question 11). Only the commands of combat so far:
-    /// `allow_dig_in`, and `surprise` for land battles (`+= value · 0.01`).
+    /// land-combat.md §7 question 11). Only the commands of combat and
+    /// the economy so far: `allow_dig_in`, `surprise` for land battles,
+    /// `tc_mod`, `tc_occupied_mod`, `relative_manpower` and
+    /// `industrial_modifier which = supplies` (each `+= value · 0.01`).
     /// Call it once.
     pub fn add_techs(&mut self, techs: &Techs) {
         for country in self.countries.values_mut() {
@@ -389,6 +455,16 @@ impl World {
                         "tc_occupied_mod" => {
                             country.occupied_tc_bonus +=
                                 (command.value.unwrap_or(0.0) * 0.01) as f32;
+                        }
+                        // `0x490CA0`: at least 0.01.
+                        "relative_manpower" => {
+                            country.relative_manpower = (country.relative_manpower
+                                + (command.value.unwrap_or(0.0) * 0.01) as f32)
+                                .max(0.01);
+                        }
+                        // `0x48D990`; the other `which`s are not modelled.
+                        "industrial_modifier" if which.eq_ignore_ascii_case("supplies") => {
+                            country.supply_modifier += (command.value.unwrap_or(0.0) * 0.01) as f32;
                         }
                         _ => {}
                     }

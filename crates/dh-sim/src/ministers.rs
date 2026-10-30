@@ -4,10 +4,10 @@
 //!
 //! Values are added as written in the file (no ×0.01); multipliers start
 //! at 1, the rest at 0, and most are then kept within 0.01..=10. Only the
-//! modifiers the simulation uses are kept: production, transport capacity,
-//! supply consumption, leader skill, land speed, dissent and the per-type
-//! unit and brigade tables (time, cost, organisation, morale, attack,
-//! defence).
+//! modifiers the simulation uses are kept: production, resources and
+//! money, population growth, transport capacity, supply consumption,
+//! leader skill, land speed, dissent and the per-type unit and brigade
+//! tables (time, cost, organisation, morale, attack, defence).
 
 use dh_data::ministers::MinisterCommand;
 use dh_data::unitdb::DIVISION_TYPES;
@@ -36,6 +36,18 @@ pub struct MinisterModifiers {
     /// Added to the share of IC from non-national provinces (`production`
     /// with a `when` other than `national`); not clamped.
     pub non_national_production: f32,
+    /// Output multipliers of oil, energy, metal and rare materials, and of
+    /// money (`resource` by `which`; `all` is all five).
+    pub oil: f32,
+    pub energy: f32,
+    pub metal: f32,
+    pub rare_materials: f32,
+    pub money: f32,
+    /// Daily manpower growth (`populationgrowth`): the multiplier of the
+    /// whole, which `when = national` (the default) multiplies by `1 + v`,
+    /// and what other `when`s add for non-national provinces, within 0..=10.
+    pub population_growth: f32,
+    pub non_national_population_growth: f32,
     pub leader_skill: f32,
     /// Land speed (`unit when = speed`).
     pub speed: f32,
@@ -57,6 +69,13 @@ impl Default for MinisterModifiers {
             reinforcement: 1.0,
             upgrading: 1.0,
             non_national_production: 0.0,
+            oil: 1.0,
+            energy: 1.0,
+            metal: 1.0,
+            rare_materials: 1.0,
+            money: 1.0,
+            population_growth: 1.0,
+            non_national_population_growth: 0.0,
             leader_skill: 1.0,
             speed: 1.0,
             dissent: 1.0,
@@ -115,6 +134,30 @@ impl MinisterModifiers {
                 "upgrading" => self.upgrading += v,
                 _ => {}
             },
+            "resource" => match which.unwrap_or("all") {
+                "all" => {
+                    for x in [
+                        &mut self.oil,
+                        &mut self.energy,
+                        &mut self.metal,
+                        &mut self.rare_materials,
+                        &mut self.money,
+                    ] {
+                        *x += v;
+                    }
+                }
+                "oil" => self.oil += v,
+                "energy" => self.energy += v,
+                "metal" => self.metal += v,
+                "rare_materials" => self.rare_materials += v,
+                "money" => self.money += v,
+                _ => {}
+            },
+            // The one command that multiplies (`0x451390`).
+            "populationgrowth" if when.is_none_or(|w| w == "national") => {
+                self.population_growth *= 1.0 + v;
+            }
+            "populationgrowth" => self.non_national_population_growth += v,
             "unit" if when == Some("speed") => self.speed += v,
             "unit" => {
                 let types: Vec<String> = match which.unwrap_or("all") {
@@ -165,6 +208,12 @@ impl MinisterModifiers {
             &mut self.supplies,
             &mut self.reinforcement,
             &mut self.upgrading,
+            &mut self.oil,
+            &mut self.energy,
+            &mut self.metal,
+            &mut self.rare_materials,
+            &mut self.money,
+            &mut self.population_growth,
             &mut self.leader_skill,
             &mut self.speed,
             &mut self.dissent,
@@ -173,6 +222,7 @@ impl MinisterModifiers {
         ] {
             c(x);
         }
+        self.non_national_population_growth = self.non_national_population_growth.clamp(0.0, 10.0);
         for row in self
             .divisions
             .values_mut()
@@ -262,6 +312,11 @@ mod tests {
                 cmd("unit", Some("armor"), Some("attack"), 0.05),
                 cmd("unit", Some("land"), Some("organisation"), 0.1),
                 cmd("tc_mod", None, None, -2.0),
+                cmd("resource", Some("money"), None, -0.25),
+                cmd("resource", None, None, 0.1),
+                cmd("populationgrowth", None, None, 0.1),
+                cmd("populationgrowth", None, Some("national"), 0.25),
+                cmd("populationgrowth", None, Some("non_national"), 0.05),
             ],
             &units,
         );
@@ -270,6 +325,10 @@ mod tests {
         assert!((m.consumer - 1.1).abs() < 1e-6);
         assert!((m.speed - 1.1).abs() < 1e-6);
         assert_eq!(m.tc, 0.01, "clamped");
+        assert!((m.money - 0.85).abs() < 1e-6 && (m.rare_materials - 1.1).abs() < 1e-6);
+        // Multiplied: 1.1 · 1.25.
+        assert!((m.population_growth - 1.375).abs() < 1e-6);
+        assert!((m.non_national_population_growth - 0.05).abs() < 1e-6);
         let armor = m.unit("armor");
         assert!((armor[TIME] - 0.95).abs() < 1e-6 && (armor[COST] - 0.95).abs() < 1e-6);
         assert!((armor[ATTACK] - 0.05).abs() < 1e-6);
