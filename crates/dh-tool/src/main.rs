@@ -30,7 +30,7 @@ USAGE:
   dh-tool route     <game-dir> <from-id> <to-id> [--mod <dir>]
                                                       shortest land route (old distance model, impassable links avoided)
   dh-tool march     <game-dir> <scenario.eug> <unit name> <to-id> [--war TAG] [--mod <dir>]
-                                                      march a land unit and print its hourly progress
+                                                      march a land unit (the scenario's events running) and print its progress
   dh-tool sim       <game-dir> <scenario.eug> [--days N] [--mod <dir>]
                                                       load a scenario and run the headless simulation
 
@@ -476,7 +476,12 @@ fn march(args: &Args) -> Result<(), String> {
             .ok_or_else(|| format!("no unit named {name:?}"))?;
         world.declare_war(&owner, &enemy.to_ascii_uppercase());
     }
+    // The events the scenario names, scheduled as the game loads them.
+    let db = std::sync::Arc::new(dh_data::EventDb::load(&vfs, &scenario.root, &mut warnings));
     let mut sim = Simulation::new(world, 0xD412_0001);
+    let mut events = dh_sim::Events::new(db.clone());
+    events.ctx = Some(ctx.clone());
+    events.start(&sim.world, &mut sim.rng);
     let index = sim
         .world
         .units
@@ -497,9 +502,11 @@ fn march(args: &Args) -> Result<(), String> {
             .collect::<Vec<_>>()
             .join(" → ")
     );
-    // The day's economy (with the production queue) comes before its IC,
-    // TC and supply efficiency, and those before reinforcement; research
-    // ends the day.
+    // Event checks due on a day run in its first hour, before the other
+    // systems; the day's economy (with the production queue) comes before
+    // its IC, TC and supply efficiency, and those before reinforcement;
+    // research ends the day.
+    sim.add_system(events);
     let mut economy = dh_sim::Economy::new(ctx.clone());
     economy.difficulty = dh_data::Difficulty::load(&vfs).unwrap_or_default();
     research.difficulty = economy.difficulty.clone();
@@ -576,6 +583,19 @@ fn march(args: &Args) -> Result<(), String> {
         }
     }
     println!("{start} → {}: {} hours", sim.date(), sim.world.hour);
+    if let Some(e) = sim.system::<dh_sim::Events>() {
+        println!(
+            "{} of {} events fired {} times ({} checks)",
+            e.fired
+                .iter()
+                .map(|f| f.id)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            db.events.len(),
+            e.stats.fired,
+            e.stats.checks
+        );
+    }
     Ok(())
 }
 

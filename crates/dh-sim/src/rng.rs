@@ -21,6 +21,13 @@ impl Rng {
         (((self.next_u64() >> 32) * n as u64) >> 32) as u32
     }
 
+    /// A number like the game's C runtime `rand()` gives (MSVC: 15 bits,
+    /// 0..=32767), for rules that take `rand() % n` and so inherit its
+    /// bias towards small remainders.
+    pub fn rand15(&mut self) -> u32 {
+        (self.next_u64() >> 49) as u32
+    }
+
     /// Percentage roll, as used by event `ai_chance` / random triggers.
     pub fn chance(&mut self, percent: u32) -> bool {
         self.below(100) < percent

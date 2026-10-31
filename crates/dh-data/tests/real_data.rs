@@ -245,3 +245,55 @@ fn german_cabinet_and_personalities() {
         .iter()
         .any(|c| c.kind == "production" && c.value == 0.05));
 }
+
+/// The events of the 1936 scenario (`re/events/events.md` §1.4): 114 files
+/// (the `.eug`'s `AI_*.txt` and those of `db/events.txt`), 2255 events,
+/// no repeated ID; every trigger key is one the game knows.
+#[test]
+fn scenario_1936_events() {
+    use dh_data::events::{PairKind, Subject, Trigger};
+    let Some(vfs) = vfs() else { return };
+    let mut warnings = Vec::new();
+    let scenario = Scenario::load(&vfs, "scenarios/1936.eug", &mut warnings).unwrap();
+    let mut warnings = Vec::new();
+    let db = dh_data::EventDb::load(&vfs, &scenario.root, &mut warnings);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert!(db.missing.is_empty());
+    assert_eq!(db.files.len(), 114);
+    assert_eq!(db.files[0], "db\\events\\AI_GER.txt");
+    assert_eq!((db.events.len(), db.distinct_ids()), (2255, 2255));
+    assert!(db.dropped_triggers.is_empty(), "{:?}", db.dropped_triggers);
+    let count = |f: &dyn Fn(&dh_data::Event) -> bool| db.events.iter().filter(|e| f(e)).count();
+    assert_eq!(count(&|e| e.random), 65);
+    assert_eq!(count(&|e| e.invention), 16);
+    assert_eq!(
+        count(&|e| !e.random && !e.invention && !e.date.is_set()),
+        239,
+        "only through `trigger`"
+    );
+
+    // Rhineland (§6): one action, 14 commands, `trigger` 51 and 52.
+    let e = db.get(2060).unwrap();
+    assert!(e.file.to_ascii_lowercase().ends_with("germany.txt"));
+    assert_eq!((e.date.year, e.date.month, e.date.day), (1936, 2, 6));
+    let Trigger::And(top) = &e.trigger else {
+        panic!()
+    };
+    assert_eq!(top[0], Trigger::Ai(Subject::Yes));
+    assert!(matches!(
+        &top[1],
+        Trigger::Not(c) if matches!(c[0], Trigger::Pair { kind: PairKind::War, .. })
+    ));
+    assert_eq!(e.actions.len(), 1);
+    assert_eq!(e.actions[0].commands.len(), 14);
+    let triggered: Vec<f64> = e.actions[0]
+        .commands
+        .iter()
+        .filter(|c| c.kind == "trigger")
+        .map(|c| c.which_num())
+        .collect();
+    assert_eq!(triggered, [51.0, 52.0]);
+    let uk = db.get(51).unwrap();
+    assert_eq!(uk.country.as_deref(), Some("ENG"));
+    assert!(uk.persistent && !uk.date.is_set());
+}

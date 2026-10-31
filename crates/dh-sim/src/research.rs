@@ -30,10 +30,11 @@
 //! Every country is played by the AI, so nobody pays tech team salaries;
 //! [`World::research_cost`] and the `human` branch of
 //! [`World::research_progress`] say what a person would pay. Not modelled:
-//! sleeping teams (`sleepteam` / `waketeam`), invention events, buying,
-//! stealing and sabotaging technologies, and the levels of nuclear
-//! reactors and rocket test sites placed by the scenario (only the
-//! production queue's count, [`World::first_site_level`]). Projects are
+//! sleeping teams (`sleepteam` / `waketeam`), buying, stealing and
+//! sabotaging technologies (invention events: [`crate::Events`]), and
+//! the levels of nuclear reactors and rocket test sites placed by the
+//! scenario (only the production queue's count,
+//! [`World::first_site_level`]). Projects are
 //! started synchronously within the tick (the game sends the AI's start
 //! messages through objects not traced).
 //!

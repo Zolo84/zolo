@@ -210,6 +210,18 @@ pub struct Params {
     pub ic_per_team: i32,     // research[10]
     /// Team skills above it are lowered to it (`0x75AEC0`).
     pub max_team_skill: f32, // research[15]
+    /// A country's day starts an invention event when `rand() % 360` is
+    /// at most this (`0x7008E0`, events.md §2.5).
+    pub invention_events: f32, // research[5]
+
+    // Events (events.md §4).
+    /// "AI events action selection rules" (`0x877604`): −1 a random
+    /// action, −2 the first, −3 the likeliest; 0..=100 the first action's
+    /// share (percent) when no action has an `ai_chance`.
+    pub event_action_rule: i32, // ai[24]
+    /// "Force actions to show" (`0xDC18E4`): 0 off, 1 for actions with a
+    /// true trigger, 2 for actions without one too.
+    pub force_event_actions: i32, // mod[15]
 }
 
 impl Default for Params {
@@ -345,6 +357,9 @@ impl Default for Params {
             min_active_teams: 1,
             ic_per_team: 20,
             max_team_skill: 10.0,
+            invention_events: 4.0,
+            event_action_rule: 85,
+            force_event_actions: 0,
         }
     }
 }
@@ -515,6 +530,7 @@ impl Params {
         f("mod", 21, &mut p.rebel_org);
         f("country", 12, &mut p.research_modifier);
         for (n, v) in [
+            (5, &mut p.invention_events),
             (1, &mut p.blueprint_bonus),
             (2, &mut p.pre_historical),
             (3, &mut p.post_historical),
@@ -533,6 +549,13 @@ impl Params {
         int(8, &mut p.max_active_teams);
         int(9, &mut p.min_active_teams);
         int(10, &mut p.ic_per_team);
+        // Read as integers (`_ftol`).
+        if let Some(x) = misc.get("ai", 24) {
+            p.event_action_rule = x as i32;
+        }
+        if let Some(x) = misc.get("mod", 15) {
+            p.force_event_actions = x as i32;
+        }
         p.max_active_teams = p.max_active_teams.min(50);
         p.min_active_teams = p.min_active_teams.min(p.max_active_teams);
         p

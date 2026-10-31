@@ -1720,3 +1720,145 @@ fn germany_1936_research_ai() {
         .collect();
     assert!(idle.is_empty(), "{idle:?}");
 }
+
+/// The vanilla 1936 scenario with its events loaded and scheduled.
+fn events_1936(seed: u64) -> Option<(Simulation, Arc<dh_data::EventDb>)> {
+    let vfs = game_vfs()?;
+    let (_, scenario) = load()?;
+    let (mut world, _) = World::from_scenario(&scenario);
+    world.load_misc(&vfs).unwrap();
+    let mut warnings = Vec::new();
+    let db = Arc::new(dh_data::EventDb::load(&vfs, &scenario.root, &mut warnings));
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let mut sim = Simulation::new(world, seed);
+    let mut events = dh_sim::Events::new(db.clone());
+    events.start(&sim.world, &mut sim.rng);
+    sim.add_system(events);
+    Some((sim, db))
+}
+
+/// Re-occupation of the Rhineland (`re/events/events.md` §6 and its
+/// review): event 2060 (AI Germany, 6 March 1936 on the game's calendar,
+/// no offset) is checked once, on 7 March, and fires. Its `trigger`s check
+/// 51 (Britain) and 52 (France) at once, it puts the human version 2000
+/// to sleep and moves the defence lobby; its relation, belligerence,
+/// dissent, money and manpower messages land after the action, and the
+/// choices of 51 and 52 run after them.
+#[test]
+fn rhineland_for_an_ai_germany() {
+    let Some((mut sim, db)) = events_1936(0x2060) else {
+        return;
+    };
+    fn events(sim: &Simulation) -> &dh_sim::Events {
+        sim.system::<dh_sim::Events>().unwrap()
+    }
+    let start = events(&sim);
+    assert_eq!(
+        start.scheduled(2060),
+        [(1936 * 360 + 2 * 30 + 6, "GER".into())]
+    );
+    // The human version is checked daily from 2 January.
+    assert_eq!(start.scheduled(2000).len(), 1);
+    // Up to the evening of 6 March.
+    while sim.date() < dh_data::GameDate::new(1936, 3, 6).add_hours(23) {
+        sim.tick();
+    }
+    assert!(!events(&sim).fired.iter().any(|f| f.id == 2060));
+    let before = sim.world.clone();
+    let n = events(&sim).fired.len();
+
+    sim.tick();
+    assert_eq!(sim.date(), dh_data::GameDate::new(1936, 3, 7));
+    // Other countries' events fire that day too (China's 90, …); these
+    // three come one after the other, 2060's own commands first.
+    let today: Vec<(i64, &str)> = events(&sim).fired[n..]
+        .iter()
+        .map(|f| (f.id, f.country.as_str()))
+        .collect();
+    let at = today.iter().position(|f| f.0 == 2060).unwrap();
+    assert_eq!(today[at..at + 3], [(2060, "GER"), (51, "ENG"), (52, "FRA")]);
+    assert!(today
+        .iter()
+        .all(|f| [2060, 51, 52].contains(&f.0) || !["GER", "ENG", "FRA"].contains(&f.1)));
+
+    let w = &sim.world;
+    let (ger, ger0) = (&w.countries["GER"], &before.countries["GER"]);
+    for (tag, d) in [("FRA", -15.0), ("ENG", -5.0), ("BEL", -10.0), ("HOL", -5.0)] {
+        let expected = (before.relation("GER", tag) + d).clamp(-200.0, 200.0);
+        assert_eq!(w.relation("GER", tag), expected, "GER → {tag}");
+        assert_eq!(w.relation(tag, "GER"), expected, "{tag} → GER");
+    }
+    assert_eq!(ger.belligerence, ger0.belligerence + 5.0);
+    assert_eq!(ger.dissent, (ger0.dissent - 2.0).max(0.0));
+    assert_eq!(ger.stock.money, ger0.stock.money + 500.0);
+    assert_eq!(ger.stock.manpower, ger0.stock.manpower + 50.0);
+    let lobby = 5; // defense_lobby
+    assert_eq!(ger.policy[lobby], (ger0.policy[lobby] + 1).min(10));
+    // 51: defense lobby +1 and 15 manpower for Britain; 52: 15 for France.
+    let (eng, eng0) = (&w.countries["ENG"], &before.countries["ENG"]);
+    assert_eq!(eng.stock.manpower, eng0.stock.manpower + 15.0);
+    assert_eq!(eng.policy[lobby], (eng0.policy[lobby] + 1).min(10));
+    assert_eq!(
+        w.countries["FRA"].stock.manpower,
+        before.countries["FRA"].stock.manpower + 15.0
+    );
+    let e = events(&sim);
+    assert!(e.history.contains(&2060) && e.slept.contains(&2000));
+    // 51 and 52 are persistent without a date: not in the history, not
+    // checked again.
+    assert!(!e.history.contains(&51) && e.scheduled(51).is_empty());
+    // Their `peacetime_ic_mod` and 2060's `ai` change nothing here.
+    assert!(e.stats.commands_unmodelled["peacetime_ic_mod"] >= 3);
+
+    // 2000 is not checked again; 2061 (human, persistent) never fires.
+    sim.run_days(60);
+    let e = events(&sim);
+    assert!(e.scheduled(2000).is_empty());
+    assert!(!e.fired.iter().any(|f| [2000, 2061].contains(&f.id)));
+    assert_eq!(e.fired.iter().filter(|f| f.id == 2060).count(), 1);
+    assert!(db.get(2060).is_some());
+}
+
+/// Every vanilla 1936 event for a year, every country under the AI: no
+/// panic; what fired and what is not modelled.
+#[test]
+fn a_year_of_1936_events() {
+    let Some((mut sim, db)) = events_1936(1) else {
+        return;
+    };
+    sim.run_days(365);
+    let e = sim.system::<dh_sim::Events>().unwrap();
+    let mut ids: Vec<i64> = e.fired.iter().map(|f| f.id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let top = |m: &std::collections::BTreeMap<String, u64>| {
+        let mut v: Vec<_> = m.iter().map(|(k, n)| (*n, k.clone())).collect();
+        v.sort_unstable_by(|a, b| b.cmp(a));
+        v.truncate(15);
+        v
+    };
+    eprintln!(
+        "{} events, {} obsolete at load; {} checks, {} firings of {} events, {} commands run",
+        db.events.len(),
+        e.stats.obsolete,
+        e.stats.checks,
+        e.stats.fired,
+        ids.len(),
+        e.stats.commands
+    );
+    eprintln!(
+        "unmodelled triggers: {:?}",
+        top(&e.stats.triggers_unmodelled)
+    );
+    eprintln!(
+        "unmodelled commands: {:?}",
+        top(&e.stats.commands_unmodelled)
+    );
+    for f in e.fired.iter().take(40) {
+        eprintln!("  {} {:>5} {}", f.date, f.id, f.country);
+    }
+    assert!(e.fired.iter().any(|f| f.id == 2060));
+    assert!(e.stats.fired >= 50, "{}", e.stats.fired);
+    // Random events need a human country.
+    assert!(!e.fired.iter().any(|f| db.get(f.id).unwrap().random));
+}

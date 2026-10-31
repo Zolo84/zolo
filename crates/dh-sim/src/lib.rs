@@ -11,6 +11,7 @@ pub mod combat;
 pub mod consumption;
 pub mod dig_in;
 pub mod economy;
+pub mod events;
 pub mod leaders;
 pub mod logistics;
 pub mod march;
@@ -31,6 +32,7 @@ pub use battle::{ActiveEvent, Battle, BattleSide, CombatEvent, Engage};
 pub use combat::Combat;
 pub use dig_in::DigIn;
 pub use economy::Economy;
+pub use events::Events;
 pub use leaders::LeaderState;
 pub use logistics::Logistics;
 pub use ministers::MinisterModifiers;
@@ -45,8 +47,23 @@ pub use world::{Country, IcSliders, UnitState, World};
 
 use dh_data::GameDate;
 
+/// Access to a [`System`] as its concrete type ([`Simulation::system`]).
+pub trait AsAny {
+    fn as_any(&self) -> &dyn std::any::Any;
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+}
+
+impl<T: std::any::Any> AsAny for T {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
 /// A piece of game logic driven by the clock.
-pub trait System {
+pub trait System: AsAny {
     fn name(&self) -> &str;
     fn on_hour(&mut self, _world: &mut World, _rng: &mut Rng) {}
     fn on_day(&mut self, _world: &mut World, _rng: &mut Rng) {}
@@ -69,6 +86,19 @@ impl Simulation {
 
     pub fn add_system(&mut self, system: impl System + 'static) {
         self.systems.push(Box::new(system));
+    }
+
+    /// The first added system of type `T`.
+    pub fn system<T: System + 'static>(&self) -> Option<&T> {
+        self.systems
+            .iter()
+            .find_map(|s| s.as_ref().as_any().downcast_ref())
+    }
+
+    pub fn system_mut<T: System + 'static>(&mut self) -> Option<&mut T> {
+        self.systems
+            .iter_mut()
+            .find_map(|s| s.as_mut().as_any_mut().downcast_mut())
     }
 
     pub fn date(&self) -> GameDate {
@@ -112,7 +142,7 @@ mod tests {
         }
         fn on_day(&mut self, world: &mut World, _rng: &mut Rng) {
             self.0 += 1;
-            world.flags.insert(format!("day{}", self.0));
+            world.flags.insert(format!("day{}", self.0), 1);
         }
     }
 
@@ -124,7 +154,7 @@ mod tests {
         assert!(sim.world.flags.is_empty());
         sim.run_days(366);
         assert_eq!(sim.date().to_string(), "1937-01-01 23:00");
-        assert!(sim.world.flags.contains("day366"));
-        assert!(!sim.world.flags.contains("day367"));
+        assert!(sim.world.flags.contains_key("day366"));
+        assert!(!sim.world.flags.contains_key("day367"));
     }
 }
