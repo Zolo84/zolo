@@ -41,14 +41,15 @@ impl World {
             .unwrap_or_else(|| ctx.province(p).map_or(0.0, |i| i.ic))
     }
 
-    /// Effective IC of `tag` (`0x49A740`): the IC of the provinces it
-    /// controls (a fifth outside its national ones) and its `free` IC (with
-    /// the `production` rule on), times its IC modifiers, capped by what
-    /// its energy, metal and rare materials can feed.
-    pub fn effective_ic(&self, ctx: &MoveContext, tag: &str) -> i64 {
+    /// Base IC of `tag` (`B0` of `0x49A740`, logistics.md B4): the IC of
+    /// the provinces it controls (a fifth outside its national ones) and
+    /// its `free` IC (with the `production` rule on), before any modifier,
+    /// at least 0. Rounded, it is `C+0x3954`, which sets the research
+    /// slots ([`World::research_slots`]).
+    pub fn base_ic(&self, ctx: &MoveContext, tag: &str) -> f32 {
         let p = &self.params;
         let Some(c) = self.countries.get(tag) else {
-            return 0;
+            return 0.0;
         };
         let mut b = if self.rules.production {
             c.free_ic
@@ -70,7 +71,20 @@ impl World {
             }
             b += f;
         }
-        let b = b.max(0.0);
+        b.max(0.0)
+    }
+
+    /// Effective IC of `tag` (`0x49A740`): its [`World::base_ic`] times its
+    /// IC modifiers, capped by what its energy, metal and rare materials
+    /// can feed.
+    pub fn effective_ic(&self, ctx: &MoveContext, tag: &str) -> i64 {
+        self.ic_from_base(tag, self.base_ic(ctx, tag))
+    }
+
+    fn ic_from_base(&self, tag: &str, b: f32) -> i64 {
+        let Some(c) = self.countries.get(tag) else {
+            return 0;
+        };
         let mode = if self.diplomacy.in_war(tag) {
             c.wartime_ic_mod
         } else {
@@ -184,8 +198,12 @@ impl World {
     pub fn update_logistics(&mut self, ctx: &MoveContext) {
         let tags: Vec<String> = self.countries.keys().cloned().collect();
         for tag in &tags {
-            let ic = self.effective_ic(ctx, tag);
-            self.countries.get_mut(tag).unwrap().ic = ic;
+            let b = self.base_ic(ctx, tag);
+            let ic = self.ic_from_base(tag, b);
+            let base = fistp(b);
+            let c = self.countries.get_mut(tag).unwrap();
+            c.ic = ic;
+            c.base_ic = base;
             let (tc, load) = self.transport(ctx, tag);
             let c = self.countries.get_mut(tag).unwrap();
             c.tc = tc;

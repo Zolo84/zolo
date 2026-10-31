@@ -7,8 +7,8 @@
 //! modifiers the simulation uses are kept: production, resources and
 //! money, population growth, transport capacity, supply consumption,
 //! leader skill, land speed, dissent, the per-type unit and brigade
-//! tables (time, cost, organisation, morale, attack, defence) and the
-//! time and cost of province buildings.
+//! tables (time, cost, organisation, morale, attack, defence), the time
+//! and cost of province buildings and of research by category.
 
 use dh_data::ministers::MinisterCommand;
 use dh_data::unitdb::DIVISION_TYPES;
@@ -63,6 +63,10 @@ pub struct MinisterModifiers {
     /// (`dh_data::production::BUILDINGS`; `C+0x11A2C`), from `province`
     /// commands.
     pub buildings: [[f32; 2]; 11],
+    /// Research time and cost factors by technology category
+    /// (`dh_data::tech::CATEGORIES`; `C+0x119CC + 8·cat`, `C+0x119D0 + 8·cat`),
+    /// from `research` commands.
+    pub research: [[f32; 2]; 9],
 }
 
 impl Default for MinisterModifiers {
@@ -89,6 +93,7 @@ impl Default for MinisterModifiers {
             divisions: BTreeMap::new(),
             brigades: BTreeMap::new(),
             buildings: [[1.0; 2]; 11],
+            research: [[1.0; 2]; 9],
         }
     }
 }
@@ -218,6 +223,25 @@ impl MinisterModifiers {
                     }
                 }
             }
+            // `0x45158F`: `time` (the default) or anything else (cost);
+            // `all` is every category.
+            "research" => {
+                let rows = match which.unwrap_or("all") {
+                    "all" => 0..9,
+                    w => match dh_data::tech::category_index(w) {
+                        Some(i) => i..i + 1,
+                        None => 0..0,
+                    },
+                };
+                let k = if when.is_none_or(|w| w == "time") {
+                    TIME
+                } else {
+                    COST
+                };
+                for row in &mut self.research[rows] {
+                    row[k] += v;
+                }
+            }
             "leader_skill" => self.leader_skill += v,
             "dissent" => self.dissent += v,
             "tc_mod" => self.tc += v,
@@ -258,7 +282,7 @@ impl MinisterModifiers {
             c(&mut row[TIME]);
             c(&mut row[COST]);
         }
-        for row in &mut self.buildings {
+        for row in self.buildings.iter_mut().chain(&mut self.research) {
             c(&mut row[TIME]);
             c(&mut row[COST]);
         }
@@ -366,6 +390,9 @@ mod tests {
                 cmd("populationgrowth", None, Some("non_national"), 0.05),
                 cmd("province", Some("landfort"), None, -0.1),
                 cmd("province", None, Some("cost"), 0.2),
+                cmd("research", Some("infantry"), None, -0.1),
+                cmd("research", None, Some("cost"), 0.25),
+                cmd("research", Some("industry"), Some("time"), -20.0),
             ],
             &units,
         );
@@ -391,5 +418,11 @@ mod tests {
         assert!((fort[TIME] - 0.9).abs() < 1e-6 && (fort[COST] - 1.1).abs() < 1e-6);
         assert_eq!(m.buildings[1][TIME], 1.0);
         assert!((m.buildings[1][COST] - 1.2).abs() < 1e-6);
+        // Research: infantry time 0.9, every cost 1.25, industry time
+        // clamped to 0.01.
+        assert!((m.research[0][TIME] - 0.9).abs() < 1e-6);
+        assert_eq!(m.research[3][TIME], 1.0);
+        assert!(m.research.iter().all(|r| (r[COST] - 1.25).abs() < 1e-6));
+        assert_eq!(m.research[4][TIME], 0.01);
     }
 }

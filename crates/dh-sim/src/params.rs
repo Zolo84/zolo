@@ -169,6 +169,9 @@ pub struct Params {
     /// Manpower growth factor ("MP boost"; `relative_manpower` commands
     /// change it).
     pub relative_manpower: f32, // country[5]
+    /// Energy-to-oil conversion efficiency (`industrial_multiplier which =
+    /// energy_to_oil` commands set it).
+    pub energy_to_oil: f32, // country[22]
     /// Output of oil, metal, energy and rare materials, money from
     /// consumer goods, supplies.
     pub oil_modifier: f32, // country[24]
@@ -185,6 +188,28 @@ pub struct Params {
     /// Efficiency of amphibious assaults every country starts with
     /// (`task_efficiency` technologies raise it; not applied yet).
     pub amphibious_assault: f32, // mission[73]
+    /// Research speed every country starts with (`C+0xE860`;
+    /// `research_mod` commands raise it).
+    pub research_modifier: f32, // country[12]
+
+    // `research` section (research.md §0).
+    /// Factor of daily progress with a blueprint, and the cap of the
+    /// post-historical factor.
+    pub blueprint_bonus: f32, // research[1]
+    /// Per day before the historical year (negative), per day after the
+    /// year following it.
+    pub pre_historical: f32, // research[2]
+    pub post_historical: f32, // research[3]
+    /// Money a day per skill level of a working team (humans only).
+    pub cost_per_skill: f32, // research[4]
+    /// Research slots: at most 50 (`_ftol`), at least
+    /// `min_active_teams` (at most the max), one more per
+    /// `ic_per_team` base IC.
+    pub max_active_teams: i32, // research[8]
+    pub min_active_teams: i32, // research[9]
+    pub ic_per_team: i32,     // research[10]
+    /// Team skills above it are lowered to it (`0x75AEC0`).
+    pub max_team_skill: f32, // research[15]
 }
 
 impl Default for Params {
@@ -301,6 +326,7 @@ impl Default for Params {
             dig_in_max: 20.0,
             dig_in_daily: 1.0,
             relative_manpower: 0.9,
+            energy_to_oil: 0.0,
             oil_modifier: 1.0,
             metal_modifier: 1.0,
             energy_modifier: 1.0,
@@ -310,6 +336,15 @@ impl Default for Params {
             building_time: 1.0,
             convoy_time: 1.0,
             amphibious_assault: 0.5,
+            research_modifier: 1.0,
+            blueprint_bonus: 2.0,
+            pre_historical: -0.00125,
+            post_historical: 0.000925,
+            cost_per_skill: 0.1,
+            max_active_teams: 5,
+            min_active_teams: 1,
+            ic_per_team: 20,
+            max_team_skill: 10.0,
         }
     }
 }
@@ -405,6 +440,7 @@ impl Params {
             (44, &mut p.dig_in_max),
             (45, &mut p.dig_in_daily),
             (5, &mut p.relative_manpower),
+            (22, &mut p.energy_to_oil),
             (24, &mut p.oil_modifier),
             (25, &mut p.metal_modifier),
             (26, &mut p.energy_modifier),
@@ -477,6 +513,28 @@ impl Params {
         f("country", 11, &mut p.repair_modifier);
         f("country", 10, &mut p.country_supply_distance);
         f("mod", 21, &mut p.rebel_org);
+        f("country", 12, &mut p.research_modifier);
+        for (n, v) in [
+            (1, &mut p.blueprint_bonus),
+            (2, &mut p.pre_historical),
+            (3, &mut p.post_historical),
+            (4, &mut p.cost_per_skill),
+            (15, &mut p.max_team_skill),
+        ] {
+            f("research", n, v);
+        }
+        // `0x78B557`: `_ftol` of the stored floats; the max at most 50,
+        // the min at most the max.
+        let int = |n: usize, v: &mut i32| {
+            if let Some(x) = misc.get("research", n) {
+                *v = x as f32 as i32;
+            }
+        };
+        int(8, &mut p.max_active_teams);
+        int(9, &mut p.min_active_teams);
+        int(10, &mut p.ic_per_team);
+        p.max_active_teams = p.max_active_teams.min(50);
+        p.min_active_teams = p.min_active_teams.min(p.max_active_teams);
         p
     }
 }
@@ -509,5 +567,10 @@ mod tests {
         assert_eq!((p.ic_to_supplies, p.max_manpower), (5.0, 500.0));
         // Absent from the file: the default.
         assert_eq!(p.dig_in_max, 20.0);
+        let text = "research = { 3 0 0 0 0 0 0 60.7 70 25 }";
+        let p = Params::from_misc(&Misc::parse(text.as_bytes()));
+        assert_eq!(p.blueprint_bonus, 3.0);
+        assert_eq!((p.max_active_teams, p.min_active_teams), (50, 50));
+        assert_eq!((p.ic_per_team, p.max_team_skill), (25, 10.0));
     }
 }

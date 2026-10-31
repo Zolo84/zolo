@@ -1524,3 +1524,199 @@ fn germany_1936_production_in_the_economy() {
     assert_eq!(ger.undeployed.len(), 3);
     assert_eq!(ger.sliders.production, 0.0);
 }
+
+/// Germany's research in 1936 (research.md §7): five slots (base IC 142),
+/// research speed 1.05 from Census Tabulating Machine (5310) among its
+/// starting technologies, and Basic Machine Tools (5050) with I.G. Farben
+/// (skill 9, the speciality of every component) gaining 6.75, 6.75, 6.75,
+/// 5.906 and 5.25 a day on its five components: 101 days, so it completes
+/// at the tick of 11 April 1936, and its `industrial_modifier total`
+/// raises the IC. The research AI is off so that no other project
+/// changes the research speed meanwhile. Alone, Krupp (no chemistry)
+/// needs 116 days, I.G. Farben without money (as a human: skill 0) 253,
+/// and Konrad Zuse (7) 198 on Mechanical Computing Machine (5320).
+#[test]
+fn germany_1936_research() {
+    use dh_sim::{Economy, Logistics, Research};
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let ctx = Arc::new(ctx);
+    let vfs = game_vfs().unwrap();
+    let (mut world, _) = World::from_scenario(&scenario);
+    world.load_misc(&vfs).unwrap();
+    world.load_policies(&vfs).unwrap();
+    let mut warnings = Vec::new();
+    let techs = Arc::new(dh_data::Techs::load(&vfs, &mut warnings));
+    world.add_techs(&techs);
+    world.load_ministers(&vfs, &ctx.units);
+    let teams = Arc::new(dh_data::TechTeams::load(&vfs, &mut warnings));
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let farben = teams
+        .of("GER")
+        .find(|t| t.name == "I.G. Farben")
+        .expect("I.G. Farben");
+    assert_eq!((farben.id, farben.skill), (3, 9.0));
+    assert_eq!(farben.specialities.len(), 5);
+
+    let ger = &world.countries["GER"];
+    assert_eq!(ger.research.modifier, 1.05);
+    assert!(ger.research.blueprints.is_empty());
+    assert_eq!(ger.ministers.research[0][0], 0.9, "Blomberg, infantry");
+    assert_eq!(ger.ministers.research[4], [1.0, 1.0]);
+    // A human would pay 9 · 0.1 · 0.79 a day (freedom 2, free market 5).
+    let cost = world.research_cost(&techs, farben, Some(5050));
+    assert!((cost - 0.711).abs() < 1e-5, "{cost}");
+    // Researchable from 1936 on (any year is allowed, only slower). The
+    // notes' list adds 6010 and 6300, but 6210 and 6220 among the starting
+    // technologies deactivate them, and the scenario loader runs
+    // `deactivate` commands (`0x7261E0` → DEACTIVATE_TECH).
+    let mut now: Vec<i64> = world
+        .researchable(&techs, "GER")
+        .into_iter()
+        .filter(|&id| techs.app(id).unwrap().year <= 1936)
+        .collect();
+    now.sort();
+    assert_eq!(now, [3030, 3330, 5030, 5050, 5320, 12100]);
+    // 6210, 6220 and 8080 deactivate 6010, 6300, 8060 and 8070.
+    let deactivated: Vec<i64> = ger.research.deactivated.iter().copied().collect();
+    assert_eq!(deactivated, [6010, 6300, 8060, 8070]);
+    assert_eq!(ger.energy_to_oil, 0.1, "5190 sets it");
+
+    let days_alone = |tech: i64, team: &str, human: bool| {
+        let mut w = world.clone();
+        w.countries.get_mut("GER").unwrap().stock.money = 0.0;
+        let team = teams.of("GER").find(|t| t.name == team).unwrap().id;
+        assert!(w.start_project(&techs, &teams, "GER", tech, team));
+        for day in 1..1000 {
+            w.date = w.date.next_day();
+            if !w
+                .tick_research(&techs, &teams, "GER", 0.0, human, None)
+                .is_empty()
+            {
+                return day;
+            }
+        }
+        panic!("{tech} never finishes");
+    };
+    assert_eq!(days_alone(5050, "I.G. Farben", false), 101);
+    assert_eq!(days_alone(5050, "Krupp", false), 116);
+    assert_eq!(days_alone(5050, "I.G. Farben", true), 253);
+    assert_eq!(days_alone(5320, "Konrad Zuse", false), 198);
+
+    world.activate_team(&techs, "GER", 0, farben.id);
+    assert!(world.start_project(&techs, &teams, "GER", 5050, farben.id));
+    let mut economy = Economy::new(ctx.clone());
+    economy.difficulty = dh_data::Difficulty::load(&vfs).unwrap();
+    let mut research = Research::new(techs.clone(), teams.clone());
+    research.difficulty = economy.difficulty.clone();
+    research.ai_enabled = false;
+    let mut sim = Simulation::new(world, 1);
+    sim.add_system(economy);
+    sim.add_system(Logistics::new(ctx.clone()));
+    sim.add_system(research);
+
+    let app = techs.app(5050).unwrap();
+    let mut gains: Vec<(usize, f32, u32)> = Vec::new();
+    let mut days = 0;
+    while !sim.world.countries["GER"].techs.contains(&5050) {
+        let before = sim.world.countries["GER"].research.projects[0].clone();
+        let i = before.current(app).unwrap();
+        sim.run_days(1);
+        days += 1;
+        let ger = &sim.world.countries["GER"];
+        if days == 1 {
+            assert_eq!(ger.base_ic, 142);
+            assert_eq!(sim.world.research_slots("GER"), 5);
+        }
+        let after = ger
+            .research
+            .projects
+            .first()
+            .map_or(app.components[i].points() as f32, |p| p.progress[i]);
+        match gains.last_mut() {
+            Some(g) if g.0 == i => g.2 += 1,
+            _ => gains.push((i, after - before.progress[i], 1)),
+        }
+        assert!(days <= 101, "{gains:?}");
+    }
+    eprintln!("5050 by I.G. Farben: {gains:?}");
+    assert_eq!(days, 101);
+    assert_eq!(sim.date().to_string(), "1936-04-11 00:00");
+    let ticks: Vec<u32> = gains.iter().map(|g| g.2).collect();
+    assert_eq!(ticks, [15, 15, 15, 17, 39]);
+    for (g, want) in gains.iter().zip([6.75, 6.75, 6.75, 5.90625, 5.25]) {
+        assert!((g.1 - want).abs() < 1e-5, "{gains:?}");
+    }
+    let ger = &sim.world.countries["GER"];
+    assert!(ger.research.projects.is_empty());
+    assert_eq!(ger.research.slot(0), Some(farben.id), "still in its slot");
+    assert!((ger.industrial_modifier - 1.05).abs() < 1e-6);
+    // 142 · (1 + 0.05 cabinet + 0.05 technology − 0.1 peacetime), with
+    // resources to feed it (101 days of the AI economy without trade
+    // have used up the stockpiles that cap it).
+    let mut world = sim.world.clone();
+    let s = &mut world.countries.get_mut("GER").unwrap().stock;
+    (s.energy, s.metal, s.rare_materials) = (1e6, 1e6, 1e6);
+    world.update_logistics(&ctx);
+    assert_eq!(world.countries["GER"].ic, 142);
+}
+
+/// The research AI on Germany's first day of 1936 with its 1936 AI file
+/// (assumed to be the one the game picks): every slot gets a project, each
+/// with its own team, all researchable before. Prints the picks.
+#[test]
+fn germany_1936_research_ai() {
+    use dh_sim::{Logistics, Research};
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let ctx = Arc::new(ctx);
+    let vfs = game_vfs().unwrap();
+    let (mut world, _) = World::from_scenario(&scenario);
+    world.load_misc(&vfs).unwrap();
+    world.load_policies(&vfs).unwrap();
+    let mut warnings = Vec::new();
+    let techs = Arc::new(dh_data::Techs::load(&vfs, &mut warnings));
+    world.add_techs(&techs);
+    world.load_ministers(&vfs, &ctx.units);
+    let researchable = world.researchable(&techs, "GER");
+    let teams = Arc::new(dh_data::TechTeams::load(&vfs, &mut warnings));
+    let mut research = Research::new(techs.clone(), teams.clone());
+    let ai = dh_data::TechAi::load(&vfs, "ger_1936.ai", &mut warnings).unwrap();
+    assert_eq!(ai.weights, [6.0, 5.0, 1.0, 5.0, 5.0, 2.0, 1.0, 1.0, 1.0]);
+    research.ai.insert("GER".into(), ai);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let mut sim = Simulation::new(world, 1);
+    sim.add_system(Logistics::new(ctx.clone()));
+    sim.add_system(research);
+    sim.run_days(1);
+    let ger = &sim.world.countries["GER"];
+    let picks: Vec<(i64, &str)> = ger
+        .research
+        .projects
+        .iter()
+        .map(|p| (p.tech, teams.by_id[&p.team].name.as_str()))
+        .collect();
+    eprintln!("GER research AI, 1936-01-02: {picks:?}");
+    assert_eq!(picks.len(), 5);
+    assert!(ger
+        .research
+        .projects
+        .iter()
+        .all(|p| researchable.contains(&p.tech)));
+    let mut team_ids: Vec<i64> = ger.research.projects.iter().map(|p| p.team).collect();
+    team_ids.sort();
+    team_ids.dedup();
+    assert_eq!(team_ids.len(), 5);
+    assert!((0..5).all(|k| ger.research.slot(k).is_some()));
+    // Every country with teams researches something.
+    let idle: Vec<&str> = sim
+        .world
+        .countries
+        .values()
+        .filter(|c| teams.of(&c.tag).next().is_some() && c.research.projects.is_empty())
+        .map(|c| c.tag.as_str())
+        .collect();
+    assert!(idle.is_empty(), "{idle:?}");
+}

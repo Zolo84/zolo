@@ -1,5 +1,6 @@
 //! Mutable game state.
 
+use dh_data::tech::Command;
 use dh_data::{Diplomacy, GameDate, Scenario, Stockpiles, Techs, Unit, Vfs, Weather};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -36,8 +37,12 @@ pub struct Country {
     pub leader_skill: f32,
     /// Dissent, 0..=100 (land-combat.md §4.6): the scenario's `dissent`.
     pub dissent: f32,
-    /// Technology applications it has (the scenario's `techapps`).
+    /// Technology applications it knows (`C+0x3608`: the scenario's
+    /// `techapps`, then what it researches).
     pub techs: BTreeSet<i64>,
+    /// Blueprints, deactivated technologies, research projects and slots
+    /// ([`crate::research`]).
+    pub research: crate::research::ResearchState,
     /// Its stacks may dig in (§4.4): set by the `allow_dig_in` command.
     pub allow_dig_in: bool,
     /// Chance of surprise in land battles (§3.7): `country[32]` (1.0),
@@ -61,6 +66,10 @@ pub struct Country {
     /// Manpower growth factor (`country[5]` at the start, raised by
     /// `relative_manpower` commands; at least 0.01).
     pub relative_manpower: f32,
+    /// Energy-to-oil conversion efficiency (`C+0x37E2`: `country[22]` at the
+    /// start, set by `industrial_multiplier which = energy_to_oil`); the
+    /// conversion itself is not modelled yet.
+    pub energy_to_oil: f32,
     /// Policy slider positions 1..=10.
     pub policy: dh_data::policy::Sliders,
     /// National (core) provinces.
@@ -74,6 +83,10 @@ pub struct Country {
     /// Effective IC, transport capacity and supply load (logistics.md),
     /// worked out daily by [`crate::Logistics`].
     pub ic: i64,
+    /// The IC of the provinces it controls and its `free` IC before any
+    /// modifier, rounded (`C+0x3954`, [`World::base_ic`]): it sets the
+    /// research slots. Worked out with the IC.
+    pub base_ic: i64,
     pub tc: i64,
     pub load: i64,
     /// National supply efficiency: TC over load, at most 1.
@@ -111,6 +124,7 @@ impl Country {
             leader_skill: 1.0,
             dissent: 0.0,
             techs: BTreeSet::new(),
+            research: crate::research::ResearchState::new(p.research_modifier),
             allow_dig_in: false,
             land_surprise: p.land_surprise,
             stock: Stockpiles::default(),
@@ -122,6 +136,7 @@ impl Country {
             money_modifier: p.money_modifier,
             supply_modifier: p.supply_modifier,
             relative_manpower: p.relative_manpower,
+            energy_to_oil: p.energy_to_oil,
             policy: [5; 7],
             national: BTreeSet::new(),
             peacetime_ic_mod: 1.0,
@@ -130,6 +145,7 @@ impl Country {
             extra_tc: 0.0,
             free_ic: 0.0,
             ic: 0,
+            base_ic: 0,
             tc: 0,
             load: 0,
             ese: 1.0,
@@ -297,11 +313,14 @@ impl World {
             params.money_modifier - old.money_modifier,
             params.supply_modifier - old.supply_modifier,
             params.relative_manpower - old.relative_manpower,
+            params.energy_to_oil - old.energy_to_oil,
         ];
         let building_time = params.building_time - old.building_time;
         let convoy_time = params.convoy_time - old.convoy_time;
+        let research = params.research_modifier - old.research_modifier;
         for c in self.countries.values_mut() {
             c.land_surprise += surprise;
+            c.research.modifier = (c.research.modifier + research).max(0.01);
             for x in &mut c.building_time {
                 *x += building_time;
             }
@@ -316,6 +335,7 @@ impl World {
                 &mut c.money_modifier,
                 &mut c.supply_modifier,
                 &mut c.relative_manpower,
+                &mut c.energy_to_oil,
             ]
             .into_iter()
             .zip(modifiers)
@@ -432,6 +452,15 @@ impl World {
             if let Some(x) = c.raw.get_f64("relative_manpower") {
                 country.relative_manpower = x as f32;
             }
+            // `0x549BE8`, `0x54B6C7`: lists only, no effects.
+            let ids = |key: &str| -> BTreeSet<i64> {
+                c.raw
+                    .get_block(key)
+                    .map(|b| b.ints().collect())
+                    .unwrap_or_default()
+            };
+            country.research.blueprints = ids("blueprints");
+            country.research.deactivated = ids("deactivate");
             for &p in &c.owned {
                 if let Some(prev) = world.owner.insert(p, c.tag.clone()) {
                     conflicts.push(format!("province {p} owned by both {prev} and {}", c.tag));
@@ -474,64 +503,121 @@ impl World {
         warnings.iter().map(ToString::to_string).collect()
     }
 
-    /// Applies the effects of the technologies each country has, as if it
-    /// had just researched them (assumed for the scenario start,
-    /// land-combat.md §7 question 11). Only the commands of combat and
-    /// the economy so far: `allow_dig_in`, `surprise` for land battles,
-    /// `tc_mod`, `tc_occupied_mod`, `relative_manpower` and
-    /// `industrial_modifier which = supplies` (each `+= value · 0.01`), and
-    /// `building_prod_mod` / `convoy_prod_mod` (`−= value · 0.01`, at least
-    /// 0.1). Call it once.
+    /// Applies the effects of the technologies each country starts with,
+    /// as the loader of a new scenario does for `techapps` (`0x549DA0` →
+    /// `0x7261E0`, research.md §5; a saved game skips it): an ID that names
+    /// no application is dropped ("unknown tech"), the others' commands go
+    /// through [`World::apply_tech_commands`]. `0x7261E0` handles 182 of
+    /// the 299 command types (the modifiers, `deactivate` / `activate`, and
+    /// some others such as `relation` or `change_policy`) and skips one-off
+    /// ones (`money`, `supplies`, `dissent`, pools, `sleep*` / `wake*`,
+    /// `setflag`, `war`, `steal_tech` / `gain_tech`, division builders…);
+    /// the vanilla technologies use only the first kind. Call it once.
     pub fn add_techs(&mut self, techs: &Techs) {
-        for country in self.countries.values_mut() {
-            for &id in &country.techs {
-                for command in techs.commands(id) {
-                    let which = command.which.as_deref().unwrap_or("");
-                    match command.kind.as_str() {
-                        "allow_dig_in" => country.allow_dig_in = true,
-                        "surprise" if which.eq_ignore_ascii_case("land") => {
-                            country.land_surprise += (command.value.unwrap_or(0.0) * 0.01) as f32;
-                        }
-                        // Event 0x193 without `which`: added (logistics.md §2).
-                        "tc_mod" => {
-                            country.tc_bonus += (command.value.unwrap_or(0.0) * 0.01) as f32
-                        }
-                        "tc_occupied_mod" => {
-                            country.occupied_tc_bonus +=
-                                (command.value.unwrap_or(0.0) * 0.01) as f32;
-                        }
-                        // `0x490CA0`: at least 0.01.
-                        "relative_manpower" => {
-                            country.relative_manpower = (country.relative_manpower
-                                + (command.value.unwrap_or(0.0) * 0.01) as f32)
-                                .max(0.01);
-                        }
-                        // `0x490BB0` / `0x490C00`: build time of a building
-                        // type or convoy kind (the `which` index assumed to
-                        // follow the scenario's names).
-                        "building_prod_mod" | "convoy_prod_mod" => {
-                            let v =
-                                f64::from(command.value.unwrap_or(0.0) as f32) * f64::from(0.01f32);
-                            let x = if command.kind == "building_prod_mod" {
-                                country
-                                    .building_time
-                                    .get_mut(dh_data::production::building_index(which))
-                            } else {
-                                country
-                                    .convoy_time
-                                    .get_mut(dh_data::production::convoy_index(which))
-                            };
-                            if let Some(x) = x {
-                                *x = ((f64::from(*x) - v) as f32).max(0.1);
-                            }
-                        }
-                        // `0x48D990`; the other `which`s are not modelled.
-                        "industrial_modifier" if which.eq_ignore_ascii_case("supplies") => {
-                            country.supply_modifier += (command.value.unwrap_or(0.0) * 0.01) as f32;
-                        }
-                        _ => {}
+        let tags: Vec<String> = self.countries.keys().cloned().collect();
+        for tag in tags {
+            let country = self.countries.get_mut(&tag).unwrap();
+            country.techs.retain(|id| techs.app(*id).is_some());
+            let known: Vec<i64> = country.techs.iter().copied().collect();
+            for id in known {
+                self.apply_tech_commands(&tag, techs.commands(id));
+            }
+        }
+    }
+
+    /// Applies the commands of a technology's `effects` to `tag`: at the
+    /// scenario start (`0x7261E0`) and when a project completes
+    /// (`0x713490`, the event command executor, which runs every type).
+    /// Modelled so far: `allow_dig_in`, `surprise` for land battles,
+    /// `tc_mod`, `tc_occupied_mod`, `relative_manpower` and
+    /// `industrial_modifier` with `which = supplies` or `total` (each
+    /// `+= value · 0.01`), `research_mod` (`+= value · 0.01f`, at least
+    /// 0.01), `building_prod_mod` / `convoy_prod_mod` (`−= value · 0.01`,
+    /// at least 0.1), `industrial_multiplier which = energy_to_oil` (set to
+    /// `value`), and `deactivate` / `activate` (the technology `which`
+    /// joins or leaves the deactivated list).
+    pub fn apply_tech_commands(&mut self, tag: &str, commands: &[Command]) {
+        let Some(country) = self.countries.get_mut(tag) else {
+            return;
+        };
+        for command in commands {
+            let which = command.which.as_deref().unwrap_or("");
+            match command.kind.as_str() {
+                "allow_dig_in" => country.allow_dig_in = true,
+                "surprise" if which.eq_ignore_ascii_case("land") => {
+                    country.land_surprise += (command.value.unwrap_or(0.0) * 0.01) as f32;
+                }
+                // Event 0x193 without `which`: added (logistics.md §2).
+                "tc_mod" => country.tc_bonus += (command.value.unwrap_or(0.0) * 0.01) as f32,
+                "tc_occupied_mod" => {
+                    country.occupied_tc_bonus += (command.value.unwrap_or(0.0) * 0.01) as f32;
+                }
+                // `0x490CA0`: at least 0.01.
+                "relative_manpower" => {
+                    country.relative_manpower = (country.relative_manpower
+                        + (command.value.unwrap_or(0.0) * 0.01) as f32)
+                        .max(0.01);
+                }
+                // `0x490420` (`0x490780`): added as `v · 0.01f`, at least
+                // 0.01 (research.md §1.4).
+                "research_mod" => {
+                    let v = f64::from(command.value.unwrap_or(0.0) as f32) * f64::from(0.01f32);
+                    let m = &mut country.research.modifier;
+                    *m = ((f64::from(*m) + v) as f32).max(0.01);
+                }
+                // `0x490BB0` / `0x490C00`: build time of a building
+                // type or convoy kind (the `which` index assumed to
+                // follow the scenario's names).
+                "building_prod_mod" | "convoy_prod_mod" => {
+                    let v = f64::from(command.value.unwrap_or(0.0) as f32) * f64::from(0.01f32);
+                    let x = if command.kind == "building_prod_mod" {
+                        country
+                            .building_time
+                            .get_mut(dh_data::production::building_index(which))
+                    } else {
+                        country
+                            .convoy_time
+                            .get_mut(dh_data::production::convoy_index(which))
+                    };
+                    if let Some(x) = x {
+                        *x = ((f64::from(*x) - v) as f32).max(0.1);
                     }
                 }
+                // `0x48D990`: `total` raises the industrial modifier and
+                // the four resource modifiers (not money); the single
+                // resources' `which` names are not known.
+                "industrial_modifier" if which.eq_ignore_ascii_case("supplies") => {
+                    country.supply_modifier += (command.value.unwrap_or(0.0) * 0.01) as f32;
+                }
+                // `0x48D950`: assigned, without · 0.01.
+                "industrial_multiplier" if which.eq_ignore_ascii_case("energy_to_oil") => {
+                    country.energy_to_oil = command.value.unwrap_or(0.0) as f32;
+                }
+                "industrial_modifier" if which.eq_ignore_ascii_case("total") => {
+                    let v = (command.value.unwrap_or(0.0) * 0.01) as f32;
+                    for x in [
+                        &mut country.industrial_modifier,
+                        &mut country.oil_modifier,
+                        &mut country.metal_modifier,
+                        &mut country.energy_modifier,
+                        &mut country.rare_modifier,
+                    ] {
+                        *x += v;
+                    }
+                }
+                // DEACTIVATE_TECH (`0x48DD20`, added if missing) and
+                // ACTIVATE_TECH (`0x490D40`, removed); projects go on.
+                "deactivate" => {
+                    if let Ok(id) = which.trim().parse() {
+                        country.research.deactivated.insert(id);
+                    }
+                }
+                "activate" => {
+                    if let Ok(id) = which.trim().parse::<i64>() {
+                        country.research.deactivated.remove(&id);
+                    }
+                }
+                _ => {}
             }
         }
     }

@@ -444,7 +444,8 @@ fn march(args: &Args) -> Result<(), String> {
         .load_misc(&vfs)
         .map_err(|e| format!("db/misc.txt: {e}"))?;
     world.load_leaders(&vfs)?;
-    world.load_techs(&vfs);
+    let techs = std::sync::Arc::new(dh_data::Techs::load(&vfs, &mut warnings));
+    world.add_techs(&techs);
     world
         .load_policies(&vfs)
         .map_err(|e| format!("policy_effects.csv: {e}"))?;
@@ -452,6 +453,20 @@ fn march(args: &Args) -> Result<(), String> {
     world.load_production_costs(&vfs);
     // After the policies, misc and costs: the queue's days depend on them.
     world.load_production(&scenario, &ctx.units);
+    // Research: the teams, and the AI files the scenario names.
+    let mut research = dh_sim::Research::new(
+        techs,
+        std::sync::Arc::new(dh_data::TechTeams::load(&vfs, &mut warnings)),
+    );
+    for c in &scenario.countries {
+        if let Some(Ok(ai)) = c
+            .raw
+            .get_str("ai")
+            .map(|f| dh_data::TechAi::load(&vfs, f, &mut warnings))
+        {
+            research.ai.insert(c.tag.clone(), ai);
+        }
+    }
     if let Some(enemy) = args.options.get("war") {
         let owner = world
             .units
@@ -483,9 +498,11 @@ fn march(args: &Args) -> Result<(), String> {
             .join(" → ")
     );
     // The day's economy (with the production queue) comes before its IC,
-    // TC and supply efficiency, and those before reinforcement.
+    // TC and supply efficiency, and those before reinforcement; research
+    // ends the day.
     let mut economy = dh_sim::Economy::new(ctx.clone());
     economy.difficulty = dh_data::Difficulty::load(&vfs).unwrap_or_default();
+    research.difficulty = economy.difficulty.clone();
     sim.add_system(economy);
     sim.add_system(dh_sim::Logistics::new(ctx.clone()));
     sim.add_system(dh_sim::Reinforce::new(ctx.clone()));
@@ -496,6 +513,7 @@ fn march(args: &Args) -> Result<(), String> {
     let mut last = route[0];
     sim.add_system(dh_sim::Engage);
     sim.add_system(dh_sim::Combat::new(ctx.clone(), &scenario));
+    sim.add_system(research);
     let limit = sim.world.hour + 24 * 365;
     while !sim.world.units[index].route.is_empty() {
         if sim.world.hour >= limit {

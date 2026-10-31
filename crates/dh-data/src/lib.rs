@@ -3,6 +3,7 @@
 //! Each loader keeps going on bad input and reports [`Warning`]s, mirroring how
 //! the original engine tolerates broken mod files.
 
+pub mod ai;
 pub mod date;
 pub mod difficulty;
 pub mod diplomacy;
@@ -15,11 +16,13 @@ pub mod production;
 pub mod province;
 pub mod scenario;
 pub mod settings;
+pub mod teams;
 pub mod tech;
 pub mod unitdb;
 pub mod units;
 pub mod weather;
 
+pub use ai::TechAi;
 pub use date::GameDate;
 pub use dh_vfs::Vfs;
 pub use difficulty::Difficulty;
@@ -33,6 +36,7 @@ pub use production::{Development, ProductionCosts};
 pub use province::{Province, Provinces};
 pub use scenario::{CountrySetup, ProvinceSetup, Rules, Scenario, ScenarioInfo, Stockpiles};
 pub use settings::{open_install, Settings};
+pub use teams::{TechTeam, TechTeams};
 pub use tech::Techs;
 pub use unitdb::{DivisionStats, UnitDb};
 pub use units::{Branch, Brigade, Division, TypeId, Unit};
