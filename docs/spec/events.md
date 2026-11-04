@@ -174,10 +174,10 @@ G := misc ai[24] (ваніль 85)
 | `peace` (135) | мир сторони C з `which` (з `value > 0` — лише C) |
 | `manpowerpool` (90) | += value (з `when = 1` — частка суми людських ресурсів національних провінцій), ≥ 0 |
 | `control` (70) | контроль провінції `value` → `which` |
-| `war` (57) | C оголошує війну `which` 🔎 |
+| `war` (57) | C оголошує війну `which` примусово й «подієво»: блокують лише альянс, доступ C на територію `which`, наявна війна чи спільна сторона; belligerence C не нараховується, союзники C і альянс та сюзерен `which` втягуються (diplomacy.md §1) |
 | `money` (52) | += value; **нижче 0 обрізається лише для ШІ** |
 | `supplies`, `oilpool`, `energypool`, `metalpool`, `rarematerialspool` | += value (у провінцію `where`, якщо задано), ≥ 0 |
-| `alliance` / `leave_alliance`, `inherit`, `make_puppet`, `independence`, `end_mastery` | 🔎 (відомі лише повідомлення) |
+| `alliance` / `leave_alliance`, `inherit`, `make_puppet`, `independence`, `end_mastery` | diplomacy.md §3–6: `alliance` — вступ C до фракції `where` (1 Axis, 2 Allies, 3 Comintern) або спільний альянс із `which`; `inherit` адресовано **C** (тому, хто анексує): `which` зникає, його провінції й запаси — C; `make_puppet` (у черзі) — `which` стає маріонеткою C; `independence` — тег `which` постає з провінцій C, юніти в них переходять при `value ≤ 0`; `end_mastery` знімає лише сюзеренітет |
 | `belligerence` (44) | **країні `which`** (не C) += value, ≥ 0 |
 | `access` (31) | C **надає** військовий доступ країні `which` (запис `which` про C, тобто війська `which` можуть входити на територію C — land-movement.md §1.4; так і в документації гри «Grant military access _to_ a country»), в один бік, без згоди |
 | `activate` / `deactivate` | технологія стає / перестає бути деактивованою (research.md) |
