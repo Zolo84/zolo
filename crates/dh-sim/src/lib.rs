@@ -7,6 +7,7 @@
 
 pub mod attrition;
 pub mod battle;
+pub mod cabinet;
 pub mod combat;
 pub mod consumption;
 pub mod dig_in;

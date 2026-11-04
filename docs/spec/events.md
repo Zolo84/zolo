@@ -114,7 +114,7 @@ SC/ML/SL/SD (66..198 днів), інакше 400 (200..599). Якщо на да�
 | `flag`, `local_flag` | значення прапорця (глобального / країни; відсутній = 0) порівняне з `value` (за замовч. 1) за `when` (−2 <, −1 ≤, 0 =, 1 ≥ (типово), 2 >) |
 | `minister = ID`, `leader = ID` | існує й активний — **країна не перевіряється** |
 | `headofstate`, `headofgovernment`, `incabinet` | міністр у відповідному слоті / будь-якому слоті C |
-| `government`, `ideology` | тип уряду C (або `country`) з ідеології міністрів |
+| `government`, `ideology` | ідеологія C (або `country`) з поточних повзунків democratic / political_left (`db/ideology_matrix.csv`), не з міністрів; група уряду — з неї (cabinet.md §1) |
 | `alliance`, `war`, `access`, `non_aggression`, `guarantee`, `trade` | між A і B (для доступу й пакту — у записі B про A) |
 | `puppet = { A B }` | **A — маріонетка B** |
 | `control` / `owned = { province data }` | контролер / власник провінції — тег, C (0/−1), ворог C (−2), друг C (−3) |

@@ -36,11 +36,14 @@
 //! **Commands** (§5) run in file order for the country the event fired
 //! for; a command whose own trigger fails, or whose numeric `which` is
 //! negative (allowed only for the `secede*` types), is skipped
-//! (`0x7102E0`; the per-type target checks there are not traced and not
+//! (`0x7102E0`; of its per-type target checks only the one of the post
+//! commands and `sleepminister`, a `which` naming a minister, is
 //! modelled). Most act at once (`secedeprovince`, `control`, `addcore` /
 //! `removecore`, `trigger`, `sleepevent`, `war`, `alliance`,
-//! `leave_alliance`, `domestic` / `set_domestic`, the flags, the
-//! technology commands), but the executor's tail `0x71B921` posts the
+//! `leave_alliance`, `domestic` / `set_domestic` / `change_policy`, the
+//! post commands `headofstate` … `chiefofair`, `sleepminister`, the flags,
+//! the technology commands; [`crate::cabinet`] has their rules), but the
+//! executor's tail `0x71B921` posts the
 //! messages of `dissent`, `money`, the resource pools, `manpowerpool`,
 //! `relation` / `set_relation`, `peace`, `belligerence`, `access` and
 //! `gain_tech` to the FIFO ([`Effect`]): they land after the whole action
@@ -56,9 +59,10 @@
 //! is counted in [`EventStats::commands_unmodelled`].
 //!
 //! **Triggers** (§3) are evaluated for the country the event is checked
-//! for. Those without state here (ministers' and leaders' lives,
-//! government and ideology, difficulty, guarantees, policy rules, force
-//! ratios, division counts, the untraced keys…) are false and counted in
+//! for; `minister`, the cabinet slots, `government`, `ideology` and
+//! `can_change_policy` follow [`crate::cabinet`]. Those without state here
+//! (leaders' lives, difficulty, guarantees, force ratios, division counts,
+//! the untraced keys…) are false and counted in
 //! [`EventStats::triggers_unmodelled`], so events do not fire on missing
 //! data (a `NOT` around one holds).
 //!
@@ -474,14 +478,20 @@ impl Events {
         force == 2 || a.trigger.is_some()
     }
 
-    /// `0x7102E0` as far as traced: the command's own trigger, and a
+    /// `0x7102E0` as far as traced: the command's own trigger, a
     /// negative numeric `which` only for `secedeprovince`, `secedearea`
-    /// and `secederegion`.
+    /// and `secederegion`, and for the post commands and `sleepminister` a
+    /// `which` that names a minister (of any country or year, dead or not;
+    /// case 17 at `0x710D89`).
     fn command_valid(&mut self, cmd: &Command, c: &str, world: &World, rng: &mut Rng) -> bool {
         if let Some(t) = &cmd.trigger {
             if !self.eval(t, c, world, rng) {
                 return false;
             }
+        }
+        if post_command(&cmd.kind).is_some() || cmd.kind == "sleepminister" {
+            return cmd.which_num() >= 0.0
+                && world.ministers.contains_key(&(cmd.which_num() as i64));
         }
         cmd.which_num() >= 0.0
             || matches!(
@@ -796,22 +806,47 @@ impl Events {
                 }
                 world.diplomacy.alliances.retain(|a| !a.members.is_empty());
             }
-            // EXEC_CHANGE_POLICY: a slider moved by `value` / set to it
-            // (1..=10; the bounds of `0x4799C0` are assumed). The cabinet
-            // check after `democratic` / `political_left` is not modelled.
+            // EXEC_CHANGE_POLICY without the date stamp (`0x713D1C`,
+            // `0x713DA8`): `domestic` moves the slider by `value` from its
+            // 0-based position, truncated; `set_domestic` puts it at
+            // `value − 1` rounded (ties to even); clamped to 0..=9, then
+            // the cabinet check at 2.0 for `democratic` / `political_left`.
             "domestic" | "set_domestic" => {
                 let Some(k) = cmd.which.as_deref().and_then(slider_index) else {
                     return false;
                 };
-                if let Some(x) = world.countries.get_mut(c) {
-                    let new = if cmd.kind == "domestic" {
-                        (f64::from(x.policy[k]) + v) as i64
-                    } else {
-                        v as i64
-                    };
-                    x.policy[k] = new.clamp(1, 10) as u8;
-                }
+                let Some(x) = world.countries.get(c) else {
+                    return true;
+                };
+                let value = f64::from(v as f32);
+                let new = if cmd.kind == "domestic" {
+                    (f64::from(x.policy[k]) - 1.0 + value) as i64
+                } else {
+                    (value - 1.0).round_ties_even() as i64
+                };
+                world.exec_change_policy(c, k, new, true);
             }
+            // `0x713E22`: a normal change by `value` (truncated), under the
+            // rules of `can_change_policy` and with the date stamp; dropped
+            // silently when they fail (synchronous, assumed).
+            "change_policy" => {
+                let Some(k) = cmd.which.as_deref().and_then(slider_index) else {
+                    return false;
+                };
+                let Some(x) = world.countries.get(c) else {
+                    return true;
+                };
+                let new = (f64::from(x.policy[k]) - 1.0 + f64::from(v as f32)) as i64;
+                world.request_change_policy(c, k, new);
+            }
+            // CHANGE_MINISTER (synchronous, no penalty): minister `which`
+            // into the post, whoever it is.
+            kind if post_command(kind).is_some() => {
+                let k = post_command(kind).unwrap();
+                world.change_minister(c, k, cmd.which_num() as i64, false);
+            }
+            // KILL_MINISTER to the minister's own country (synchronous).
+            "sleepminister" => world.kill_minister(cmd.which_num() as i64),
             // At once (their tail is not classified, except `activate` /
             // `deactivate`, which are synchronous).
             _ => return world.apply_tech_command(c, &cmd.to_tech()),
@@ -989,9 +1024,12 @@ impl Events {
                 return;
             }
             if ok {
-                // 133 for democracies (SC, ML, SL, SD); governments are
-                // not modelled, so 400.
-                let range = 400;
+                // 133 for democracies (SC, ML, SL, SD), else 400.
+                let range = if world.government(c) == Some(dh_data::Government::Democratic) {
+                    133
+                } else {
+                    400
+                };
                 let day = game_day(world.date) + i64::from(rng.rand15() % range + range / 2);
                 self.post(day, i, c.to_owned());
                 return;
@@ -1087,9 +1125,40 @@ impl Events {
                 .is_some_and(|d| game_day(world.date) - d >= *days),
             Trigger::Flag(f) => f.holds(flag(&world.flags, f)),
             Trigger::LocalFlag(f) => country.is_some_and(|x| f.holds(flag(&x.flags, f))),
-            Trigger::HeadOfState(id) => country.is_some_and(|x| x.cabinet[0] == Some(*id)),
-            Trigger::HeadOfGovernment(id) => country.is_some_and(|x| x.cabinet[1] == Some(*id)),
-            Trigger::InCabinet(id) => country.is_some_and(|x| x.cabinet.contains(&Some(*id))),
+            // A slot naming the minister (dead or not started too).
+            Trigger::HeadOfState(id) => world.slot_minister(c, 0).is_some_and(|m| m.id == *id),
+            Trigger::HeadOfGovernment(id) => world.slot_minister(c, 1).is_some_and(|m| m.id == *id),
+            Trigger::InCabinet(id) => world.in_cabinet(c, *id),
+            // `0x7328E0`: the minister exists, has started and is alive —
+            // whatever its country or post.
+            Trigger::Minister(id) => world
+                .ministers
+                .get(id)
+                .is_some_and(|m| m.start_year <= world.date.year && !m.dead),
+            // Of the sliders now; `country` names another one (a missing
+            // country fails).
+            Trigger::Government { kind, country: x } => {
+                let tag = x.as_deref().unwrap_or(c);
+                match dh_data::Government::from_name(kind) {
+                    Some(g) => world.government(tag) == Some(g),
+                    None => false,
+                }
+            }
+            Trigger::Ideology { kind, country: x } => {
+                let tag = x.as_deref().unwrap_or(c);
+                match dh_data::Ideology::from_name(kind) {
+                    Some(i) => world.ideology(tag) == Some(i),
+                    None => false,
+                }
+            }
+            // `0x73C110`: `0x4A0120` for the slider moved by `value`
+            // (`atoi`).
+            Trigger::CanChangePolicy { slider, value } => match slider_index(slider) {
+                Some(k) => country.is_some_and(|x| {
+                    world.can_change_policy(c, k, i64::from(x.policy[k]) - 1 + *value as i64)
+                }),
+                None => false,
+            },
             Trigger::Pair {
                 kind,
                 first,
@@ -1219,12 +1288,8 @@ impl Events {
                 // 0 / 0 compares as true on the FPU.
                 n == 0 || f64::from(lost) / f64::from(n) >= value * 0.01
             }
-            Trigger::Minister(_)
-            | Trigger::Leader(_)
-            | Trigger::Government { .. }
-            | Trigger::Ideology { .. }
+            Trigger::Leader(_)
             | Trigger::Difficulty(_)
-            | Trigger::CanChangePolicy { .. }
             | Trigger::LandPercentage { .. }
             | Trigger::Divisions { .. }
             | Trigger::Unknown { .. } => self.unmodelled(t.key()),
@@ -1321,6 +1386,13 @@ fn offset_range(offset: i64) -> u32 {
 
 fn flag(flags: &BTreeMap<String, i32>, f: &FlagTest) -> i64 {
     i64::from(flags.get(&f.name).copied().unwrap_or(0))
+}
+
+/// The post a post command (`headofstate` … `chiefofair`) fills.
+fn post_command(kind: &str) -> Option<usize> {
+    dh_data::ministers::POSTS
+        .iter()
+        .position(|(k, _)| *k == kind)
 }
 
 fn slider_index(name: &str) -> Option<usize> {
@@ -1678,11 +1750,19 @@ mod tests {
         assert!(holds("lost_national = { value = 50 }", "GER"));
         // AI: everybody unless human.
         assert!(holds("ai = yes", "GER") && !holds("ai = no", "GER"));
+        // Governments come from the sliders: the matrix not loaded is NS
+        // throughout.
+        assert!(holds("government = fascist ideology = nazi", "GER"));
+        assert!(!holds(
+            "government = { type = democratic country = FRA }",
+            "GER"
+        ));
+        assert!(!holds("ideology = monarchist", "GER"));
         // Unmodelled triggers are false (and counted).
         assert!(!holds("major = yes", "GER"));
-        assert!(holds("NOT = { government = fascist }", "GER"));
-        assert_eq!(e.stats.triggers_unmodelled.get("major"), Some(&1));
-        assert_eq!(e.stats.triggers_unmodelled.get("government"), Some(&1));
+        assert!(holds("NOT = { major = yes }", "GER"));
+        assert_eq!(e.stats.triggers_unmodelled.get("major"), Some(&2));
+        assert_eq!(e.stats.triggers_unmodelled.get("government"), None);
     }
 
     /// Every 15-bit `rand()` value once: how often each action is picked.
@@ -1794,6 +1874,7 @@ mod tests {
                          command = { type = research_mod value = 10 }
                          command = { type = ai which = \"x.ai\" }
                          command = { type = HeadOfState which = 7 }
+                         command = { type = sleepminister which = 7 }
                        } }
                      event = { id = 2 country = GER date = { day = 4 month = january year = 1936 }
                        action_a = { command = { type = peace which = ENG } command = { type = leave_alliance } } }";
@@ -1835,10 +1916,11 @@ mod tests {
         assert!(ger.research.deactivated.contains(&1010));
         assert_eq!(ger.research.blueprints, BTreeSet::from([1020]));
         assert!((ger.research.modifier - 1.1).abs() < 1e-6);
+        // No minister 7: the minister commands are not valid, and do not run.
         let e = sim_events(&sim);
         assert_eq!(
             e.stats.commands_unmodelled,
-            BTreeMap::from([("ai".to_owned(), 1), ("headofstate".to_owned(), 1)])
+            BTreeMap::from([("ai".to_owned(), 1)])
         );
         sim.run_days(2);
         let w = &sim.world;
@@ -1878,6 +1960,100 @@ mod tests {
         assert_eq!(flags, ["four", "sync"]);
         let ids: Vec<i64> = sim_events(&sim).fired.iter().map(|f| f.id).collect();
         assert_eq!(ids, [1, 4]);
+    }
+
+    /// The cabinet commands and triggers (`crate::cabinet` has their rules).
+    #[test]
+    fn ministers_and_policy_in_events() {
+        let text = "event = { id = 1 country = GER trigger = { minister = 3 NOT = { incabinet = 3 } headofstate = 1 }
+                       date = { day = 2 month = january year = 1936 }
+                       action_a = {
+                         command = { type = foreignminister which = 3 }
+                         command = { type = setflag which = fm trigger = { incabinet = 3 } }
+                         command = { type = sleepminister which = 2 }
+                         command = { type = set_domestic which = democratic value = 6.5 }
+                         command = { type = setflag which = dem trigger = { government = democratic ideology = social_democrat } }
+                         command = { type = change_policy which = free_market value = 2 }
+                         command = { type = change_policy which = free_market value = 1 }
+                         command = { type = setflag which = no trigger = { can_change_policy = { type = freedom value = 1 } } }
+                         command = { type = headofgovernment which = 99 }
+                       } }
+                     event = { id = 2 country = GER trigger = { minister = 4 }
+                       date = { day = 2 month = january year = 1936 }
+                       action_a = { command = { type = setflag which = four } } }";
+        let db = db(text);
+        let mut w = world();
+        // Democratic d (1-based) is ideology d − 1.
+        let mut m = String::new();
+        for r in 0..10 {
+            let code = dh_data::Ideology::from_index(9 - r).unwrap().code();
+            m.push_str(&[code; 10].join(";"));
+            m.push('\n');
+        }
+        w.ideologies = dh_data::IdeologyMatrix::parse(m.as_bytes());
+        w.policies = dh_data::PolicyEffects::parse(
+            b"#_POLICY_DEMOCRATIC_;1\nMANUAL_OR_ BY_INFLUENCE _MOVES;1\n\
+              #_POLICY_POLITICAL_LEFT_;1\nMANUAL_OR_ BY_INFLUENCE _MOVES;1\n\
+              #_POLICY_FREEDOM_;1\nMANUAL_OR_ BY_INFLUENCE _MOVES;2\n\
+              #_POLICY_FREE_MARKET_;1\nMANUAL_OR_ BY_INFLUENCE _MOVES;2\n",
+        );
+        let mut ministers = dh_data::Ministers::default();
+        let mut warnings = Vec::new();
+        ministers.add_file(
+            "ger.csv",
+            b"GER;Ruling Cabinet - Start;Name;Pool;Ideology;Personality;Loyalty;Picturename;x\n\
+              1;Head of State;Leader;36;NS;Silent Workhorse;High;M1;x\n\
+              2;Head of Government;Deputy;36;NS;Silent Workhorse;High;M2;x\n\
+              3;Foreign Minister;Diplomat;36;SD;Silent Workhorse;High;M3;x\n\
+              4;Foreign Minister;Later;38;SD;Silent Workhorse;High;M3;x\n\
+              99;Head of State;Abroad;36;SD;Silent Workhorse;High;M3;x\n",
+            &mut warnings,
+        );
+        let traits = br#"minister = { trait = "Silent Workhorse" position = HeadOfGovernment
+            command = { type = production which = production value = 0.05 } }"#;
+        let data = crate::cabinet::CabinetData::new(
+            dh_data::Personalities::parse(traits),
+            dh_data::UnitDb::default(),
+            BTreeMap::new(),
+        );
+        let ger = w.countries.get_mut("GER").unwrap();
+        ger.policy = [1, 1, 5, 5, 5, 5, 5];
+        ger.cabinet[..2].copy_from_slice(&[Some(1), Some(2)]);
+        w.set_ministers(&ministers, data);
+        let mut sim = crate::Simulation::new(w, 9);
+        let mut events = Events::new(db);
+        events.start(&sim.world, &mut sim.rng);
+        sim.add_system(events);
+        sim.run_days(2);
+        let w = &sim.world;
+        let ger = &w.countries["GER"];
+        // The foreign minister came at once; Deputy slept, and with nobody
+        // left for post 1 a made-up minister took it; the democratic
+        // slider at 6.5 − 1 = 5.5 → 6 (SD), and the cabinet check at 2.0
+        // that follows gave post 0 to Abroad (SD, 0 away) for Leader (NS,
+        // 6 away); free market up by 2 is beyond SD's bound (at most 6 in
+        // the files) and dropped, up by 1 is taken and bars further
+        // changes; then headofgovernment put Abroad in post 1 as well.
+        assert_eq!(&ger.cabinet[..3], [Some(99), Some(99), Some(3)]);
+        assert!(w.ministers[&2].dead);
+        assert_eq!(
+            ger.minister_pool.last().map(|e| e.id),
+            Some(100),
+            "the made-up one"
+        );
+        assert_eq!(ger.policy[0], 7);
+        assert_eq!(ger.policy[3], 6);
+        let flags: Vec<&str> = w.flags.keys().map(String::as_str).collect();
+        assert_eq!(flags, ["dem", "fm"]);
+        let e = sim_events(&sim);
+        // Event 2: minister 4 starts in 1938.
+        assert_eq!(e.fired.iter().map(|f| f.id).collect::<Vec<_>>(), [1]);
+        assert!(
+            e.stats.commands_unmodelled.is_empty(),
+            "{:?}",
+            e.stats.commands_unmodelled
+        );
+        assert!(e.stats.triggers_unmodelled.is_empty());
     }
 
     #[test]

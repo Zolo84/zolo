@@ -33,7 +33,7 @@ pub struct Country {
     pub tag: String,
     pub capital: Option<u32>,
     /// Multiplier of its leaders' skill: 1 plus the `leader_skill` of the
-    /// active ministers, within 0.01..=10 (1.0 while ministers are not modelled).
+    /// ministers in its slots, within 0.01..=10 (1.0 until they load).
     pub leader_skill: f32,
     /// Dissent, 0..=100 (land-combat.md §4.6): the scenario's `dissent`.
     pub dissent: f32,
@@ -70,8 +70,11 @@ pub struct Country {
     /// start, set by `industrial_multiplier which = energy_to_oil`); the
     /// conversion itself is not modelled yet.
     pub energy_to_oil: f32,
-    /// Policy slider positions 1..=10.
+    /// Policy slider positions 1..=10 ([`crate::cabinet`]).
     pub policy: dh_data::policy::Sliders,
+    /// The policy's next-change date (`P+4`) as a
+    /// [`crate::cabinet::game_hour`]: normal slider changes wait for it.
+    pub policy_date: i64,
     /// National (core) provinces.
     pub national: BTreeSet<u32>,
     pub peacetime_ic_mod: f32,
@@ -97,9 +100,12 @@ pub struct Country {
     /// fractions.
     pub tc_bonus: f32,
     pub occupied_tc_bonus: f32,
-    /// Minister IDs in the ten cabinet posts.
+    /// Minister IDs in the ten cabinet posts (`C+0x24E`): an ID that
+    /// names no minister counts as an empty slot.
     pub cabinet: [Option<i64>; 10],
-    /// What the cabinet adds up to ([`World::load_ministers`]).
+    /// The country's minister pool (`C+0x2A0`, [`crate::cabinet`]).
+    pub minister_pool: Vec<crate::cabinet::PoolEntry>,
+    /// What the cabinet adds up to ([`World::recompute_ministers`]).
     pub ministers: crate::MinisterModifiers,
     /// The production queue, in order (`C+0x3B7E`; [`crate::production`]).
     pub production: Vec<crate::production::QueueItem>,
@@ -147,6 +153,7 @@ impl Country {
             relative_manpower: p.relative_manpower,
             energy_to_oil: p.energy_to_oil,
             policy: [5; 7],
+            policy_date: 0,
             national: BTreeSet::new(),
             peacetime_ic_mod: 1.0,
             wartime_ic_mod: 1.0,
@@ -162,6 +169,7 @@ impl Country {
             tc_bonus: 0.0,
             occupied_tc_bonus: 0.0,
             cabinet: [None; 10],
+            minister_pool: Vec::new(),
             ministers: crate::MinisterModifiers::default(),
             production: Vec::new(),
             undeployed: Vec::new(),
@@ -211,6 +219,16 @@ pub struct World {
     pub weather_static: bool,
     /// `db/policy_effects.csv`, once loaded with [`World::load_policies`].
     pub policies: dh_data::PolicyEffects,
+    /// `db/ideology_matrix.csv` (loaded with the ministers).
+    pub ideologies: dh_data::IdeologyMatrix,
+    /// Every minister by ID, once loaded with [`World::load_ministers`]
+    /// (the game's registry; [`crate::cabinet`]).
+    pub ministers: BTreeMap<i64, crate::cabinet::MinisterState>,
+    /// Personalities and the rest the cabinet rules read.
+    pub cabinet_data: std::sync::Arc<crate::cabinet::CabinetData>,
+    /// The local human's country (`[0xD0CA50]`), whose pool the cabinet
+    /// check reads for every country (`0x4A46C0`); none here by default.
+    pub player: Option<String>,
     /// Province IC the scenario sets, over `Province.csv`.
     pub province_ic: BTreeMap<u32, f32>,
     /// The scenario's `rules`.
@@ -297,6 +315,10 @@ impl World {
             weather_fronts: Vec::new(),
             weather_static: false,
             policies: dh_data::PolicyEffects::default(),
+            ideologies: dh_data::IdeologyMatrix::default(),
+            ministers: BTreeMap::new(),
+            cabinet_data: Default::default(),
+            player: None,
             province_ic: BTreeMap::new(),
             rules: dh_data::Rules::default(),
             production_costs: dh_data::ProductionCosts::default(),
@@ -366,26 +388,30 @@ impl World {
         self.params = params;
     }
 
-    /// Loads the ministers and their personalities and works out each
-    /// country's cabinet modifiers, as the game does when it starts
-    /// (`0x451390`); returns load warnings. A post whose minister or
-    /// personality is unknown adds nothing.
+    /// Loads the ministers, their personalities, `db/ideology_matrix.csv`
+    /// and `db/randomleaders.csv`, fills the countries' minister pools and
+    /// starts the cabinets as the game does when it starts
+    /// ([`World::start_cabinets`]: the modifiers, `0x451390`, and the
+    /// cabinet check at 4.0, which reads the `misc.txt` constants and the
+    /// sliders); returns load warnings. A post whose minister is unknown
+    /// adds nothing; an unknown personality is the generic one.
     pub fn load_ministers(&mut self, vfs: &Vfs, units: &dh_data::UnitDb) -> Vec<String> {
         let mut warnings = Vec::new();
         let ministers = dh_data::Ministers::load(vfs, &mut warnings);
         let personalities = dh_data::Personalities::load(vfs).unwrap_or_default();
-        for c in self.countries.values_mut() {
-            let commands = c
-                .cabinet
-                .iter()
-                .flatten()
-                .filter_map(|id| ministers.by_id.get(id))
-                .filter_map(|m| personalities.get(&m.personality))
-                .flat_map(|p| &p.commands);
-            c.ministers = crate::MinisterModifiers::from_commands(commands, units);
-            c.leader_skill = c.ministers.leader_skill;
+        let mut out: Vec<String> = warnings.iter().map(ToString::to_string).collect();
+        match dh_data::IdeologyMatrix::load(vfs) {
+            Ok(m) => self.ideologies = m,
+            Err(e) => out.push(format!("{}: {e}", dh_data::ideology::IDEOLOGY_FILE)),
         }
-        warnings.iter().map(ToString::to_string).collect()
+        let data = crate::cabinet::CabinetData::new(
+            personalities,
+            units.clone(),
+            dh_data::ministers::random_names(vfs),
+        );
+        self.set_ministers(&ministers, data);
+        self.start_cabinets();
+        out
     }
 
     /// Loads `db/building_costs.txt` and `db/convoy_costs.txt`; returns
@@ -431,6 +457,7 @@ impl World {
                     stock: c.stockpiles,
                     cabinet: dh_data::ministers::cabinet_from(&c.raw),
                     policy: dh_data::policy::sliders_from(c.raw.get_block("policy")),
+                    policy_date: crate::cabinet::policy_date_from(c.raw.get_block("policy")),
                     national: c.national.iter().copied().collect(),
                     peacetime_ic_mod: c.raw.get_f64("peacetime_ic_mod").unwrap_or(1.0) as f32,
                     wartime_ic_mod: c.raw.get_f64("wartime_ic_mod").unwrap_or(1.0) as f32,

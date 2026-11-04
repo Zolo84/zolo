@@ -222,6 +222,14 @@ pub struct Params {
     /// "Force actions to show" (`0xDC18E4`): 0 off, 1 for actions with a
     /// true trigger, 2 for actions without one too.
     pub force_event_actions: i32, // mod[15]
+
+    // Cabinet and policy (`docs/spec/cabinet.md` §0).
+    /// Days a normal slider change bars the next one (`0x4429A0`, `_ftol`).
+    pub slider_move_days: f32, // diplomacy[2]
+    /// "Use minister personality value when replacing ministers": exactly
+    /// 1 makes the cabinet check and `sleepminister` weigh personality
+    /// values.
+    pub minister_value_replacing: f32, // diplomacy[4]
 }
 
 impl Default for Params {
@@ -360,6 +368,8 @@ impl Default for Params {
             invention_events: 4.0,
             event_action_rule: 85,
             force_event_actions: 0,
+            slider_move_days: 360.0,
+            minister_value_replacing: 1.0,
         }
     }
 }
@@ -556,6 +566,8 @@ impl Params {
         if let Some(x) = misc.get("mod", 15) {
             p.force_event_actions = x as i32;
         }
+        f("diplomacy", 2, &mut p.slider_move_days);
+        f("diplomacy", 4, &mut p.minister_value_replacing);
         p.max_active_teams = p.max_active_teams.min(50);
         p.min_active_teams = p.min_active_teams.min(p.max_active_teams);
         p

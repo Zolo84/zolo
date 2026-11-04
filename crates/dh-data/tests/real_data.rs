@@ -246,6 +246,83 @@ fn german_cabinet_and_personalities() {
         .any(|c| c.kind == "production" && c.value == 0.05));
 }
 
+/// The cabinet data (`docs/spec/cabinet.md` §0, §1, §3, §5): the ideology matrix
+/// read backwards (democratic 1, political left 1 is NS; democratic 10,
+/// political left 10 is SD), the slider moves (the political sliders by
+/// hand or event only), the personalities' worth (75 of 81 left to the
+/// engine, worked out by `commands_value`; the other six, Generic among
+/// them, are −1), and the minister files: the `;Replacements` row right
+/// under the header puts every minister in group 8, but for USA's 231 and
+/// ALS's 17, which are in the starting group.
+#[test]
+fn ideologies_slider_moves_and_personality_values() {
+    use dh_data::ideology::{Ideology, IdeologyMatrix};
+    use dh_data::policy::SliderMoves;
+    use dh_data::{Ministers, Personalities, PolicyEffects};
+    let Some(vfs) = vfs() else { return };
+    let m = IdeologyMatrix::load(&vfs).unwrap();
+    let cell = |d: u8, l: u8| m.get(d - 1, l - 1).code();
+    assert_eq!(
+        [cell(1, 1), cell(10, 10), cell(1, 10), cell(10, 1)],
+        ["NS", "SD", "ST", "SC"]
+    );
+    assert_eq!([cell(5, 5), cell(7, 5), cell(2, 6)], ["SC", "ML", "LWR"]);
+    assert_eq!(
+        m.of_sliders(&[1, 1, 2, 5, 7, 6, 5]),
+        Ideology::NationalSocialist
+    );
+
+    let p = PolicyEffects::load(&vfs).unwrap();
+    let political = SliderMoves {
+        normal: true,
+        influence: false,
+        manual: true,
+    };
+    assert_eq!([p.moves(0), p.moves(1)], [political; 2]);
+    let others = SliderMoves {
+        normal: true,
+        influence: true,
+        manual: true,
+    };
+    assert!((2..7).all(|i| p.moves(i) == others));
+
+    let traits = Personalities::load(&vfs).unwrap();
+    assert_eq!(traits.generic.as_deref(), Some("generic"));
+    assert_eq!(traits.by_name.values().filter(|t| t.value == 0).count(), 75);
+    assert!(traits
+        .by_name
+        .values()
+        .all(|t| t.value == 0 || t.value == -1));
+    let worth = |name: &str| traits.get(name).unwrap().worth();
+    assert_eq!(worth("generic"), -1);
+    // `production` 0.1 (national): the sum becomes 2 · 0.1 · 400.
+    assert_eq!(worth("administrative genius"), 80);
+    // `research infantry` −0.1 (time): −(−0.1 · 100 · 2).
+    assert_eq!(worth("infantry proponent"), 20);
+    // Belligerence peace −0.5 and war 0.2, alliance chances +25 for
+    // dictatorships: 50 − 20 + 25 / 6.
+    assert_eq!(worth("powerhungry demagogue"), 34);
+    assert_eq!(traits.get("undistinguished suit").unwrap().position, None);
+
+    let mut warnings = Vec::new();
+    let ministers = Ministers::load(&vfs, &mut warnings);
+    assert_eq!(ministers.order.len(), ministers.by_id.len());
+    assert_eq!(ministers.by_id.len(), 13_917);
+    let starting: Vec<&str> = ministers
+        .by_id
+        .values()
+        .filter(|m| m.group == 0)
+        .map(|m| m.country.as_str())
+        .collect();
+    assert_eq!(starting.len(), 231 + 17);
+    assert!(starting.iter().all(|t| ["USA", "ALS"].contains(t)));
+    assert!(ministers
+        .by_id
+        .values()
+        .all(|m| m.group == 0 || m.group == 8));
+    assert!(ministers.by_id.values().all(|m| m.retirement_year == 3000));
+}
+
 /// The events of the 1936 scenario (`re/events/events.md` §1.4): 114 files
 /// (the `.eug`'s `AI_*.txt` and those of `db/events.txt`), 2255 events,
 /// no repeated ID; every trigger key is one the game knows.

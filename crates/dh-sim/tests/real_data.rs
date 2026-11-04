@@ -1167,6 +1167,78 @@ fn german_cabinet_modifiers() {
     assert_eq!((ger.ic, ger.tc), (135, 223));
 }
 
+/// The 1936 cabinets as the game starts them (`docs/spec/cabinet.md` §6
+/// and its review): Germany's sliders (democratic 1, political left 1)
+/// make it national socialist, so fascist, and its ten ministers are 0, 0,
+/// 1, 0, 0, 1, 2, 2, 0, 0 away from that. The start check at 4.0 replaces
+/// nobody anywhere: the 780 slots of the 78 countries with a cabinet all
+/// name ministers that have started, and the only ones further than 4
+/// away are Guangxi's (5), whose pool holds nobody else. Cabinets and
+/// dissent stay as the scenario has them. At 2.0 — what a change of
+/// Sweden's political sliders would run — its chief of navy Charles de
+/// Champs (PA, 4 from SD) would give way to Erik Palmstierna (SD).
+#[test]
+fn cabinets_of_1936() {
+    use dh_data::{Government, Ideology};
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let vfs = game_vfs().unwrap();
+    let (mut world, _) = World::from_scenario(&scenario);
+    world.load_misc(&vfs).unwrap();
+    world.load_policies(&vfs).unwrap();
+    let before = world.clone();
+    let warnings = world.load_ministers(&vfs, &ctx.units);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(world.ideology("GER"), Some(Ideology::NationalSocialist));
+    assert_eq!(world.government("GER"), Some(Government::Fascist));
+    let distance = |w: &World, tag: &str, k: usize| {
+        let gov = w.ideology(tag).unwrap().index() as i32;
+        (w.slot_minister(tag, k).unwrap().ideology.index() as i32 - gov).abs()
+    };
+    let ger: Vec<i32> = (0..10).map(|k| distance(&world, "GER", k)).collect();
+    assert_eq!(ger, [0, 0, 1, 0, 0, 1, 2, 2, 0, 0]);
+    let (mut slots, mut countries) = (0, 0);
+    let mut far = std::collections::BTreeSet::new();
+    for (tag, c) in &world.countries {
+        assert_eq!(c.cabinet, before.countries[tag].cabinet, "{tag}");
+        assert_eq!(c.dissent, before.countries[tag].dissent, "{tag}");
+        let mut any = false;
+        for k in 0..10 {
+            if let Some(m) = world.slot_minister(tag, k) {
+                assert!(m.start_year <= 1936 && !m.dead, "{tag} {m:?}");
+                slots += 1;
+                any = true;
+                if distance(&world, tag, k) > 4 {
+                    far.insert(tag.as_str());
+                }
+            }
+        }
+        countries += usize::from(any);
+    }
+    assert_eq!((slots, countries), (780, 78));
+    assert_eq!(far, std::collections::BTreeSet::from(["CGX"]));
+    // Germany's pool: every minister of its CSV, the cabinet's first.
+    let pool = &world.countries["GER"].minister_pool;
+    let in_csv = world
+        .ministers
+        .values()
+        .filter(|m| m.country == "GER")
+        .count();
+    assert_eq!(pool.len(), in_csv);
+    assert!(pool.iter().take(10).map(|e| e.id).eq(1..=10));
+
+    let swe = world.countries["SWE"].cabinet[8].unwrap();
+    assert_eq!(world.ministers[&swe].name, "Charles de Champs");
+    assert_eq!(distance(&world, "SWE", 8), 4);
+    world.cabinet_check("SWE", 2.0);
+    let navy = world.slot_minister("SWE", 8).unwrap();
+    assert_eq!(
+        (navy.name.as_str(), navy.ideology),
+        ("Erik Palmstierna", Ideology::SocialDemocrat)
+    );
+}
+
 /// Germany's first day of 1936 (economy.md §7), at 1936-01-02 00:00 with
 /// the cabinet, policies and technologies loaded and the AI on Normal.
 /// Expected values come from the game files: Germany controls 38
@@ -1721,12 +1793,15 @@ fn germany_1936_research_ai() {
     assert!(idle.is_empty(), "{idle:?}");
 }
 
-/// The vanilla 1936 scenario with its events loaded and scheduled.
+/// The vanilla 1936 scenario with its policies, ministers and events
+/// loaded and the events scheduled.
 fn events_1936(seed: u64) -> Option<(Simulation, Arc<dh_data::EventDb>)> {
     let vfs = game_vfs()?;
-    let (_, scenario) = load()?;
+    let (ctx, scenario) = load()?;
     let (mut world, _) = World::from_scenario(&scenario);
     world.load_misc(&vfs).unwrap();
+    world.load_policies(&vfs).unwrap();
+    world.load_ministers(&vfs, &ctx.units);
     let mut warnings = Vec::new();
     let db = Arc::new(dh_data::EventDb::load(&vfs, &scenario.root, &mut warnings));
     assert!(warnings.is_empty(), "{warnings:?}");
@@ -1819,6 +1894,62 @@ fn rhineland_for_an_ai_germany() {
     assert!(db.get(2060).is_some());
 }
 
+/// Event 20540 "Hjalmar Schacht takes power" (AI Germany, from 1 January
+/// 1936 with offset 7, persistent): `minister = 77` holds (Schacht has
+/// started; his country is not looked at) and `incabinet = 77` does not.
+/// Its action puts him in the armament slot through CHANGE_MINISTER —
+/// Blomberg goes to the pool he is already in — so administrative genius
+/// (+0.1 production, `when` national by default) replaces infantry
+/// proponent (−0.1 infantry research time): production 1.05 → 1.15,
+/// infantry research time 0.9 → 1.0. No cabinet check follows; its
+/// `dissent −1` lands after the action. Checked again a week later, it no
+/// longer holds.
+#[test]
+fn schacht_takes_the_armament_ministry() {
+    use dh_sim::ministers::TIME;
+    let Some((mut sim, _)) = events_1936(0x20540) else {
+        return;
+    };
+    fn fired(sim: &Simulation) -> usize {
+        let e = sim.system::<dh_sim::Events>().unwrap();
+        e.fired.iter().filter(|f| f.id == 20540).count()
+    }
+    sim.world.countries.get_mut("GER").unwrap().dissent = 3.0;
+    let ger = &sim.world.countries["GER"];
+    assert_eq!(ger.cabinet[3], Some(4));
+    assert_eq!(ger.ministers.production, 1.05);
+    assert!((ger.ministers.research[0][TIME] - 0.9).abs() < 1e-6);
+    let mut before = None;
+    for _ in 0..8 {
+        let b = sim.world.clone();
+        sim.run_hours(24);
+        if fired(&sim) > 0 {
+            before = Some(b);
+            break;
+        }
+    }
+    let before = before.expect("fired within the first week");
+    let (ger, ger0) = (&sim.world.countries["GER"], &before.countries["GER"]);
+    assert_eq!(ger.cabinet[3], Some(77));
+    assert_eq!(sim.world.ministers[&77].name, "Hjalmar Schacht");
+    assert!(ger
+        .cabinet
+        .iter()
+        .zip(&ger0.cabinet)
+        .enumerate()
+        .all(|(k, (a, b))| k == 3 || a == b));
+    assert!(
+        (ger.ministers.production - 1.15).abs() < 1e-6,
+        "{}",
+        ger.ministers.production
+    );
+    assert_eq!(ger.ministers.research[0][TIME], 1.0);
+    assert_eq!(ger.minister_pool, ger0.minister_pool);
+    assert_eq!(ger.dissent, ger0.dissent - 1.0);
+    sim.run_days(30);
+    assert_eq!(fired(&sim), 1);
+}
+
 /// Every vanilla 1936 event for a year, every country under the AI: no
 /// panic; what fired and what is not modelled.
 #[test]
@@ -1826,15 +1957,31 @@ fn a_year_of_1936_events() {
     let Some((mut sim, db)) = events_1936(1) else {
         return;
     };
+    let start = sim.world.clone();
     sim.run_days(365);
     let e = sim.system::<dh_sim::Events>().unwrap();
+    let w = &sim.world;
+    let changed = |f: &dyn Fn(&str, &World) -> Option<String>| {
+        w.countries
+            .keys()
+            .filter(|t| f(t, w) != f(t, &start))
+            .count()
+    };
+    eprintln!(
+        "cabinets: {} ministers made up, {} slept; {} countries changed a minister, {} their ideology, {} sliders",
+        w.ministers.len() - start.ministers.len(),
+        w.ministers.values().filter(|m| m.dead).count(),
+        changed(&|t, w| Some(format!("{:?}", w.countries[t].cabinet))),
+        changed(&|t, w| w.ideology(t).map(|i| i.code().to_owned())),
+        changed(&|t, w| Some(format!("{:?}", w.countries[t].policy))),
+    );
     let mut ids: Vec<i64> = e.fired.iter().map(|f| f.id).collect();
     ids.sort_unstable();
     ids.dedup();
     let top = |m: &std::collections::BTreeMap<String, u64>| {
         let mut v: Vec<_> = m.iter().map(|(k, n)| (*n, k.clone())).collect();
         v.sort_unstable_by(|a, b| b.cmp(a));
-        v.truncate(15);
+        v.truncate(40);
         v
     };
     eprintln!(
