@@ -99,8 +99,8 @@ mod tests {
                 },
             );
         }
-        world.declare_war("GER", "FRA");
-        world.declare_war("SPA", "FRA");
+        world.add_war("GER", "FRA");
+        world.add_war("SPA", "FRA");
         world
     }
 

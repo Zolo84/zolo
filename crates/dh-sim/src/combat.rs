@@ -942,7 +942,7 @@ mod tests {
         for (p, tag) in [(1, "FRA"), (2, "GER"), (3, "GER"), (4, "FRA"), (6, "FRA")] {
             world.controller.insert(p, tag.into());
         }
-        world.declare_war("GER", "FRA");
+        world.add_war("GER", "FRA");
         world
     }
 

@@ -230,6 +230,14 @@ pub struct Params {
     /// 1 makes the cabinet check and `sleepminister` weigh personality
     /// values.
     pub minister_value_replacing: f32, // diplomacy[4]
+
+    // Diplomacy (`re/diplomacy/diplomacy.md` §0.1).
+    /// "Masters become masters of new puppet's puppets too": exactly 1.
+    pub puppets_of_puppets: f32, // diplomacy[8]
+    /// "Should not aligned countries join automatically Allies/Axis when
+    /// DoW by Axis/Allies and both alliances are at war?": exactly 1
+    /// (REQ_SETUP_WAR, `0x5B3C6A`).
+    pub factions_join_attacked: f32, // diplomacy[12]
 }
 
 impl Default for Params {
@@ -370,6 +378,8 @@ impl Default for Params {
             force_event_actions: 0,
             slider_move_days: 360.0,
             minister_value_replacing: 1.0,
+            puppets_of_puppets: 0.0,
+            factions_join_attacked: 1.0,
         }
     }
 }
@@ -568,6 +578,8 @@ impl Params {
         }
         f("diplomacy", 2, &mut p.slider_move_days);
         f("diplomacy", 4, &mut p.minister_value_replacing);
+        f("diplomacy", 8, &mut p.puppets_of_puppets);
+        f("diplomacy", 12, &mut p.factions_join_attacked);
         p.max_active_teams = p.max_active_teams.min(50);
         p.min_active_teams = p.min_active_teams.min(p.max_active_teams);
         p

@@ -450,6 +450,8 @@ fn march(args: &Args) -> Result<(), String> {
         .load_policies(&vfs)
         .map_err(|e| format!("policy_effects.csv: {e}"))?;
     world.load_ministers(&vfs, &ctx.units);
+    world.load_revolt(&vfs);
+    world.set_continents(&ctx);
     world.load_production_costs(&vfs);
     // After the policies, misc and costs: the queue's days depend on them.
     world.load_production(&scenario, &ctx.units);
@@ -474,7 +476,7 @@ fn march(args: &Args) -> Result<(), String> {
             .find(|u| u.unit.name.eq_ignore_ascii_case(name))
             .map(|u| u.owner.clone())
             .ok_or_else(|| format!("no unit named {name:?}"))?;
-        world.declare_war(&owner, &enemy.to_ascii_uppercase());
+        world.declare_war(&owner, &enemy.to_ascii_uppercase(), dh_sim::WarFlags::EVENT);
     }
     // The events the scenario names, scheduled as the game loads them.
     let db = std::sync::Arc::new(dh_data::EventDb::load(&vfs, &scenario.root, &mut warnings));

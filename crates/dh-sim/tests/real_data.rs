@@ -108,7 +108,7 @@ fn war_opens_the_border() {
         .position(|u| u.unit.name == "VIII. Armeekorps")
         .unwrap();
     assert!(March::order(&ctx, &mut world, index, 56).is_err());
-    world.declare_war("GER", "FRA");
+    world.add_war("GER", "FRA");
     let route = March::order(&ctx, &mut world, index, 56).expect("route to Paris once at war");
     assert_eq!(route.first(), Some(&300));
     for &p in &route {
@@ -140,7 +140,7 @@ fn battle_starts_before_entering_a_defended_province() {
     };
     let ctx = Arc::new(ctx);
     let (mut world, _) = World::from_scenario(&scenario);
-    world.declare_war("GER", "FRA");
+    world.add_war("GER", "FRA");
     let corps = world
         .units
         .iter()
@@ -201,7 +201,7 @@ fn strasbourg_attack_breaks_off_like_the_spec_example() {
     };
     let ctx = Arc::new(ctx);
     let (mut base, _) = World::from_scenario(&scenario);
-    base.declare_war("GER", "FRA");
+    base.add_war("GER", "FRA");
     let corps = base
         .units
         .iter()
@@ -255,7 +255,7 @@ fn supply_follows_controlled_land_to_the_capital() {
     };
     let (mut world, _) = World::from_scenario(&scenario);
     assert!(world.in_supply(&ctx, "GER", 300));
-    world.declare_war("GER", "FRA");
+    world.add_war("GER", "FRA");
     world.controller.insert(56, "GER".into());
     assert!(!world.in_supply(&ctx, "GER", 56));
     assert_eq!(world.supply_speed_factor(&ctx, "GER", 56), 0.1);
@@ -417,7 +417,7 @@ fn strasbourg_attack_with_command_limits() {
     let ctx = Arc::new(ctx);
     let (mut base, _) = World::from_scenario(&scenario);
     base.load_leaders(&game_vfs().unwrap()).unwrap();
-    base.declare_war("GER", "FRA");
+    base.add_war("GER", "FRA");
     let corps = base
         .units
         .iter()
@@ -550,7 +550,7 @@ fn scenario_techs_and_dig_in() {
         [chi_dug, chi_new, corps].map(|u| level(&sim, u)),
         [20.0, 1.0, 0.0]
     );
-    sim.world.declare_war("GER", "FRA");
+    sim.world.add_war("GER", "FRA");
     sim.run_days(3);
     assert_eq!(
         [chi_dug, chi_new, corps].map(|u| level(&sim, u)),
@@ -575,7 +575,7 @@ fn strasbourg_attack_under_von_rundstedt() {
     let ctx = Arc::new(ctx);
     let (mut base, _) = World::from_scenario(&scenario);
     base.load_leaders(&game_vfs().unwrap()).unwrap();
-    base.declare_war("GER", "FRA");
+    base.add_war("GER", "FRA");
     let corps = base
         .units
         .iter()
@@ -802,7 +802,7 @@ fn winter_attrition_in_enemy_territory() {
         .unwrap();
     assert_eq!(world.attrition_rate(&ctx, corps), 0.0, "Berlin in peace");
 
-    world.declare_war("GER", "SOV");
+    world.add_war("GER", "SOV");
     let place = world
         .provinces_owned_by("SOV")
         .find(|&p| {
@@ -1802,6 +1802,8 @@ fn events_1936(seed: u64) -> Option<(Simulation, Arc<dh_data::EventDb>)> {
     world.load_misc(&vfs).unwrap();
     world.load_policies(&vfs).unwrap();
     world.load_ministers(&vfs, &ctx.units);
+    assert!(world.load_revolt(&vfs).is_empty());
+    world.set_continents(&ctx);
     let mut warnings = Vec::new();
     let db = Arc::new(dh_data::EventDb::load(&vfs, &scenario.root, &mut warnings));
     assert!(warnings.is_empty(), "{warnings:?}");
@@ -1971,9 +1973,9 @@ fn a_year_of_1936_events() {
         "cabinets: {} ministers made up, {} slept; {} countries changed a minister, {} their ideology, {} sliders",
         w.ministers.len() - start.ministers.len(),
         w.ministers.values().filter(|m| m.dead).count(),
-        changed(&|t, w| Some(format!("{:?}", w.countries[t].cabinet))),
+        changed(&|t, w| w.countries.get(t).map(|c| format!("{:?}", c.cabinet))),
         changed(&|t, w| w.ideology(t).map(|i| i.code().to_owned())),
-        changed(&|t, w| Some(format!("{:?}", w.countries[t].policy))),
+        changed(&|t, w| w.countries.get(t).map(|c| format!("{:?}", c.policy))),
     );
     let mut ids: Vec<i64> = e.fired.iter().map(|f| f.id).collect();
     ids.sort_unstable();
@@ -2001,11 +2003,188 @@ fn a_year_of_1936_events() {
         "unmodelled commands: {:?}",
         top(&e.stats.commands_unmodelled)
     );
+    let alive = |w: &World| -> std::collections::BTreeSet<String> { w.alive() };
+    let (now, then) = (alive(w), alive(&start));
+    eprintln!(
+        "countries gone: {:?}, new: {:?}; wars at the end: {:?}; alliances: {:?}",
+        then.difference(&now).collect::<Vec<_>>(),
+        now.difference(&then).collect::<Vec<_>>(),
+        w.diplomacy
+            .wars
+            .iter()
+            .map(|x| (x.attackers.clone(), x.defenders.clone()))
+            .collect::<Vec<_>>(),
+        w.diplomacy
+            .alliances
+            .iter()
+            .map(|a| a.members.clone())
+            .collect::<Vec<_>>(),
+    );
     for f in e.fired.iter().take(40) {
         eprintln!("  {} {:>5} {}", f.date, f.id, f.country);
     }
     assert!(e.fired.iter().any(|f| f.id == 2060));
     assert!(e.stats.fired >= 50, "{}", e.stats.fired);
+    // SPR 3100 (16 July): `civil_war which = SPA` makes Nationalist Spain
+    // of its `minimum` provinces, at war with the Republic.
+    assert!(e.fired.iter().any(|f| f.id == 3100));
+    assert!(w.exists("SPA") && w.at_war("SPR", "SPA"));
+    assert!(!e.stats.commands_unmodelled.contains_key("civil_war"));
     // Random events need a human country.
     assert!(!e.fired.iter().any(|f| db.get(f.id).unwrap().random));
+}
+
+/// The Anschluss chain (`re/diplomacy/diplomacy.md` §6.1) on the 1936
+/// world moved to 1 March 1938, with only its events: GER 2020 (addcore of
+/// Austria's provinces, `trigger 2100`, relations, belligerence +5) → AUS
+/// 2100 (`trigger 2001`) → GER 2001 (`inherit AUS`). Austria, `regular_id =
+/// GER`, is the same nation: its provinces, units, stockpiles and manpower
+/// go to Germany and the annexation adds no belligerence.
+#[test]
+fn anschluss_annexes_austria() {
+    let Some(vfs) = game_vfs() else {
+        return;
+    };
+    let (ctx, scenario) = load().unwrap();
+    let (mut world, _) = World::from_scenario(&scenario);
+    world.load_misc(&vfs).unwrap();
+    world.load_policies(&vfs).unwrap();
+    world.load_ministers(&vfs, &ctx.units);
+    assert!(world.load_revolt(&vfs).is_empty());
+    world.set_continents(&ctx);
+    world.date = dh_data::GameDate::new(1938, 2, 28);
+    let mut warnings = Vec::new();
+    let all = dh_data::EventDb::load(&vfs, &scenario.root, &mut warnings);
+    let mut db = dh_data::EventDb::default();
+    for id in [2020, 2100, 2001, 51, 52] {
+        db.push(all.get(id).unwrap().clone());
+    }
+    let austria: Vec<u32> = world.provinces_owned_by("AUS").collect();
+    assert_eq!(austria, [373, 377, 460, 461, 462, 463, 464, 465]);
+    let units: Vec<usize> = (0..world.units.len())
+        .filter(|&i| world.units[i].owner == "AUS")
+        .collect();
+    assert!(!units.is_empty());
+    assert!(world.guarantees("AUS", "HUN"));
+    let mut sim = Simulation::new(world, 0x2020);
+    let mut events = dh_sim::Events::new(Arc::new(db));
+    events.start(&sim.world, &mut sim.rng);
+    sim.add_system(events);
+    let (ger0, aus0) = (
+        sim.world.countries["GER"].clone(),
+        sim.world.countries["AUS"].clone(),
+    );
+    for _ in 0..40 {
+        sim.run_days(1);
+        if !sim.world.countries.contains_key("AUS") {
+            break;
+        }
+    }
+    let e = sim.system::<dh_sim::Events>().unwrap();
+    let chain: Vec<(i64, &str, usize)> = e
+        .fired
+        .iter()
+        .filter(|f| [2020, 2100, 2001].contains(&f.id))
+        .map(|f| (f.id, f.country.as_str(), f.action))
+        .collect();
+    assert_eq!(
+        chain,
+        [(2020, "GER", 0), (2100, "AUS", 0), (2001, "GER", 0)]
+    );
+    let w = &sim.world;
+    assert!(!w.exists("AUS") && !w.countries.contains_key("AUS"));
+    for p in &austria {
+        assert_eq!(
+            (w.owner[p].as_str(), w.controller[p].as_str()),
+            ("GER", "GER")
+        );
+        assert!(w.countries["GER"].national.contains(p));
+    }
+    assert!(units.iter().all(|&u| w.units[u].owner == "GER"));
+    let (ger, a) = (&w.countries["GER"], &aus0.stock);
+    let g = &ger0.stock;
+    assert_eq!(ger.stock.oil, g.oil + a.oil);
+    assert_eq!(ger.stock.metal, g.metal + a.metal);
+    assert_eq!(ger.stock.energy, g.energy + a.energy);
+    assert_eq!(
+        ger.stock.rare_materials,
+        g.rare_materials + a.rare_materials
+    );
+    assert_eq!(ger.stock.supplies, g.supplies + a.supplies);
+    assert_eq!(ger.stock.money, g.money + a.money);
+    // Austria's pool (the same nation) and 2001's `manpowerpool 300`.
+    assert_eq!(ger.stock.manpower, g.manpower + a.manpower + 300.0);
+    // 2020's `belligerence 5` only.
+    assert_eq!(ger.belligerence, ger0.belligerence + 5.0);
+    assert!(!w.guarantees("AUS", "HUN"));
+    assert!(!w.relations.keys().any(|(x, y)| x == "AUS" || y == "AUS"));
+    assert!(w
+        .diplomacy
+        .alliances
+        .iter()
+        .all(|a| !a.members.iter().any(|m| m == "AUS")));
+}
+
+/// The scenario's wars at the start (`globaldata`, notes §6.2): ITA
+/// attacks ETH alone, CHC attacks CHI and CXB (also allies). A peace of
+/// ETH's side gives back what ITA occupies and ends the war.
+#[test]
+fn italo_ethiopian_war_at_the_start() {
+    let Some((_, scenario)) = load() else {
+        return;
+    };
+    let (mut world, _) = World::from_scenario(&scenario);
+    let sides: Vec<(Vec<String>, Vec<String>)> = world
+        .diplomacy
+        .wars
+        .iter()
+        .map(|w| (w.attackers.clone(), w.defenders.clone()))
+        .collect();
+    let tags = |l: &[&str]| l.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        sides,
+        [
+            (tags(&["ITA"]), tags(&["ETH"])),
+            (tags(&["CHC"]), tags(&["CHI", "CXB"]))
+        ]
+    );
+    assert!(world.at_war("ITA", "ETH") && world.at_war("ETH", "ITA"));
+    assert!(world.diplomacy.in_war("ITA") && !world.diplomacy.in_war("GER"));
+    assert!(!world.war_allies("ITA", "ETH") && world.war_allies("CHI", "CXB"));
+    assert!(world.diplomacy.allied("CHI", "CXB") && world.at_war("CXB", "CHC"));
+    // Italy takes an Ethiopian province; peace restores it.
+    let ita = world.countries["ITA"].belligerence;
+    world.change_control(1044, "ITA", true);
+    assert_eq!(world.controller[&1044], "ITA");
+    assert!(world.countries["ITA"].belligerence > ita);
+    world.make_peace("ETH", "ITA", false);
+    assert_eq!(world.controller[&1044], "ETH");
+    assert!(!world.at_war("ITA", "ETH") && world.diplomacy.wars.len() == 1);
+    assert!(world.diplomacy.treaties.iter().any(|t| {
+        t.kind == dh_data::diplomacy::TreatyKind::Peace
+            && t.countries.contains(&"ITA".to_owned())
+            && t.countries.contains(&"ETH".to_owned())
+    }));
+}
+
+/// A declaration on France in 1936 calls in the Allies (France is in the
+/// faction, so the faction rule does not apply); an event's declaration
+/// gives Germany no belligerence.
+#[test]
+fn germany_declares_war_on_france_in_1936() {
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let (mut world, _) = World::from_scenario(&scenario);
+    world.set_continents(&ctx);
+    world.declare_war("GER", "FRA", dh_sim::WarFlags::EVENT);
+    let w = world.diplomacy.wars.last().unwrap();
+    assert_eq!(w.attackers, ["GER"]);
+    // Britain, leading the Allies, takes the lead of France's side.
+    assert_eq!(w.defenders[..2], ["ENG", "FRA"]);
+    for ally in ["ENG", "IRQ", "AST", "NZL", "CAN", "SAF"] {
+        assert!(world.at_war("GER", ally), "{ally}");
+    }
+    assert_eq!(world.relation("GER", "FRA"), -200.0);
+    assert_eq!(world.countries["GER"].belligerence, 0.0);
 }

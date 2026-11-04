@@ -532,7 +532,7 @@ mod tests {
         let g = world.manpower_growth(&ctx, "AAA", 0.0);
         assert!(close(g, 0.13 * 0.9), "{g}");
         // At war the island, outside the supply network, gives nothing.
-        world.declare_war("AAA", "BBB");
+        world.add_war("AAA", "BBB");
         assert!(close(world.manpower_growth(&ctx, "AAA", 0.0), 0.12 * 0.9));
         // A cabinet's non-national growth adds 0.01 · 10 · 0.5 for 2 and 3;
         // the national one multiplies; difficulty, retirement and `free`.
@@ -678,7 +678,7 @@ mod tests {
         );
         world.countries.get_mut("AAA").unwrap().production.clear();
         // 0.1 at war; within 0.01..=0.9.
-        world.declare_war("AAA", "BBB");
+        world.add_war("AAA", "BBB");
         assert!(close(world.consumer_goods_need("AAA", 0.0), 0.1));
         world.countries.get_mut("AAA").unwrap().ministers.consumer = 10.0;
         assert_eq!(world.consumer_goods_need("AAA", 0.0), 0.9);

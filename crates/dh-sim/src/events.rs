@@ -40,12 +40,14 @@
 //! commands and `sleepminister`, a `which` naming a minister, is
 //! modelled). Most act at once (`secedeprovince`, `control`, `addcore` /
 //! `removecore`, `trigger`, `sleepevent`, `war`, `alliance`,
-//! `leave_alliance`, `domestic` / `set_domestic` / `change_policy`, the
-//! post commands `headofstate` … `chiefofair`, `sleepminister`, the flags,
-//! the technology commands; [`crate::cabinet`] has their rules), but the
-//! executor's tail `0x71B921` posts the
-//! messages of `dissent`, `money`, the resource pools, `manpowerpool`,
-//! `relation` / `set_relation`, `peace`, `belligerence`, `access` and
+//! `leave_alliance`, `inherit`, `end_mastery`, `independence`,
+//! `civil_war`, `province_keypoints`, `domestic` / `set_domestic` /
+//! `change_policy`, the post commands `headofstate` … `chiefofair`,
+//! `sleepminister`, the flags, the technology commands;
+//! [`crate::cabinet`] and [`crate::diplomacy`] have their rules), but
+//! the executor's tail `0x71B921` posts the messages of `dissent`,
+//! `money`, the resource pools, `manpowerpool`, `relation` /
+//! `set_relation`, `peace`, `belligerence`, `access`, `make_puppet` and
 //! `gain_tech` to the FIFO ([`Effect`]): they land after the whole action
 //! (and after choices queued before them), so later commands' triggers
 //! and events `trigger`ed by the same action do not see them yet. What
@@ -55,13 +57,18 @@
 //! is not modelled), `manpowerpool` (`when = 1` needs the province data
 //! of [`Events::ctx`]), relations (both directions, −200..=200),
 //! `belligerence` (of `which`, at least 0), `access` (`which`'s record
-//! about this country), `gain_tech` (a blueprint). Every other command
-//! is counted in [`EventStats::commands_unmodelled`].
+//! about this country), `gain_tech` (a blueprint), `peace` and
+//! `make_puppet` ([`World::make_peace`], [`World::make_puppet`]). What the
+//! diplomacy handlers post themselves (JOIN_WAR when a war calls allies
+//! in, …, [`World::messages`]) joins the same FIFO in order, after the
+//! command that posted it. Every other command is counted in
+//! [`EventStats::commands_unmodelled`].
 //!
 //! **Triggers** (§3) are evaluated for the country the event is checked
 //! for; `minister`, the cabinet slots, `government`, `ideology` and
-//! `can_change_policy` follow [`crate::cabinet`]. Those without state here
-//! (leaders' lives, difficulty, guarantees, force ratios, division counts,
+//! `can_change_policy` follow [`crate::cabinet`], `guarantee` and the
+//! other pairs [`crate::diplomacy`]. Those without state here
+//! (leaders' lives, difficulty, force ratios, division counts,
 //! the untraced keys…) are false and counted in
 //! [`EventStats::triggers_unmodelled`], so events do not fire on missing
 //! data (a `NOT` around one holds).
@@ -85,6 +92,7 @@
 //! traced). A check or persistent repeat `0` days ahead waits one day
 //! (the game would loop within the hour; no vanilla event does it).
 
+use crate::diplomacy::{Message, WarFlags};
 use crate::movement::MoveContext;
 use crate::{Rng, System, World};
 use dh_data::events::{
@@ -157,6 +165,9 @@ pub enum Effect {
     /// ACCESS 0x166 (`0x490230`): `other`'s record about `country` gets
     /// the access flag.
     Access { country: String, other: String },
+    /// DIPLOMATIC_EVENT 0x89 subtype 0x10 (`0x474247`): `puppet` becomes
+    /// `overlord`'s ([`World::make_puppet`]).
+    Puppet { overlord: String, puppet: String },
     /// GAIN_TECH 0x157 (`0x48DEC0`).
     Blueprint { country: String, tech: i64 },
 }
@@ -171,6 +182,8 @@ enum Queued {
         action: usize,
     },
     Effect(Effect),
+    /// What a diplomacy handler posted ([`World::messages`]).
+    Diplomacy(Message),
 }
 
 /// An event that fired: its action ran for `country`.
@@ -396,8 +409,19 @@ impl Events {
                     action,
                 } => self.select(event, country, action, world, rng),
                 Queued::Effect(effect) => self.apply(effect, world),
+                Queued::Diplomacy(m) => {
+                    world.handle_message(m);
+                    self.refresh(world);
+                }
             }
+            self.take_messages(world);
         }
+    }
+
+    /// Moves what the diplomacy handlers posted to the FIFO, in order.
+    fn take_messages(&mut self, world: &mut World) {
+        self.fifo
+            .extend(world.messages.drain(..).map(Queued::Diplomacy));
     }
 
     /// A check of event `i` for the country in slot `target`
@@ -585,6 +609,7 @@ impl Events {
                     .entry(cmd.kind.clone())
                     .or_default() += 1;
             }
+            self.take_messages(world);
         }
     }
 
@@ -720,6 +745,17 @@ impl Events {
                     queue(self, Effect::Access { country: me, other });
                 }
             }
+            "make_puppet" => {
+                if let Some(puppet) = country(&cmd.which, world) {
+                    queue(
+                        self,
+                        Effect::Puppet {
+                            overlord: me,
+                            puppet,
+                        },
+                    );
+                }
+            }
             "gain_tech" => queue(
                 self,
                 Effect::Blueprint {
@@ -731,11 +767,19 @@ impl Events {
                 self.secede(cmd, c, world);
                 self.refresh(world);
             }
-            // PROVCHANGECONTROL: `which` takes control of province `value`.
+            // PROVCHANGECONTROL to `which` for province `value`, not as a
+            // battle (`+0x12 = 1`).
             "control" => {
                 if let (Some(t), Some(p)) = (country(&cmd.which, world), province(v, world)) {
-                    world.controller.insert(p, t);
+                    world.change_control(p, &t, false);
                     self.refresh(world);
+                }
+            }
+            // PROVINCE_KEYPOINTS 0x163 (`0x490020`): province `which`
+            // gains `value` victory points.
+            "province_keypoints" => {
+                if let Some(p) = province(cmd.which_num(), world) {
+                    *world.points.entry(p).or_insert(0) += v as i64;
                 }
             }
             // ADD_CORE / REMOVE_CORE: province `which`, of `where` or this
@@ -789,22 +833,47 @@ impl Events {
                     flags.insert(name, new);
                 }
             }
-            // REQ_SETUP_WAR: allies are not called in (not traced).
+            // REQ_SETUP_WAR with `b1 = b2 = 1` (synchronous; its JOIN_WARs
+            // are queued).
             "war" => {
                 if let Some(t) = country(&cmd.which, world).filter(|t| t != c) {
-                    world.declare_war(c, &t);
+                    world.request_war(c, &t, WarFlags::EVENT);
                 }
             }
+            // `where` names a faction (1 Axis, 2 Allies, 3 Comintern).
             "alliance" => {
+                let t = country(&cmd.which, world);
+                let (f, when) = (cmd.where_num() as i64, cmd.when_num() as i64);
+                world.alliance_command(c, t.as_deref(), f, when);
+            }
+            // `when = 1`: a separate peace in the leader's wars.
+            "leave_alliance" => world.leave_alliance(c, cmd.when_num() as i64 == 1),
+            // EXEC_SET_ANNEXATION to this country (`value > 0`: the units
+            // too).
+            "inherit" => {
                 if let Some(t) = country(&cmd.which, world).filter(|t| t != c) {
-                    join_alliance(world, c, &t);
+                    world.annex(c, &t, v > 0.0);
+                    self.refresh(world);
                 }
             }
-            "leave_alliance" => {
-                for a in &mut world.diplomacy.alliances {
-                    a.members.retain(|m| m != c);
+            "end_mastery" => {
+                if let Some(t) = country(&cmd.which, world) {
+                    world.end_mastery(&t);
                 }
-                world.diplomacy.alliances.retain(|a| !a.members.is_empty());
+            }
+            // `0x461210(C, which, value ≤ 0, 1, when > 0)`: `which` is
+            // any tag of `db/revolt.txt`.
+            "independence" => {
+                let t = tag(&cmd.which);
+                if !t.is_empty() {
+                    world.independence(c, &t, v <= 0.0, cmd.when_num() > 0.0);
+                    self.refresh(world);
+                }
+            }
+            "civil_war" => {
+                let t = tag(&cmd.which);
+                world.civil_war(c, Some(t.as_str()).filter(|t| !t.is_empty()), rng);
+                self.refresh(world);
             }
             // EXEC_CHANGE_POLICY without the date stamp (`0x713D1C`,
             // `0x713DA8`): `domestic` moves the slider by `value` from its
@@ -918,7 +987,11 @@ impl Events {
                 country,
                 other,
                 separate,
-            } => make_peace(world, &country, &other, separate),
+            } => world.make_peace(&country, &other, separate),
+            Effect::Puppet { overlord, puppet } => {
+                world.make_puppet(&overlord, &puppet);
+                self.refresh(world);
+            }
             // `D_other[country]+0x37`: what the `access = { country =
             // country country = other }` trigger reads and `other`'s
             // stacks consult before entering `country`'s provinces
@@ -965,11 +1038,12 @@ impl Events {
             ),
             _ => (true, true),
         };
+        // PROVCHANGECONTROL (not as a battle), then PROVCHANGEOWNER.
         if control {
-            world.controller.insert(p, t.clone());
+            world.change_control(p, &t, false);
         }
         if own {
-            world.owner.insert(p, t);
+            world.set_owner(p, &t);
         }
     }
 
@@ -1177,14 +1251,17 @@ impl Events {
                     PairKind::War => world.at_war(&a, &b),
                     PairKind::Access => world.has_access(&b, &a),
                     PairKind::NonAggression => {
-                        treaty(world, dh_data::diplomacy::TreatyKind::NonAggression, &a, &b)
+                        world.has_treaty(dh_data::diplomacy::TreatyKind::NonAggression, &a, &b)
                     }
-                    PairKind::Trade => treaty(world, dh_data::diplomacy::TreatyKind::Trade, &a, &b),
+                    PairKind::Trade => {
+                        world.has_treaty(dh_data::diplomacy::TreatyKind::Trade, &a, &b)
+                    }
                     PairKind::Puppet => world
                         .countries
                         .get(&a)
                         .is_some_and(|x| x.sovereign.as_deref() == Some(b.as_str())),
-                    PairKind::Guarantee => self.unmodelled("guarantee"),
+                    // `D_A[B]`: A guarantees B.
+                    PairKind::Guarantee => world.guarantees(&a, &b),
                 }
             }
             Trigger::Province {
@@ -1417,12 +1494,7 @@ fn whose_matches(whose: &Whose, holder: &str, c: &str, world: &World) -> bool {
         // `0x44B240`: at war and without a non-aggression pact.
         Whose::Enemy => {
             world.at_war(holder, c)
-                && !treaty(
-                    world,
-                    dh_data::diplomacy::TreatyKind::NonAggression,
-                    holder,
-                    c,
-                )
+                && !world.has_treaty(dh_data::diplomacy::TreatyKind::NonAggression, holder, c)
         }
         // `0x44A650`: the same country, an ally, overlord or puppet, and
         // not at war.
@@ -1442,52 +1514,11 @@ fn whose_matches(whose: &Whose, holder: &str, c: &str, world: &World) -> bool {
     }
 }
 
-/// An active treaty of `kind` between `a` and `b` (started, not expired).
-fn treaty(world: &World, kind: dh_data::diplomacy::TreatyKind, a: &str, b: &str) -> bool {
-    world.diplomacy.treaties.iter().any(|t| {
-        t.kind == kind
-            && ((t.countries[0] == a && t.countries[1] == b)
-                || (t.countries[0] == b && t.countries[1] == a))
-            && t.start.is_none_or(|d| d <= world.date)
-            && t.expiry.is_none_or(|d| d > world.date)
-    })
-}
-
-/// `peace` (PEACE 0x165 → `0x490060`): in the war between `c` and `t`,
-/// `c`'s side (only `c` for a separate peace) makes peace with `t`. The
-/// war model holds two sides, so a separate peace takes `c` out of the
-/// war and a full one takes `t` out (assumed); a war with an empty side
-/// ends.
-fn make_peace(world: &mut World, c: &str, t: &str, separate: bool) {
-    let Some(w) = world.diplomacy.wars.iter_mut().find(|w| w.opposes(c, t)) else {
-        return;
-    };
-    let leaving = if separate { c } else { t };
-    w.attackers.retain(|m| m != leaving);
-    w.defenders.retain(|m| m != leaving);
-    world
-        .diplomacy
-        .wars
-        .retain(|w| !w.attackers.is_empty() && !w.defenders.is_empty());
-}
-
-/// `alliance` (CREATE_ALLIANCE / EXEC_JOIN_ALLIANCE, not traced): `t`
-/// joins `c`'s alliance, or `c` joins `t`'s, or the two start one; two
-/// countries already in different alliances stay as they are.
-fn join_alliance(world: &mut World, c: &str, t: &str) {
-    let d = &mut world.diplomacy;
-    match (d.alliance_of(c), d.alliance_of(t)) {
-        (Some(_), Some(_)) => {}
-        (Some(i), None) => d.alliances[i].members.push(t.to_owned()),
-        (None, Some(j)) => d.alliances[j].members.push(c.to_owned()),
-        (None, None) => d.alliances.push(dh_data::diplomacy::Alliance {
-            faction: dh_data::diplomacy::Faction::Other,
-            id: None,
-            name: None,
-            members: vec![c.to_owned(), t.to_owned()],
-            defensive: false,
-        }),
-    }
+/// A tag as a command names it.
+fn tag(s: &Option<String>) -> String {
+    s.as_deref()
+        .map(|t| t.trim().to_ascii_uppercase())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -1684,7 +1715,7 @@ mod tests {
         let db = db("");
         let mut e = Events::new(db);
         let mut w = world();
-        w.declare_war("GER", "FRA");
+        w.add_war("GER", "FRA");
         w.flags.insert("f".into(), 3);
         e.refresh(&w);
         let mut rng = Rng::new(1);
@@ -1881,18 +1912,25 @@ mod tests {
         let (mut sim, _) = sim(text, 2);
         sim.run_days(2);
         let w = &sim.world;
+        // +20 for the alliance, then −250; FRA's view rose to −145 when it
+        // joined GER's side of the war (queued after the relations).
         assert_eq!(w.relation("GER", "FRA"), -200.0);
-        assert_eq!(w.relation("FRA", "GER"), -200.0);
-        // `set_relation`: the truncated difference.
-        assert_eq!(w.relation("ENG", "GER"), 50.0);
+        assert_eq!(w.relation("FRA", "GER"), -145.0);
+        // The war at once (−400), then `set_relation`'s truncated
+        // difference measured before it (+50).
+        assert_eq!(w.relation("ENG", "GER"), -150.0);
+        assert_eq!(w.relation("GER", "ENG"), -150.0);
         let ger = &w.countries["GER"];
         assert_eq!(
             (ger.stock.money, ger.dissent, ger.stock.manpower),
             (0.0, 0.0, 25.0)
         );
-        // Of `which`; nothing without one.
+        // Of `which`; nothing without one. The event's war gives GER
+        // none, but FRA, entering it as GER's new ally on its first hour,
+        // gains 25 for a great power victim.
         assert_eq!(ger.belligerence, 2.0);
-        assert_eq!(w.countries["FRA"].belligerence, 4.0);
+        assert_eq!(w.countries["FRA"].belligerence, 4.0 + 25.0);
+        assert!(w.at_war("FRA", "ENG") && w.war_allies("GER", "FRA"));
         assert_eq!(
             (w.owner[&3].as_str(), w.controller[&3].as_str()),
             ("GER", "GER")
@@ -1924,7 +1962,69 @@ mod tests {
         );
         sim.run_days(2);
         let w = &sim.world;
-        assert!(!w.at_war("GER", "ENG") && !w.diplomacy.allied("GER", "FRA"));
+        // `peace`: GER's whole side; leaving the alliance costs 100.
+        assert!(!w.at_war("GER", "ENG") && !w.at_war("FRA", "ENG"));
+        assert!(w.diplomacy.wars.is_empty() && !w.diplomacy.allied("GER", "FRA"));
+        assert_eq!(w.alliance_members("FRA"), ["FRA"]);
+    }
+
+    /// The diplomacy commands: `inherit`, `independence`, `war`,
+    /// `end_mastery` and `civil_war` act at once, `make_puppet` after the
+    /// action; the `guarantee` trigger reads the guarantees.
+    #[test]
+    fn diplomacy_commands() {
+        let text = "event = { id = 1 country = GER date = { day = 2 month = january year = 1936 }
+                       action_a = {
+                         command = { type = inherit which = ENG }
+                         command = { type = setflag which = gone trigger = { NOT = { exists = ENG } } }
+                         command = { type = make_puppet which = FRA }
+                         command = { type = setflag which = early trigger = { puppet = { country = FRA country = GER } } }
+                         command = { type = independence which = SLO }
+                         command = { type = war which = SLO }
+                         command = { type = setflag which = war trigger = { war = { country = GER country = SLO } } }
+                         command = { type = setflag which = g trigger = { guarantee = { country = FRA country = GER } } }
+                         command = { type = setflag which = h trigger = { guarantee = { country = GER country = FRA } } }
+                       } }
+                     event = { id = 2 country = GER date = { day = 4 month = january year = 1936 }
+                       action_a = { command = { type = end_mastery which = FRA } } }
+                     event = { id = 3 country = FRA date = { day = 4 month = january year = 1936 }
+                       action_a = { command = { type = civil_war which = SPA } } }";
+        let mut w = world();
+        w.countries.get_mut("GER").unwrap().capital = Some(1);
+        w.countries.get_mut("FRA").unwrap().regular_id = Some("SPA".into());
+        for p in [5, 6] {
+            w.owner.insert(p, "FRA".into());
+            w.controller.insert(p, "FRA".into());
+        }
+        w.revolt = dh_data::Revolt::parse_str(
+            "SLO = { minimum = { 2 } capital = 2 } SPA = { minimum = { 5 6 } capital = 5 }",
+        );
+        w.guarantees
+            .insert(("FRA".into(), "GER".into()), GameDate::new(1935, 1, 1));
+        let mut sim = crate::Simulation::new(w, 8);
+        let mut events = Events::new(db(text));
+        events.start(&sim.world, &mut sim.rng);
+        sim.add_system(events);
+        sim.run_days(2);
+        let w = &sim.world;
+        let flags: Vec<&str> = w.flags.keys().map(String::as_str).collect();
+        assert_eq!(flags, ["g", "gone", "war"]);
+        assert!(!w.countries.contains_key("ENG") && w.owner[&4] == "GER");
+        assert_eq!(w.countries["GER"].belligerence, 0.5 + 2.5);
+        assert_eq!(w.countries["FRA"].sovereign.as_deref(), Some("GER"));
+        assert_eq!(w.owner[&2], "SLO");
+        assert!(w.at_war("GER", "SLO"));
+        sim.run_days(2);
+        let w = &sim.world;
+        assert!(w.countries["FRA"].sovereign.is_none());
+        assert_eq!(w.provinces_owned_by("SPA").collect::<Vec<_>>(), [5, 6]);
+        assert!(w.at_war("FRA", "SPA"));
+        let e = sim_events(&sim);
+        assert!(
+            e.stats.commands_unmodelled.is_empty(),
+            "{:?}",
+            e.stats.commands_unmodelled
+        );
     }
 
     /// Messages a command posts land after the action: neither a later

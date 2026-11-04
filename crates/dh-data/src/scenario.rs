@@ -122,6 +122,8 @@ pub struct ProvinceSetup {
     pub ic: Option<f64>,
     /// Current weather, when the block sets it.
     pub weather: Option<crate::Weather>,
+    /// Victory points (`points`, the province's `+0x19E`), when set.
+    pub points: Option<i64>,
 }
 
 impl ProvinceSetup {
@@ -141,6 +143,7 @@ impl ProvinceSetup {
             coastal_fort: size("coastalfort"),
             ic: b.get("ic").map(|_| size("ic")),
             weather: b.get_str("weather").and_then(crate::Weather::from_name),
+            points: b.get_i64("points"),
         })
     }
 }

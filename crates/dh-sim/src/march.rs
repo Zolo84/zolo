@@ -134,13 +134,15 @@ impl System for March {
                     hour: arrived,
                 });
                 // Entering an enemy province takes control of it (assumed; the
-                // spec has not located that code, land-movement.md §11).
+                // spec has not located that code, land-movement.md §11): a
+                // capture in battle (PROVCHANGECONTROL with `+0x12 = 0`,
+                // diplomacy.md §5.1).
                 if world
                     .controller
                     .get(&next)
                     .is_some_and(|c| world.at_war(&tag, c))
                 {
-                    world.controller.insert(next, tag);
+                    world.change_control(next, &tag, true);
                 }
                 if world.units[i].route.is_empty() {
                     break;

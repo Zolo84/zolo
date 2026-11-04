@@ -122,6 +122,12 @@ pub struct Country {
     pub belligerence: f32,
     /// The overlord of a puppet (`D+0x3B30`): the scenario's `puppet`.
     pub sovereign: Option<String>,
+    /// The country it counts as the same nation as (`C+0x1185A`, read by
+    /// `0x49EBF0`): the scenario's `regular_id`, or `db/revolt.txt`'s for
+    /// a country made in game.
+    pub regular_id: Option<String>,
+    /// Its `intrinsic_gov_type` (`C+0x1185E`), as written.
+    pub gov_type: Option<String>,
     /// Local event flags and their values (`(C+0x120)+0x4C`; the
     /// scenario's `ai_settings = { flags = { … } }`), set by
     /// `local_setflag` / `local_clrflag`; a missing flag is 0.
@@ -177,6 +183,8 @@ impl Country {
             convoy_time: [p.convoy_time; 2],
             belligerence: 0.0,
             sovereign: None,
+            regular_id: None,
+            gov_type: None,
             flags: BTreeMap::new(),
         }
     }
@@ -240,6 +248,25 @@ pub struct World {
     /// index (`dh_data::production::BUILDINGS`): the levels it added.
     /// Province buildings are not modelled otherwise.
     pub buildings_built: BTreeMap<u32, [f32; 11]>,
+    /// Guarantees as `(guarantor, guaranteed)` with the day given (the
+    /// guarantor's relation record about the other, `rec+0xE`): the
+    /// scenario's `relation = { tag = B guaranteed = { … } }` in A's
+    /// block. In force for 60 months ([`World::guarantees`]).
+    pub guarantees: BTreeMap<(String, String), GameDate>,
+    /// Victory points by province (`+0x19E`): the scenario's `points`.
+    pub points: BTreeMap<u32, i64>,
+    /// Each province's continent (`+0x284`, [`World::set_continents`]);
+    /// empty until set.
+    pub continents: Vec<u8>,
+    /// `db/revolt.txt` ([`World::load_revolt`]): what independence and
+    /// civil war make new countries of.
+    pub revolt: dh_data::Revolt,
+    /// Diplomatic messages posted to the scheduler's immediate FIFO, not
+    /// handled yet ([`World::run_messages`]; the events drain it into
+    /// their own).
+    pub messages: VecDeque<crate::diplomacy::Message>,
+    /// The last ID given to a war or an alliance (`0x428EB0`).
+    pub next_id: i64,
 }
 
 /// A unit on the map and the country it belongs to.
@@ -323,6 +350,12 @@ impl World {
             rules: dh_data::Rules::default(),
             production_costs: dh_data::ProductionCosts::default(),
             buildings_built: BTreeMap::new(),
+            guarantees: BTreeMap::new(),
+            points: BTreeMap::new(),
+            continents: Vec::new(),
+            revolt: dh_data::Revolt::default(),
+            messages: VecDeque::new(),
+            next_id: 0,
         }
     }
 
@@ -508,6 +541,12 @@ impl World {
             };
             country.belligerence = c.raw.get_f64("belligerence").unwrap_or(0.0).max(0.0) as f32;
             country.sovereign = c.raw.get_str("puppet").map(str::to_ascii_uppercase);
+            country.regular_id = c
+                .raw
+                .get_str("regular_id")
+                .map(|t| t.trim().to_ascii_uppercase())
+                .filter(|t| !t.is_empty());
+            country.gov_type = c.raw.get_str("intrinsic_gov_type").map(str::to_owned);
             country.flags = flags_from(
                 c.raw
                     .get_block("ai_settings")
@@ -533,6 +572,11 @@ impl World {
             for r in c.relations.iter().filter(|r| r.access) {
                 world.access.insert((c.tag.clone(), r.tag.clone()));
             }
+            for r in &c.relations {
+                if let Some(d) = r.guaranteed {
+                    world.guarantees.insert((c.tag.clone(), r.tag.clone()), d);
+                }
+            }
             world
                 .units
                 .extend(c.units.iter().map(|u| UnitState::new(&c.tag, u.clone())));
@@ -553,11 +597,17 @@ impl World {
             if let Some(ic) = p.ic {
                 world.province_ic.insert(p.id, ic as f32);
             }
+            if let Some(vp) = p.points {
+                world.points.insert(p.id, vp);
+            }
         }
         // Provinces without an explicit controller are controlled by their owner.
         for (p, tag) in &world.owner {
             world.controller.entry(*p).or_insert_with(|| tag.clone());
         }
+        world.assign_ids();
+        // GAME_STARTED rebuilds the diplomatic state (`0x5883A0`).
+        world.refresh_diplomacy();
         (world, conflicts)
     }
 
@@ -712,19 +762,8 @@ impl World {
         self.countries.contains_key(tag) && self.owner.values().any(|t| t == tag)
     }
 
-    /// Starts a war between two countries (each side alone).
-    pub fn declare_war(&mut self, attacker: &str, defender: &str) {
-        if !self.at_war(attacker, defender) {
-            self.diplomacy.wars.push(dh_data::War {
-                id: None,
-                start: Some(self.date),
-                end: None,
-                attackers: vec![attacker.to_owned()],
-                defenders: vec![defender.to_owned()],
-            });
-        }
-    }
-
+    /// Whether `a` and `b` are on opposite sides of a war (`rec+0x20` as
+    /// `0x5883A0` builds it from the war list).
     pub fn at_war(&self, a: &str, b: &str) -> bool {
         self.diplomacy.at_war(a, b)
     }
