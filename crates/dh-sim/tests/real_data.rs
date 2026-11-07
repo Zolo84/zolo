@@ -1793,8 +1793,8 @@ fn germany_1936_research_ai() {
     assert!(idle.is_empty(), "{idle:?}");
 }
 
-/// The vanilla 1936 scenario with its policies, ministers and events
-/// loaded and the events scheduled.
+/// The vanilla 1936 scenario with its policies, ministers, leaders and
+/// events loaded and the events scheduled (with the map and unit data).
 fn events_1936(seed: u64) -> Option<(Simulation, Arc<dh_data::EventDb>)> {
     let vfs = game_vfs()?;
     let (ctx, scenario) = load()?;
@@ -1802,6 +1802,7 @@ fn events_1936(seed: u64) -> Option<(Simulation, Arc<dh_data::EventDb>)> {
     world.load_misc(&vfs).unwrap();
     world.load_policies(&vfs).unwrap();
     world.load_ministers(&vfs, &ctx.units);
+    world.load_leaders(&vfs).unwrap();
     assert!(world.load_revolt(&vfs).is_empty());
     world.set_continents(&ctx);
     let mut warnings = Vec::new();
@@ -1809,6 +1810,7 @@ fn events_1936(seed: u64) -> Option<(Simulation, Arc<dh_data::EventDb>)> {
     assert!(warnings.is_empty(), "{warnings:?}");
     let mut sim = Simulation::new(world, seed);
     let mut events = dh_sim::Events::new(db.clone());
+    events.ctx = Some(Arc::new(ctx));
     events.start(&sim.world, &mut sim.rng);
     sim.add_system(events);
     Some((sim, db))
@@ -1952,13 +1954,16 @@ fn schacht_takes_the_armament_ministry() {
     assert_eq!(fired(&sim), 1);
 }
 
-/// Every vanilla 1936 event for a year, every country under the AI: no
-/// panic; what fired and what is not modelled.
+/// Every vanilla 1936 event for a year, every country under the AI (which
+/// deploys what the events add to the pools): no panic; what fired and
+/// what is not modelled.
 #[test]
 fn a_year_of_1936_events() {
     let Some((mut sim, db)) = events_1936(1) else {
         return;
     };
+    let ctx = sim.system::<dh_sim::Events>().unwrap().ctx.clone().unwrap();
+    sim.add_system(dh_sim::Deployment::new(ctx));
     let start = sim.world.clone();
     sim.run_days(365);
     let e = sim.system::<dh_sim::Events>().unwrap();
@@ -2019,6 +2024,14 @@ fn a_year_of_1936_events() {
             .iter()
             .map(|a| a.members.clone())
             .collect::<Vec<_>>(),
+    );
+    let pools: usize = w.countries.values().map(|c| c.undeployed.len()).sum();
+    eprintln!(
+        "stacks: {} new, {} gone; {} units left in the pools; {} leaders asleep",
+        w.units.len() - start.units.len(),
+        w.units.iter().filter(|u| u.unit.location.is_none()).count(),
+        pools,
+        w.leaders.values().filter(|l| l.dormant).count(),
     );
     for f in e.fired.iter().take(40) {
         eprintln!("  {} {:>5} {}", f.date, f.id, f.country);
@@ -2187,4 +2200,310 @@ fn germany_declares_war_on_france_in_1936() {
     }
     assert_eq!(world.relation("GER", "FRA"), -200.0);
     assert_eq!(world.countries["GER"].belligerence, 0.0);
+}
+
+/// The production of Germany's 1936 queue with the AI's deployment
+/// (`re/units-events/units-events.md` §5.5): KMS Admiral Graf Spee joins
+/// the pool on day 6 (1936-01-07 00:00) without organisation and, Germany
+/// being the AI, the finished series sends it the same day into the first
+/// German fleet where a ship may go: Kriegsmarine, in its home port 80
+/// (Wilhelmshaven: a port with naval base 10 in the capital's region), at
+/// organisation 0 · 0.5 = 0. The destroyers and submarines follow on day
+/// 62, into Wilhelmshaven too (a new fleet there for the destroyers when
+/// they draw the role of escorts of a transport group).
+#[test]
+fn graf_spee_deploys_at_wilhelmshaven_the_day_it_is_done() {
+    use dh_sim::{Deployment, Economy, Logistics};
+    let Some((ctx, scenario)) = load() else {
+        return;
+    };
+    let ctx = Arc::new(ctx);
+    let vfs = game_vfs().unwrap();
+    let (mut world, _) = World::from_scenario(&scenario);
+    world.load_misc(&vfs).unwrap();
+    world.load_policies(&vfs).unwrap();
+    world.load_techs(&vfs);
+    world.load_ministers(&vfs, &ctx.units);
+    world.load_production_costs(&vfs);
+    world.load_production(&scenario, &ctx.units);
+    assert_eq!(world.building_level(80, 7), 10.0);
+    assert!(ctx.province(80).unwrap().port);
+    let fleet = world
+        .units
+        .iter()
+        .position(|u| u.unit.name == "Kriegsmarine")
+        .unwrap();
+    assert_eq!(world.units[fleet].unit.location, Some(80));
+    let ships = world.units[fleet].unit.divisions.len();
+    let mut economy = Economy::new(ctx.clone());
+    economy.difficulty = dh_data::Difficulty::load(&vfs).unwrap();
+    let mut sim = Simulation::new(world, 1);
+    sim.add_system(economy);
+    sim.add_system(Logistics::new(ctx.clone()));
+    sim.add_system(Deployment::new(ctx.clone()));
+    sim.run_days(5);
+    assert_eq!(sim.world.units[fleet].unit.divisions.len(), ships);
+    sim.run_days(1);
+    assert_eq!(sim.date().to_string(), "1936-01-07 00:00");
+    let w = &sim.world;
+    assert!(w.countries["GER"].undeployed.is_empty());
+    let kriegsmarine = &w.units[fleet].unit;
+    assert_eq!(kriegsmarine.divisions.len(), ships + 1);
+    let spee = kriegsmarine.divisions.last().unwrap();
+    assert_eq!(
+        (spee.name.as_str(), spee.kind.as_str(), spee.organisation),
+        ("KMS Admiral Graf Spee", "heavy_cruiser", Some(0.0))
+    );
+    // Province 80, the day it is done, organisation 0.
+    assert_eq!(kriegsmarine.location, Some(80));
+    sim.run_days(56);
+    assert_eq!(sim.date().to_string(), "1936-03-03 00:00");
+    let w = &sim.world;
+    assert!(w.countries["GER"].production.is_empty());
+    assert!(w.countries["GER"].undeployed.is_empty());
+    for name in ["8. Zerstörergeschwader", "4. Unterseebootsflottille"] {
+        let at = w
+            .units
+            .iter()
+            .find(|u| u.unit.divisions.iter().any(|d| d.name == name))
+            .unwrap();
+        assert_eq!(
+            (at.owner.as_str(), at.unit.location),
+            ("GER", Some(80)),
+            "{name}"
+        );
+    }
+}
+
+/// Event 3001, the Nationalist uprising (SPA, 17 July 1936, notes §5.1):
+/// the first three militias go to the pool at full organisation (no
+/// corps yet); `add_corps` makes Tropas de África in 347 (Seville) under
+/// El Mizzian (3422), and the six divisions after it join it at half
+/// organisation; the two transports stay in the pool (a land corps).
+/// Sanjurjo (3460) falls asleep. (Both generals have SPA as their country
+/// here from the start; when the game gives the leaders of a country made
+/// in game their country is not traced.) Then the AI deploys the pool: the
+/// militias join SPA's land forces (daily, SPA is at war) and the
+/// transports a fleet in a port.
+#[test]
+fn nationalist_uprising_raises_tropas_de_africa() {
+    let Some((mut sim, db)) = events_1936(0x3001) else {
+        return;
+    };
+    let fired = |sim: &Simulation| {
+        let e = sim.system::<dh_sim::Events>().unwrap();
+        e.fired.iter().any(|f| f.id == 3001)
+    };
+    let mut day = 0;
+    while !fired(&sim) {
+        assert!(day < 220, "3001 did not fire");
+        sim.run_days(1);
+        day += 1;
+    }
+    assert!(db.get(3001).is_some());
+    let w = &sim.world;
+    let spa = &w.countries["SPA"];
+    let pool: Vec<(&str, &str, f64)> = spa
+        .undeployed
+        .iter()
+        .map(|u| match u {
+            dh_sim::Undeployed::Division(d) => {
+                (d.name.as_str(), d.kind.as_str(), d.organisation.unwrap())
+            }
+            dh_sim::Undeployed::Brigade { .. } => unreachable!(),
+        })
+        .collect();
+    let names: Vec<(&str, &str)> = pool.iter().map(|p| (p.0, p.1)).collect();
+    assert_eq!(
+        names,
+        [
+            ("1a Milicia Falangista", "militia"),
+            ("2a Milicia Falangista", "militia"),
+            ("Brigadas Navarras", "militia"),
+            ("", "transport"),
+            ("", "transport")
+        ]
+    );
+    let ctx = sim.system::<dh_sim::Events>().unwrap().ctx.clone().unwrap();
+    let full = |kind: &str, model| {
+        let d = dh_data::Division {
+            id: None,
+            name: String::new(),
+            kind: kind.into(),
+            model: Some(model),
+            strength: None,
+            max_strength: None,
+            organisation: None,
+            experience: None,
+            brigades: Vec::new(),
+            locked: false,
+            no_supplies: false,
+            no_fuel: false,
+            raw: Default::default(),
+        };
+        f64::from(w.max_org(&ctx, "SPA", &d))
+    };
+    assert!(full("militia", 0) > 0.0);
+    assert_eq!(pool[0].2, full("militia", 0));
+    assert_eq!(pool[3].2, full("transport", 0));
+    let tropas = w
+        .units
+        .iter()
+        .position(|u| u.unit.name == "Tropas de África")
+        .expect("Tropas de África");
+    let t = &w.units[tropas];
+    assert_eq!((t.owner.as_str(), t.unit.location), ("SPA", Some(347)));
+    assert_eq!(t.unit.leader, Some(3422));
+    assert_eq!(w.leaders[&3422].unit, Some(tropas));
+    let divisions: Vec<(&str, &str, Option<i64>)> = t
+        .unit
+        .divisions
+        .iter()
+        .map(|d| (d.name.as_str(), d.kind.as_str(), d.model))
+        .collect();
+    assert_eq!(
+        divisions,
+        [
+            ("Regulares Marroquíes", "infantry", Some(0)),
+            ("", "militia", Some(0)),
+            ("", "militia", Some(0)),
+            ("", "militia", Some(0)),
+            ("", "militia", Some(0)),
+            ("", "militia", Some(0))
+        ]
+    );
+    for d in &t.unit.divisions {
+        let half = f64::from((0.5 * full(&d.kind, 0)) as f32);
+        assert_eq!(d.organisation, Some(half), "{}", d.kind);
+        assert_eq!(d.strength, Some(100.0));
+    }
+    assert!(w.leaders[&3460].dormant);
+    assert!(w.leaders[&3413].dormant && w.leaders[&3494].dormant);
+    let e = sim.system::<dh_sim::Events>().unwrap();
+    for kind in ["add_corps", "add_division", "sleepleader"] {
+        assert!(!e.stats.commands_unmodelled.contains_key(kind), "{kind}");
+    }
+
+    // The AI's deployment: SPA is at war, so its military agent runs
+    // daily; the transports go at once.
+    sim.add_system(dh_sim::Deployment::new(ctx.clone()));
+    sim.run_days(2);
+    let w = &sim.world;
+    assert!(
+        w.countries["SPA"].undeployed.is_empty(),
+        "{:?}",
+        w.countries["SPA"].undeployed
+    );
+    let at = |name: &str| {
+        w.units
+            .iter()
+            .find(|u| u.owner == "SPA" && u.unit.divisions.iter().any(|d| d.name == name))
+            .unwrap()
+    };
+    assert_eq!(at("Brigadas Navarras").unit.branch, dh_data::Branch::Land);
+    let fleet = w
+        .units
+        .iter()
+        .find(|u| {
+            u.owner == "SPA"
+                && u.unit.branch == dh_data::Branch::Naval
+                && u.unit.divisions.iter().any(|d| d.kind == "transport")
+        })
+        .unwrap();
+    assert!(ctx.province(fleet.unit.location.unwrap()).unwrap().port);
+}
+
+/// Event 3004, the Nationalist victory (notes §5.2), after 3002 (the
+/// German intervention): 3002 wakes the Legión Cóndor's leaders and
+/// raises its air corps in 334 (a tactical bomber and an interceptor)
+/// and its land corps in 333 (an armoured division); 3004 removes those
+/// three divisions by name, the emptied corps go after the action, and
+/// the twelve other names it lists match nothing (invalid). Their
+/// triggers and dates are set aside here (SPR still exists in 1936).
+#[test]
+fn nationalist_victory_removes_the_foreign_divisions() {
+    let Some((mut sim, db)) = events_1936(0x3004) else {
+        return;
+    };
+    let fired = |sim: &Simulation, id| {
+        let e = sim.system::<dh_sim::Events>().unwrap();
+        e.fired.iter().any(|f| f.id == id)
+    };
+    while !fired(&sim, 3001) {
+        assert!(sim.date().year == 1936);
+        sim.run_days(1);
+    }
+    let today = dh_sim::events::game_day(sim.date());
+    let date = |d: i64| dh_data::events::EventDate {
+        year: (d / 360) as i32,
+        month: (d % 360 / 30) as i32,
+        day: (d % 30) as i32,
+        hour: 0,
+    };
+    let mut only = dh_data::EventDb::default();
+    for id in [3002, 3004] {
+        let mut e = db.get(id).unwrap().clone();
+        e.trigger = dh_data::events::Trigger::And(Vec::new());
+        e.date = date(today + 2);
+        e.deathdate = date(today + 30);
+        e.offset = 0;
+        only.push(e);
+    }
+    // The world goes on with these two events alone.
+    let mut events = dh_sim::Events::new(Arc::new(only));
+    events.ctx = sim.system::<dh_sim::Events>().unwrap().ctx.clone();
+    let mut sim = Simulation::new(sim.world.clone(), 0x3004);
+    events.start(&sim.world, &mut sim.rng);
+    sim.add_system(events);
+    let transports = sim.world.countries["SPA"].stock.transports;
+    let condor = |w: &World| -> Vec<usize> {
+        (0..w.units.len())
+            .filter(|&i| w.units[i].unit.name == "Legión Cóndor")
+            .collect()
+    };
+    sim.run_days(1);
+    assert!(condor(&sim.world).is_empty());
+    sim.run_days(1);
+    let w = &sim.world;
+    let e = sim.system::<dh_sim::Events>().unwrap();
+    let today: Vec<i64> = e.fired.iter().map(|f| f.id).collect();
+    assert_eq!(today, [3002, 3004]);
+    // 3002 raised an air and a land corps; 3004 emptied them and they went
+    // after its action.
+    let corps = condor(w);
+    let made: Vec<dh_data::Branch> = corps.iter().map(|&i| w.units[i].unit.branch).collect();
+    assert_eq!(made, [dh_data::Branch::Air, dh_data::Branch::Land]);
+    assert!(corps.iter().all(|&i| !w.stack_exists(i)));
+    let names = [
+        "Bombarderos Legión Cóndor",
+        "Cazas Legión Cóndor",
+        "Blindada Legión Cóndor",
+    ];
+    assert!(!w
+        .units
+        .iter()
+        .flat_map(|u| &u.unit.divisions)
+        .any(|d| names.contains(&d.name.as_str())));
+    // Of the commands of both, the twelve other names were not found and
+    // the four leaders 3001 put to sleep and 3002 did not wake are asleep
+    // already.
+    let total: usize = [3002, 3004]
+        .iter()
+        .map(|&id| db.get(id).unwrap().actions[0].commands.len())
+        .sum();
+    assert_eq!(e.stats.commands as usize, total - 12 - 4);
+    // `steal_tech which = GER` twice: blueprints of what Germany knows and
+    // Nationalist Spain does not, besides 3002's `gain_tech`s.
+    let blueprints = &w.countries["SPA"].research.blueprints;
+    let stolen: Vec<&i64> = blueprints
+        .iter()
+        .filter(|t| ![1020, 9020].contains(*t))
+        .collect();
+    assert!(!stolen.is_empty() && stolen.len() <= 2, "{blueprints:?}");
+    assert!(stolen.iter().all(|t| w.countries["GER"].techs.contains(t)));
+    // 3002 woke 3466 and 3493 to lead the corps; 3004 put them to sleep.
+    assert!(w.leaders[&3466].dormant && w.leaders[&3493].dormant);
+    assert!(w.leaders[&3466].unit.is_none());
+    // `transport_pool` +25, then −50 (no floor).
+    assert_eq!(w.countries["SPA"].stock.transports, transports - 25.0);
 }

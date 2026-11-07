@@ -145,6 +145,9 @@ pub struct Params {
     pub air_command_limit: [u32; 4],    // combat[43..=46]
     pub naval_command_limit: [u32; 4],  // combat[47..=50]
     pub hq_command_factor: u32,         // combat[51]
+    /// Divisions an air group holds at most ("Maximum sizes of
+    /// air-stacks"; `[0xDC15D4]` in `0x49FC40`, units-events.md §2.4).
+    pub max_air_stack: u32, // combat[58]
     /// Encirclement and breakthrough grow likelier when the side's stacks
     /// average more than this speed (km/h), by the bonus per km/h above it,
     /// up to the given range.
@@ -333,6 +336,7 @@ impl Default for Params {
             air_command_limit: [24, 16, 8, 4],
             naval_command_limit: [30, 18, 12, 6],
             hq_command_factor: 2,
+            max_air_stack: 4,
             event_speed_min: 3.0,
             event_speed_range: 4.0,
             event_speed_bonus: 0.1,
@@ -410,6 +414,7 @@ impl Params {
         i(94, &mut p.str_range);
         i(95, &mut p.str_range_hard_on_soft);
         i(51, &mut p.hq_command_factor);
+        i(58, &mut p.max_air_stack);
         for (r, v) in p.land_command_limit.iter_mut().enumerate() {
             i(39 + r, v);
         }

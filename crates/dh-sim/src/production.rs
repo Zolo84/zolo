@@ -13,9 +13,11 @@
 //!    the items in queue order, each up to its need; the resources of what
 //!    is used are spent, the rest of the IC is lost (§3.1, `0x4F1010`);
 //! 4. a finished division or brigade goes to the country's undeployed pool
-//!    ([`Country::undeployed`]), convoys to its transports or escorts, and
-//!    the next unit of the series waits for manpower and builds faster by
-//!    the gearing bonus; an item whose series is done leaves the queue.
+//!    ([`Country::undeployed`]) without organisation, convoys to its
+//!    transports or escorts, and the next unit of the series waits for
+//!    manpower and builds faster by the gearing bonus; an item whose series
+//!    is done leaves the queue (and the AI deploys its ships, aircraft and
+//!    brigades at once: [`World::deploy_requests`], [`crate::deploy`]).
 //!
 //! Every hour ([`World::production_hour`], `0x483D70`; at 00:00 after the
 //! day's production) the undeployed pool and the divisions being built
@@ -34,11 +36,12 @@
 //!
 //! Not modelled yet: technology deltas of models' cost, build time and
 //! manpower (`C+0x4670`, `C+0x48A0`; 0 here); which models a country may
-//! build, so the AI's daily model upgrade (`new_model`), `upgrade` series
-//! and brigade model −1 ("newest") are not applied (model −1 reads as
-//! model 0); the per-type strength cap (`C+0x40A2`, which a scenario block
+//! build beyond the newest of [`crate::Country::newest_models`], so the
+//! AI's daily model upgrade (`new_model`), `upgrade` series and brigade
+//! model −1 ("newest") are not applied (model −1 reads as model 0); the
+//! per-type strength cap (`C+0x40A2`, which a scenario block
 //! may set; 100 here);
-//! deploying the undeployed pool (its brigades draw no supplies here);
+//! the pool's brigades draw no supplies here;
 //! province buildings themselves: what the queue builds is recorded in
 //! [`World::buildings_built`] (levels capped by [`building_limit`] counting
 //! only those), not added to the provinces or their IC, and the levels'
@@ -817,13 +820,12 @@ impl World {
     /// the queue.
     fn finish_units(&mut self, tag: &str) {
         let (cap, increment) = self.gearing_of(tag);
-        let policy = &self.countries[tag].policy;
-        let experience =
-            ((self.policies.factor("MODIFIER_MP_EXPERIENCE", policy) - 1.0) * 100.0).max(0.0);
+        let experience = self.new_unit_experience(tag);
         let convoy_size = self.production_costs.convoys.map(|c| c.size);
         let mut queue = self.take_queue(tag);
         let mut fates = Vec::with_capacity(queue.len());
         let mut pool = Vec::new();
+        let mut series_done = false;
         let (mut transports, mut escorts) = (0.0f64, 0.0f64);
         for item in &mut queue {
             let mut fate = Fate::Keep;
@@ -841,6 +843,7 @@ impl World {
                         item.done += 1;
                         if item.done == item.size {
                             fate = Fate::Remove;
+                            series_done = true;
                         }
                     }
                     Build::Convoy(t) => {
@@ -866,6 +869,14 @@ impl World {
                 }
             }
             fates.push(fate);
+        }
+        for u in &mut pool {
+            if let Undeployed::Division(d) = u {
+                d.id = Some(self.new_unit_id());
+            }
+        }
+        if series_done && !self.deploy_requests.iter().any(|t| t == tag) {
+            self.deploy_requests.push(tag.to_owned());
         }
         let c = self.countries.get_mut(tag).unwrap();
         c.undeployed.extend(pool);
@@ -919,8 +930,8 @@ pub fn building_limit(b: usize) -> f32 {
 }
 
 /// The unit a finished division or brigade item puts in the pool
-/// (`0x478610`): full strength, organisation from its model, experience
-/// from the policy's `MODIFIER_MP_EXPERIENCE`.
+/// (`0x478610`): full strength, no organisation (units-events.md §1.3),
+/// experience from the policy's `MODIFIER_MP_EXPERIENCE`.
 fn new_unit(item: &QueueItem, experience: f32) -> Undeployed {
     match &item.build {
         Build::Division {
@@ -934,7 +945,7 @@ fn new_unit(item: &QueueItem, experience: f32) -> Undeployed {
             model: Some(*model),
             strength: Some(f64::from(STRENGTH_PERCENT)),
             max_strength: Some(f64::from(STRENGTH_PERCENT)),
-            organisation: None,
+            organisation: Some(0.0),
             experience: Some(f64::from(experience)),
             brigades: brigades.iter().flatten().cloned().collect(),
             locked: false,

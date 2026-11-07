@@ -36,19 +36,29 @@
 //! **Commands** (§5) run in file order for the country the event fired
 //! for; a command whose own trigger fails, or whose numeric `which` is
 //! negative (allowed only for the `secede*` types), is skipped
-//! (`0x7102E0`; of its per-type target checks only the one of the post
-//! commands and `sleepminister`, a `which` naming a minister, is
-//! modelled). Most act at once (`secedeprovince`, `control`, `addcore` /
+//! (`0x7102E0`; of its per-type target checks those of the post
+//! commands and `sleepminister`, a `which` naming a minister, of the unit
+//! commands and of `sleepleader` / `wakeleader` are modelled). When an
+//! event fires, before the AI's choice, `0x70D1E0` resolves the random
+//! arguments of all its actions' commands (`re/units-events/
+//! units-events.md` §0): `delete_unit which = −1 / −2 / −3` draws a stack,
+//! `remove_division` finds its division by name, `steal_tech` draws a
+//! technology; until an event first fires these commands are invalid.
+//! Most act at once (`secedeprovince`, `control`, `addcore` /
 //! `removecore`, `trigger`, `sleepevent`, `war`, `alliance`,
 //! `leave_alliance`, `inherit`, `end_mastery`, `independence`,
 //! `civil_war`, `province_keypoints`, `domestic` / `set_domestic` /
 //! `change_policy`, the post commands `headofstate` … `chiefofair`,
-//! `sleepminister`, the flags, the technology commands;
-//! [`crate::cabinet`] and [`crate::diplomacy`] have their rules), but
-//! the executor's tail `0x71B921` posts the messages of `dissent`,
-//! `money`, the resource pools, `manpowerpool`, `relation` /
-//! `set_relation`, `peace`, `belligerence`, `access`, `make_puppet` and
-//! `gain_tech` to the FIFO ([`Effect`]): they land after the whole action
+//! `sleepminister`, `sleepleader` / `wakeleader`, the unit commands
+//! `add_corps`, `add_division`, `build_division`, `delete_unit` and
+//! `remove_division`, the flags, the technology commands;
+//! [`crate::cabinet`], [`crate::diplomacy`], [`crate::deploy`] and
+//! [`crate::leaders`] have their rules), but the executor's tail
+//! `0x71B921` posts the messages of `dissent`, `money`, the resource
+//! pools, `manpowerpool`, `relation` / `set_relation`, `peace`,
+//! `belligerence`, `access`, `make_puppet`, `gain_tech` / `steal_tech`,
+//! `transport_pool` / `escort_pool` and of a stack `remove_division`
+//! emptied to the FIFO ([`Effect`]): they land after the whole action
 //! (and after choices queued before them), so later commands' triggers
 //! and events `trigger`ed by the same action do not see them yet. What
 //! these change: `dissent` (0..=100), `money` (not below 0 for the AI),
@@ -57,8 +67,10 @@
 //! is not modelled), `manpowerpool` (`when = 1` needs the province data
 //! of [`Events::ctx`]), relations (both directions, −200..=200),
 //! `belligerence` (of `which`, at least 0), `access` (`which`'s record
-//! about this country), `gain_tech` (a blueprint), `peace` and
-//! `make_puppet` ([`World::make_peace`], [`World::make_puppet`]). What the
+//! about this country), `gain_tech` (a blueprint), the transports and
+//! escorts (`int(value)`, no floor), `peace` and `make_puppet`
+//! ([`World::make_peace`], [`World::make_puppet`]). The division
+//! commands need the unit data of [`Events::ctx`]. What the
 //! diplomacy handlers post themselves (JOIN_WAR when a war calls allies
 //! in, …, [`World::messages`]) joins the same FIFO in order, after the
 //! command that posted it. Every other command is counted in
@@ -68,7 +80,8 @@
 //! for; `minister`, the cabinet slots, `government`, `ideology` and
 //! `can_change_policy` follow [`crate::cabinet`], `guarantee` and the
 //! other pairs [`crate::diplomacy`]. Those without state here
-//! (leaders' lives, difficulty, force ratios, division counts,
+//! (difficulty, force ratios, division counts, `leader` before the
+//! leaders load,
 //! the untraced keys…) are false and counted in
 //! [`EventStats::triggers_unmodelled`], so events do not fire on missing
 //! data (a `NOT` around one holds).
@@ -94,9 +107,10 @@
 
 use crate::diplomacy::{Message, WarFlags};
 use crate::movement::MoveContext;
+use crate::production::Undeployed;
 use crate::{Rng, System, World};
 use dh_data::events::{
-    Action, Command, Event, EventDb, FlagTest, GarrisonKind, PairKind, Subject, Trigger, Whose,
+    Command, Event, EventDb, FlagTest, GarrisonKind, PairKind, Subject, Trigger, Whose,
 };
 use dh_data::{Branch, GameDate};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -113,6 +127,34 @@ pub fn game_day(d: GameDate) -> i64 {
 /// and day (0..=29) on the game's calendar.
 fn game_month_day(d: GameDate) -> (i64, i64) {
     (i64::from(d.month) - 1, i64::from(d.day.min(30)) - 1)
+}
+
+/// A command's place: event, action and command indices.
+type CmdAt = (usize, usize, usize);
+
+/// What `0x70D1E0` works out for a command when its event fires
+/// (units-events.md §0, before the AI's choice): the arguments it runs
+/// with, kept until the event fires again (the game writes them into the
+/// command).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Resolved {
+    /// `delete_unit which = −1 / −2 / −3`: the stack drawn (index into
+    /// [`World::units`]) and its ID.
+    Stack(usize, Option<dh_data::TypeId>),
+    /// `remove_division` by name: the division found.
+    Division(dh_data::TypeId),
+    /// `steal_tech`: the technology drawn.
+    Tech(i64),
+    /// Nothing found: the command is invalid.
+    Nothing,
+}
+
+/// What a unit command acts on, once valid.
+#[derive(Debug, Clone, PartialEq)]
+enum Target {
+    Stack(usize),
+    Division(crate::deploy::DivisionAt),
+    Tech(i64),
 }
 
 /// A pending check of an event for a country (EXECUTE_EVENT, message 0xA0).
@@ -170,6 +212,19 @@ pub enum Effect {
     Puppet { overlord: String, puppet: String },
     /// GAIN_TECH 0x157 (`0x48DEC0`).
     Blueprint { country: String, tech: i64 },
+    /// 0x1A3 / 0x1A4 (`0x4903D0` / `0x4903F0`): the transports or escorts
+    /// of `country` change by `value`, without a floor.
+    Convoys {
+        country: String,
+        escorts: bool,
+        value: f64,
+    },
+    /// UNITDELETE 0x35 (`0x483450`) for a stack `remove_division` emptied:
+    /// its index and ID.
+    DeleteStack {
+        unit: usize,
+        id: Option<dh_data::TypeId>,
+    },
 }
 
 /// What waits in the scheduler's immediate FIFO.
@@ -246,6 +301,10 @@ pub struct Events {
     /// Countries that exist ([`World::exists`]), refreshed before each
     /// batch of checks and after a command moves provinces.
     existing: BTreeSet<String>,
+    /// Commands' arguments resolved when their event last fired.
+    resolved: std::collections::HashMap<CmdAt, Resolved>,
+    /// The current corps of the action running (`add_corps`).
+    corps: Option<usize>,
 }
 
 impl Events {
@@ -273,6 +332,8 @@ impl Events {
             randoms: Vec::new(),
             invention_pool: Vec::new(),
             existing: BTreeSet::new(),
+            resolved: Default::default(),
+            corps: None,
         }
     }
 
@@ -468,27 +529,29 @@ impl Events {
     fn can_fire(&mut self, i: usize, c: &str, world: &World, rng: &mut Rng) -> bool {
         let db = self.db.clone();
         let e = &db.events[i];
-        self.eval(&e.trigger, c, world, rng) && self.any_available(e, c, world, rng)
+        self.eval(&e.trigger, c, world, rng) && self.any_available(i, c, world, rng)
     }
 
-    fn any_available(&mut self, e: &Event, c: &str, world: &World, rng: &mut Rng) -> bool {
-        e.actions
-            .iter()
-            .any(|a| self.available(e, a, c, world, rng))
+    fn any_available(&mut self, i: usize, c: &str, world: &World, rng: &mut Rng) -> bool {
+        let n = self.db.events[i].actions.len();
+        (0..n).any(|k| self.available(i, k, c, world, rng))
     }
 
     /// `0x7116E0`: whether action `a` can be taken. An action without a
     /// valid command is not (unless `misc mod[15]` forces it; the game
     /// then adds an empty command to it, not modelled); in a random event
     /// its first command decides.
-    fn available(&mut self, e: &Event, a: &Action, c: &str, world: &World, rng: &mut Rng) -> bool {
+    fn available(&mut self, i: usize, k: usize, c: &str, world: &World, rng: &mut Rng) -> bool {
+        let db = self.db.clone();
+        let e = &db.events[i];
+        let a = &e.actions[k];
         if let Some(t) = &a.trigger {
             if !self.eval(t, c, world, rng) {
                 return false;
             }
         }
-        for cmd in &a.commands {
-            if self.command_valid(cmd, c, world, rng) {
+        for (j, cmd) in a.commands.iter().enumerate() {
+            if self.command_valid((i, k, j), cmd, c, world, rng) {
                 return true;
             }
             if e.random {
@@ -506,8 +569,19 @@ impl Events {
     /// negative numeric `which` only for `secedeprovince`, `secedearea`
     /// and `secederegion`, and for the post commands and `sleepminister` a
     /// `which` that names a minister (of any country or year, dead or not;
-    /// case 17 at `0x710D89`).
-    fn command_valid(&mut self, cmd: &Command, c: &str, world: &World, rng: &mut Rng) -> bool {
+    /// case 17 at `0x710D89`); the unit commands' targets as their event
+    /// resolved them when it fired ([`Resolved`]); `sleepleader` /
+    /// `wakeleader` a leader awake / asleep ([`World::can_sleep_leader`]);
+    /// `transport_pool` / `escort_pool` a country that exists (`which =
+    /// −1`: this one).
+    fn command_valid(
+        &mut self,
+        at: CmdAt,
+        cmd: &Command,
+        c: &str,
+        world: &World,
+        rng: &mut Rng,
+    ) -> bool {
         if let Some(t) = &cmd.trigger {
             if !self.eval(t, c, world, rng) {
                 return false;
@@ -517,6 +591,17 @@ impl Events {
             return cmd.which_num() >= 0.0
                 && world.ministers.contains_key(&(cmd.which_num() as i64));
         }
+        match cmd.kind.as_str() {
+            "delete_unit" | "remove_division" | "steal_tech" => {
+                return self.target(at, cmd, c, world).is_some();
+            }
+            "sleepleader" | "wakeleader" => {
+                let id = cmd.which_num() as i64;
+                return id >= 0 && world.can_sleep_leader(id, cmd.kind == "sleepleader");
+            }
+            "transport_pool" | "escort_pool" => return self.pool_country(cmd, c).is_some(),
+            _ => {}
+        }
         cmd.which_num() >= 0.0
             || matches!(
                 cmd.kind.as_str(),
@@ -524,11 +609,148 @@ impl Events {
             )
     }
 
+    /// `0x70D1E0` for every command of every action of event `i` firing
+    /// for `c` (units-events.md §0, §1.1, §1.4, §4): `delete_unit which =
+    /// −1 / −2 / −3` draws one of `c`'s land / naval / air stacks (`rand()
+    /// % n` over its stacks in order; none: invalid), `remove_division`
+    /// with a name looks the division up ([`World::division_named`]) and
+    /// `steal_tech` without a technology draws one `which` knows and `c`
+    /// does not (by ID; none: invalid). Each command draws on its own, so
+    /// two can pick the same stack (the second is then invalid).
+    fn resolve(&mut self, i: usize, c: &str, world: &World, rng: &mut Rng) {
+        let db = self.db.clone();
+        for (k, a) in db.events[i].actions.iter().enumerate() {
+            for (j, cmd) in a.commands.iter().enumerate() {
+                let r = match cmd.kind.as_str() {
+                    "delete_unit" if cmd.which_num() < 0.0 => {
+                        let branch = match cmd.which_num() as i64 {
+                            -1 => Some(Branch::Land),
+                            -2 => Some(Branch::Naval),
+                            -3 => Some(Branch::Air),
+                            _ => None,
+                        };
+                        let list: Vec<usize> = (0..world.units.len())
+                            .filter(|&s| {
+                                world.stack_exists(s)
+                                    && world.units[s].owner == c
+                                    && Some(world.units[s].unit.branch) == branch
+                            })
+                            .collect();
+                        if list.is_empty() {
+                            Resolved::Nothing
+                        } else {
+                            let s = list[(rng.rand15() % list.len() as u32) as usize];
+                            Resolved::Stack(s, world.units[s].unit.id)
+                        }
+                    }
+                    "remove_division" if cmd.which_num() == 0.0 => {
+                        let x = tag(&cmd.value);
+                        let name = cmd.which.as_deref().unwrap_or("");
+                        world
+                            .division_named(&x, name)
+                            .map_or(Resolved::Nothing, Resolved::Division)
+                    }
+                    "steal_tech" if cmd.value_num() < 1.0 => {
+                        let x = tag(&cmd.which);
+                        let list: Vec<i64> = match (world.countries.get(&x), world.countries.get(c))
+                        {
+                            (Some(x), Some(me)) => x.techs.difference(&me.techs).copied().collect(),
+                            _ => Vec::new(),
+                        };
+                        if list.is_empty() {
+                            Resolved::Nothing
+                        } else {
+                            Resolved::Tech(list[(rng.rand15() % list.len() as u32) as usize])
+                        }
+                    }
+                    _ => continue,
+                };
+                self.resolved.insert((i, k, j), r);
+            }
+        }
+    }
+
+    /// What a `delete_unit`, `remove_division` or `steal_tech` command acts
+    /// on, if it is valid (`0x7102E0`: cases `0x710E84`, `0x7106C8`): the
+    /// stack resolved at firing or named by its ID (`which` type, `value`
+    /// number; `c` must have a stack), the division likewise (in a stack
+    /// or a pool), the technology drawn or given (`which` must exist).
+    fn target(&self, at: CmdAt, cmd: &Command, c: &str, world: &World) -> Option<Target> {
+        let resolved = self.resolved.get(&at).copied();
+        let key = || dh_data::TypeId {
+            kind: cmd.which_num() as i64,
+            id: cmd.value_num() as i64,
+        };
+        match cmd.kind.as_str() {
+            "delete_unit" => {
+                let s = if cmd.which_num() < 0.0 {
+                    match resolved? {
+                        Resolved::Stack(s, id)
+                            if world.stack_exists(s) && world.units[s].unit.id == id =>
+                        {
+                            s
+                        }
+                        _ => return None,
+                    }
+                } else if cmd.which_num() >= 1.0 {
+                    world.stack_by_id(key())?
+                } else {
+                    return None;
+                };
+                let any = world
+                    .units
+                    .iter()
+                    .any(|u| u.owner == c && u.unit.location.is_some());
+                any.then_some(Target::Stack(s))
+            }
+            "remove_division" => {
+                let id = if cmd.which_num() == 0.0 {
+                    match resolved? {
+                        Resolved::Division(id) => id,
+                        _ => return None,
+                    }
+                } else if cmd.which_num() >= 1.0 {
+                    key()
+                } else {
+                    return None;
+                };
+                world.find_division(id).map(Target::Division)
+            }
+            "steal_tech" => {
+                if !self.exists(&tag(&cmd.which)) {
+                    return None;
+                }
+                let tech = if cmd.value_num() < 1.0 {
+                    match resolved? {
+                        Resolved::Tech(t) => t,
+                        _ => return None,
+                    }
+                } else {
+                    cmd.value_num() as i64
+                };
+                Some(Target::Tech(tech))
+            }
+            _ => None,
+        }
+    }
+
+    /// The country of `transport_pool` / `escort_pool`: `which`, or this one
+    /// for `which = −1` (`0x70DC88`), if it exists.
+    fn pool_country(&self, cmd: &Command, c: &str) -> Option<String> {
+        let t = if cmd.which_num() as i64 == -1 {
+            c.to_owned()
+        } else {
+            tag(&cmd.which)
+        };
+        self.exists(&t).then_some(t)
+    }
+
     /// `0x712010` for EXECUTE_EVENT: the AI's choice goes to the FIFO.
     fn fire(&mut self, i: usize, c: &str, world: &World, rng: &mut Rng) {
         let db = self.db.clone();
         let e = &db.events[i];
-        if !self.any_available(e, c, world, rng) {
+        self.resolve(i, c, world, rng);
+        if !self.any_available(i, c, world, rng) {
             return;
         }
         self.pending[i] = true;
@@ -538,7 +760,7 @@ impl Events {
             if pos.len() >= 256 {
                 break;
             }
-            if self.available(e, a, c, world, rng) {
+            if self.available(i, k, c, world, rng) {
                 pos.push(k);
                 chances.push(a.ai_chance.max(-1));
             }
@@ -584,12 +806,14 @@ impl Events {
                 self.saved_dates.insert(e.id, game_day(world.date));
             }
         }
-        if !self.any_available(e, c, world, rng) {
+        if !self.any_available(i, c, world, rng) {
             return;
         }
         let Some(a) = e.actions.get(k) else {
             return;
         };
+        // The action's current corps (`[esp+0x24]`, reset at `0x71351F`).
+        self.corps = None;
         self.fired.push(Fired {
             date: world.date,
             id: e.id,
@@ -597,12 +821,12 @@ impl Events {
             action: k,
         });
         self.stats.fired += 1;
-        for cmd in &a.commands {
-            if !self.command_valid(cmd, c, world, rng) {
+        for (j, cmd) in a.commands.iter().enumerate() {
+            if !self.command_valid((i, k, j), cmd, c, world, rng) {
                 continue;
             }
             self.stats.commands += 1;
-            if !self.run_command(e, cmd, c, world, rng) {
+            if !self.run_command(e, (i, k, j), cmd, c, world, rng) {
                 *self
                     .stats
                     .commands_unmodelled
@@ -618,6 +842,7 @@ impl Events {
     fn run_command(
         &mut self,
         e: &Event,
+        at: CmdAt,
         cmd: &Command,
         c: &str,
         world: &mut World,
@@ -916,6 +1141,50 @@ impl Events {
             }
             // KILL_MINISTER to the minister's own country (synchronous).
             "sleepminister" => world.kill_minister(cmd.which_num() as i64),
+            // KILL_LEADER / ACTIVATE_LEADER to the leader's country
+            // (synchronous; units-events.md §3).
+            "sleepleader" => world.sleep_leader(cmd.which_num() as i64),
+            "wakeleader" => world.wake_leader(cmd.which_num() as i64),
+            "add_corps" => self.add_corps(cmd, c, world),
+            "add_division" => return self.add_division(cmd, c, world),
+            "build_division" => return self.build_division(cmd, c, world),
+            // UNITDELETE 0x35, synchronous (§1.1).
+            "delete_unit" => {
+                if let Some(Target::Stack(s)) = self.target(at, cmd, c, world) {
+                    world.destroy_stack(s);
+                }
+            }
+            // KILL_DIVISION 0x6C, synchronous; a stack left empty is
+            // deleted after the action (§1.4).
+            "remove_division" => {
+                if let Some(Target::Division(d)) = self.target(at, cmd, c, world) {
+                    if let Some(s) = world.kill_division(d) {
+                        if world.units[s].unit.divisions.is_empty() {
+                            let id = world.units[s].unit.id;
+                            queue(self, Effect::DeleteStack { unit: s, id });
+                        }
+                    }
+                }
+            }
+            // GAIN_TECH 0x157, queued (§4).
+            "steal_tech" => {
+                if let Some(Target::Tech(tech)) = self.target(at, cmd, c, world) {
+                    queue(self, Effect::Blueprint { country: me, tech });
+                }
+            }
+            // 0x1A3 / 0x1A4, queued: `int(value)` (§4).
+            "transport_pool" | "escort_pool" => {
+                if let Some(country) = self.pool_country(cmd, c) {
+                    queue(
+                        self,
+                        Effect::Convoys {
+                            country,
+                            escorts: cmd.kind == "escort_pool",
+                            value: v.trunc(),
+                        },
+                    );
+                }
+            }
             // At once (their tail is not classified, except `activate` /
             // `deactivate`, which are synchronous).
             _ => return world.apply_tech_command(c, &cmd.to_tech()),
@@ -1008,7 +1277,190 @@ impl Events {
                     }
                 }
             }
+            Effect::Convoys {
+                country,
+                escorts,
+                value,
+            } => {
+                if let Some(x) = world.countries.get_mut(&country) {
+                    if escorts {
+                        x.stock.escorts += value;
+                    } else {
+                        x.stock.transports += value;
+                    }
+                }
+            }
+            // The stack must still be there (`0x483450`).
+            Effect::DeleteStack { unit, id } => {
+                if world.stack_exists(unit) && world.units[unit].unit.id == id {
+                    world.destroy_stack(unit);
+                }
+            }
         }
+    }
+
+    /// `add_corps` (`0x715290`, units-events.md §1.2): a new empty stack of
+    /// `c` named `which`, of class `value` (`land`, `naval`, otherwise air),
+    /// in province `where` whoever holds it (a land stack is not placed in
+    /// water, `0x508670`; here it is then gone), under leader `when` when
+    /// he is in play ([`World::assign_leader`]); it is the action's current
+    /// corps from now on.
+    fn add_corps(&mut self, cmd: &Command, c: &str, world: &mut World) {
+        let kind = cmd
+            .value
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        let branch = match kind.as_str() {
+            "land" => Branch::Land,
+            "naval" => Branch::Naval,
+            "air" => Branch::Air,
+            _ => match cmd.value_num() {
+                0.0 => Branch::Land,
+                1.0 => Branch::Naval,
+                _ => Branch::Air,
+            },
+        };
+        let mut p = u32::try_from(cmd.where_num() as i64).ok();
+        let water = |p: u32| {
+            let ctx = self.ctx.as_ref();
+            ctx.and_then(|x| x.province(p))
+                .is_some_and(|i| i.is_water())
+        };
+        if branch == Branch::Land && p.is_some_and(water) {
+            p = None;
+        }
+        let name = cmd.which.as_deref().unwrap_or("");
+        let s = world.create_stack(c, branch, p, name);
+        let leader = cmd.when_num() as i64;
+        if leader > 0 {
+            world.assign_leader(leader, s);
+        }
+        self.corps = Some(s);
+    }
+
+    /// `add_division` (`0x71548E`, §1.3): a division of type `value`, model
+    /// `when` (a negative one: the newest `c` may build; at most the type's
+    /// last), with a brigade of type `where` or, for a negative `where`,
+    /// that share of its strength lost, named `which`, into `c`'s pool
+    /// ([`World::add_pool_division`]); it joins the action's current corps
+    /// at once when the classes match (and loses half its organisation).
+    /// Needs the unit data of [`Events::ctx`].
+    fn add_division(&mut self, cmd: &Command, c: &str, world: &mut World) -> bool {
+        let Some(ctx) = self.ctx.clone() else {
+            return false;
+        };
+        let kind = division_type(cmd.value.as_deref());
+        let Some(class) = ctx.units.divisions.get(&kind) else {
+            return true;
+        };
+        let n = class.models.len() as i64;
+        if n == 0 || !world.countries.contains_key(c) {
+            return true;
+        }
+        let when = cmd.when_num();
+        let mut model = if when >= 0.0 {
+            when as i64
+        } else {
+            world.countries[c].newest_model(&kind)
+        };
+        if model >= n {
+            model = n - 1;
+        }
+        let brigade = cmd
+            .where_
+            .as_deref()
+            .map(|w| w.trim().to_ascii_lowercase())
+            .filter(|w| ctx.units.brigades.contains_key(w));
+        let name = cmd.which.as_deref().unwrap_or("");
+        let Some(i) = world.add_pool_division(&ctx, c, &kind, model, brigade.as_deref(), name)
+        else {
+            return true;
+        };
+        // Message 0x13E: `−where` % of the maximum strength.
+        let w = cmd.where_num();
+        if w < 0.0 {
+            if let Some(Undeployed::Division(d)) = world
+                .countries
+                .get_mut(c)
+                .and_then(|x| x.undeployed.get_mut(i))
+            {
+                let max = d.max_strength.unwrap_or(100.0);
+                let loss = (-w * max * 0.01) as f32;
+                let str = d.strength.unwrap_or(max) as f32;
+                d.strength = Some(f64::from((str - loss).max(0.0)));
+            }
+        }
+        if let Some(s) = self.corps.filter(|&s| world.stack_exists(s)) {
+            if world.units[s].unit.branch == class.branch {
+                world.deploy_into(&ctx, c, i, s);
+            }
+        }
+        true
+    }
+
+    /// `build_division` (`0x716153`, §1.5): an order of `when` (at least 1)
+    /// divisions of type `which` with a brigade of type `value`, both of
+    /// the newest models `c` may build, at `cost` IC a day (its own
+    /// otherwise; a negative one goes to the front of the AI's queue),
+    /// named `name` when it is one; only when `c` has the manpower of one
+    /// ([`World::add_production`] takes it). Its `where` (days done) is not
+    /// modelled. Needs the unit data of [`Events::ctx`].
+    fn build_division(&mut self, cmd: &Command, c: &str, world: &mut World) -> bool {
+        use crate::production::QueueItem;
+        let Some(ctx) = self.ctx.clone() else {
+            return false;
+        };
+        let Some(x) = world.countries.get(c) else {
+            return true;
+        };
+        let kind = division_type(cmd.which.as_deref());
+        if !ctx.units.divisions.contains_key(&kind) {
+            return true;
+        }
+        let model = x.newest_model(&kind);
+        let brigade = cmd
+            .value
+            .as_deref()
+            .map(|b| b.trim().to_ascii_lowercase())
+            .filter(|b| ctx.units.brigades.contains_key(b))
+            .map(|b| dh_data::Brigade {
+                model: Some(x.newest_model(&b)),
+                kind: b,
+            });
+        let n = if cmd.when_num() > 0.0 {
+            cmd.when_num() as i32
+        } else {
+            1
+        };
+        let name = match cmd.name.as_deref() {
+            Some(name) if n == 1 => name,
+            _ => "",
+        };
+        let build = dh_data::production::Build::Division {
+            kind,
+            model,
+            brigades: [brigade, None, None, None, None],
+        };
+        let Some(rates) = world.production_rates(c, &ctx.units) else {
+            return true;
+        };
+        let mut item = QueueItem::new(name, build, n, &rates);
+        let cost = dh_data::events::atof(cmd.cost.as_deref().unwrap_or("")) as f32;
+        if cost != 0.0 {
+            item.ic = cost.abs();
+            item.unitcost = cost > 0.0;
+        }
+        if x.stock.manpower < f64::from(item.manpower) {
+            return true;
+        }
+        world.add_production(c, item);
+        if cost < 0.0 {
+            let q = &mut world.countries.get_mut(c).unwrap().production;
+            q.rotate_right(1);
+        }
+        true
     }
 
     /// `secedeprovince` (0x716D2C): province `value` to `which` (a tag,
@@ -1365,6 +1817,11 @@ impl Events {
                 // 0 / 0 compares as true on the FPU.
                 n == 0 || f64::from(lost) / f64::from(n) >= value * 0.01
             }
+            // `0x732750`: in play, whatever his country (§3).
+            Trigger::Leader(id) if !world.leaders.is_empty() => world
+                .leaders
+                .get(id)
+                .is_some_and(crate::LeaderState::available),
             Trigger::Leader(_)
             | Trigger::Difficulty(_)
             | Trigger::LandPercentage { .. }
@@ -1512,6 +1969,20 @@ fn whose_matches(whose: &Whose, holder: &str, c: &str, world: &World) -> bool {
                     || puppet(c, holder))
         }
     }
+}
+
+/// The division type a command's `value` / `which` names (`0x70B510`): a
+/// type of `db/units`, or the engine's type of that number (0, infantry,
+/// when it names none).
+fn division_type(s: Option<&str>) -> String {
+    let t = s.unwrap_or("").trim().to_ascii_lowercase();
+    if t.is_empty() || dh_data::events::atof(&t) != 0.0 || t.starts_with('0') {
+        let n = dh_data::events::atof(&t).max(0.0) as usize;
+        return dh_data::unitdb::DIVISION_TYPES
+            .get(n)
+            .map_or(t, |k| (*k).to_owned());
+    }
+    t
 }
 
 /// A tag as a command names it.
@@ -2179,5 +2650,310 @@ mod tests {
         let days: Vec<i64> = e.fired.iter().map(|f| game_day(f.date)).collect();
         assert!(days.windows(2).all(|d| (200..600).contains(&(d[1] - d[0]))));
         assert!(e.fired.windows(2).all(|f| f[0].id != f[1].id));
+    }
+
+    /// The units map of [`crate::deploy`]'s tests (GER: capital 1,
+    /// provinces 1–4 and 7; FRA: 6) with leaders 7 (GER, free) and 8 (GER,
+    /// commanding a corps in 1), and the events with its unit data.
+    fn unit_sim(text: &str, seed: u64) -> crate::Simulation {
+        unit_sim_with(unit_world(), text, seed)
+    }
+
+    fn unit_world() -> World {
+        let mut w = crate::deploy::tests::world();
+        let corps = w.create_stack("GER", Branch::Land, Some(1), "Garde");
+        for id in [7, 8] {
+            let mut l = crate::LeaderState::built_in("GER", Branch::Land);
+            l.id = Some(id);
+            w.leaders.insert(id, l);
+        }
+        assert!(w.assign_leader(8, corps));
+        w
+    }
+
+    fn unit_sim_with(w: World, text: &str, seed: u64) -> crate::Simulation {
+        let mut sim = crate::Simulation::new(w, seed);
+        let mut events = Events::new(db(text));
+        events.ctx = Some(Arc::new(crate::deploy::tests::ctx()));
+        events.start(&sim.world, &mut sim.rng);
+        sim.add_system(events);
+        sim
+    }
+
+    fn named<'a>(w: &'a World, name: &str) -> &'a crate::UnitState {
+        w.units.iter().find(|u| u.unit.name == name).unwrap()
+    }
+
+    /// `add_division` before any `add_corps` goes to the pool at full
+    /// organisation; `add_corps` makes an empty corps under leader 7, and
+    /// the land divisions after it join it at half organisation (model
+    /// `when` at most the last, a negative one the newest; `where` a
+    /// brigade of the newest model or a strength loss); a ship stays in the
+    /// pool. `sleepleader` takes 8 off his corps.
+    #[test]
+    fn units_and_leaders_from_events() {
+        let text = r#"event = { id = 1 country = GER date = { day = 1 month = january year = 1936 }
+            action_a = {
+              command = { type = add_division which = "1. Miliz" value = militia when = 0 }
+              command = { type = add_corps which = "Korps" value = land when = 7 where = 2 }
+              command = { type = add_division which = "1. ID" value = infantry when = 5 where = artillery }
+              command = { type = add_division value = infantry when = -1 where = -80 }
+              command = { type = add_division which = "Kreuzer" value = heavy_cruiser }
+              command = { type = add_corps which = "Luftflotte" value = air where = 4 }
+              command = { type = add_division which = "Jaeger" value = interceptor }
+              command = { type = sleepleader which = 8 }
+              command = { type = sleepleader which = 99 }
+            } }"#;
+        let mut sim = unit_sim(text, 1);
+        let ger = sim.world.countries.get_mut("GER").unwrap();
+        ger.newest_models.insert("infantry".into(), 1);
+        ger.newest_models.insert("artillery".into(), 1);
+        sim.run_days(2);
+        let w = &sim.world;
+        let pool: Vec<(&str, &str, Option<f64>)> = w.countries["GER"]
+            .undeployed
+            .iter()
+            .map(|u| match u {
+                Undeployed::Division(d) => (d.name.as_str(), d.kind.as_str(), d.organisation),
+                Undeployed::Brigade { .. } => unreachable!(),
+            })
+            .collect();
+        assert_eq!(
+            pool,
+            [
+                ("1. Miliz", "militia", Some(20.0)),
+                ("Kreuzer", "heavy_cruiser", Some(50.0))
+            ]
+        );
+        let korps = named(w, "Korps");
+        assert_eq!((korps.unit.location, korps.unit.leader), (Some(2), Some(7)));
+        assert_eq!(w.leaders[&7].unit, Some(w.units.len() - 2));
+        type Row<'a> = (&'a str, Option<i64>, Option<f64>, Option<f64>);
+        let d: Vec<Row> = korps
+            .unit
+            .divisions
+            .iter()
+            .map(|d| (d.name.as_str(), d.model, d.organisation, d.strength))
+            .collect();
+        assert_eq!(
+            d,
+            [
+                ("1. ID", Some(1), Some(20.0), Some(100.0)),
+                ("", Some(1), Some(20.0), Some(20.0))
+            ]
+        );
+        assert_eq!(
+            korps.unit.divisions[0].brigades,
+            [dh_data::Brigade {
+                kind: "artillery".into(),
+                model: Some(1)
+            }]
+        );
+        assert!(korps.unit.divisions.iter().all(|d| d.id.is_some()));
+        // The air group took the interceptor.
+        let air = named(w, "Luftflotte");
+        assert_eq!((air.unit.branch, air.unit.base), (Branch::Air, Some(4)));
+        assert_eq!(air.unit.divisions[0].organisation, Some(25.0));
+        // 8 sleeps; his corps has no leader; 99 is no leader (invalid).
+        assert!(w.leaders[&8].dormant && w.leaders[&8].unit.is_none());
+        assert_eq!(named(w, "Garde").unit.leader, None);
+        let e = sim_events(&sim);
+        assert_eq!(e.stats.commands, 8);
+        assert!(e.stats.commands_unmodelled.is_empty(), "{:?}", e.stats);
+        let mut e = Events::new(db(text));
+        let mut rng = Rng::new(1);
+        let leader =
+            |e: &mut Events, id, rng: &mut Rng| e.eval(&Trigger::Leader(id), "FRA", w, rng);
+        assert!(leader(&mut e, 7, &mut rng) && !leader(&mut e, 8, &mut rng));
+        assert!(!leader(&mut e, 99, &mut rng));
+
+        // Woken up, he is in play again; a sleeping leader takes no corps.
+        let text = r#"event = { id = 1 country = GER date = { day = 1 month = january year = 1936 }
+            action_a = {
+              command = { type = add_corps which = "A" value = land when = 8 where = 1 }
+              command = { type = wakeleader which = 8 }
+              command = { type = wakeleader which = 7 }
+              command = { type = add_corps which = "B" value = naval when = 8 where = 3 }
+            } }"#;
+        let mut sim = unit_sim(text, 1);
+        sim.world.sleep_leader(8);
+        assert!(sim.world.dormant_leaders.contains(&8));
+        sim.run_days(2);
+        let w = &sim.world;
+        assert_eq!(named(w, "A").unit.leader, None);
+        assert_eq!(named(w, "B").unit.leader, Some(8));
+        assert!(!w.leaders[&8].dormant && w.dormant_leaders.is_empty());
+        assert_eq!(sim_events(&sim).stats.commands, 3, "7 is awake");
+    }
+
+    /// Each `delete_unit which = −1` draws one of the country's land stacks
+    /// when the event fires; two may draw the same one, and the second is
+    /// then skipped. Without air stacks `which = −3` is invalid. A stack
+    /// named by its ID is deleted too.
+    #[test]
+    fn delete_unit_draws_stacks_when_the_event_fires() {
+        let text = r#"event = { id = 1 country = GER date = { day = 1 month = january year = 1936 }
+            action_a = {
+              command = { type = dissent value = 1 }
+              command = { type = delete_unit which = -1 }
+              command = { type = delete_unit which = -1 }
+              command = { type = delete_unit which = -3 }
+              command = { type = delete_unit which = -2 }
+            } }"#;
+        let mut outcomes = BTreeSet::new();
+        for seed in 0..24 {
+            let mut sim = unit_sim(text, seed);
+            for p in [2, 3] {
+                sim.world.create_stack("GER", Branch::Land, Some(p), "");
+            }
+            let fleet = sim.world.create_stack("GER", Branch::Naval, Some(3), "");
+            let n = sim.world.units.len();
+            sim.run_days(2);
+            let w = &sim.world;
+            let gone = (0..n).filter(|&s| !w.stack_exists(s)).count();
+            assert!(!w.stack_exists(fleet));
+            outcomes.insert(gone);
+            // The dissent, each land deletion that found its stack, the
+            // fleet's.
+            assert_eq!(sim_events(&sim).stats.commands as usize, gone + 1);
+            // Leader 8 is back with his country when his corps goes.
+            if !w.stack_exists(0) {
+                assert_eq!(w.leaders[&8].unit, None);
+            }
+        }
+        assert_eq!(outcomes, BTreeSet::from([2, 3]));
+
+        let mut w = unit_world();
+        let s = w.create_stack("FRA", Branch::Land, Some(6), "");
+        let id = w.units[s].unit.id.unwrap();
+        assert_eq!(id.kind, crate::deploy::UNIT_ID_TYPE);
+        let text = format!(
+            "event = {{ id = 1 country = GER date = {{ day = 1 month = january year = 1936 }}
+               action_a = {{ command = {{ type = delete_unit which = 1 value = {} }} }} }}",
+            id.id
+        );
+        let mut sim = unit_sim_with(w, &text, 1);
+        sim.run_days(2);
+        assert!(!sim.world.stack_exists(s));
+    }
+
+    /// `remove_division` finds the division by name (letter case aside)
+    /// in the country's stacks, over which its pool wins, whatever the
+    /// event's country; a stack it empties is deleted after the action;
+    /// a name it does not find makes the command invalid.
+    #[test]
+    fn remove_division_by_name() {
+        let mut w = unit_world();
+        let ctx = crate::deploy::tests::ctx();
+        let a = w.create_stack("GER", Branch::Land, Some(1), "A");
+        let b = w.create_stack("GER", Branch::Land, Some(2), "B");
+        for (s, name) in [(a, "Littorio"), (a, "X"), (b, "Fiamme Nere")] {
+            let i = w
+                .add_pool_division(&ctx, "GER", "infantry", 0, None, name)
+                .unwrap();
+            assert!(w.deploy_into(&ctx, "GER", i, s));
+        }
+        w.add_pool_division(&ctx, "GER", "militia", 0, None, "littorio")
+            .unwrap();
+        // `delete_unit` needs a stack of the event's country.
+        w.create_stack("FRA", Branch::Land, Some(6), "");
+        // Until the event fires, the names are not looked up: the dissent
+        // makes the action available.
+        let text = format!(
+            r#"event = {{ id = 1 country = FRA date = {{ day = 1 month = january year = 1936 }}
+            action_a = {{
+              command = {{ type = dissent value = 1 }}
+              command = {{ type = remove_division which = "LITTORIO" value = GER }}
+              command = {{ type = remove_division which = "Fiamme Nere" value = GER }}
+              command = {{ type = remove_division which = "Penne Nere" value = GER }}
+              command = {{ type = delete_unit which = 1 value = {} }}
+            }} }}"#,
+            w.units[b].unit.id.unwrap().id
+        );
+        let mut sim = unit_sim_with(w, &text, 1);
+        sim.run_days(2);
+        let w = &sim.world;
+        assert!(w.countries["GER"].undeployed.is_empty());
+        let names: Vec<&str> = w.units[a]
+            .unit
+            .divisions
+            .iter()
+            .map(|d| d.name.as_str())
+            .collect();
+        assert_eq!(names, ["Littorio", "X"]);
+        assert!(!w.stack_exists(b));
+        // The emptied stack was still there for `delete_unit`: the
+        // deletion waits for the end of the action. "Penne Nere" is not
+        // found.
+        assert_eq!(sim_events(&sim).stats.commands, 4);
+    }
+
+    /// `build_division` orders the newest models when the manpower of one
+    /// unit is there; the convoy pools take `int(value)`, without a floor;
+    /// `steal_tech` gives a blueprint of a technology the other country
+    /// knows.
+    #[test]
+    fn production_orders_and_pools_from_events() {
+        let text = r#"event = { id = 1 country = GER date = { day = 1 month = january year = 1936 }
+            action_a = {
+              command = { type = build_division which = infantry value = artillery when = 3 name = "Serie" }
+              command = { type = build_division which = infantry name = "Solo" }
+              command = { type = build_division which = militia cost = -2.5 }
+              command = { type = transport_pool which = -1 value = 25.7 }
+              command = { type = escort_pool which = FRA value = -5 }
+              command = { type = steal_tech which = FRA }
+            } }"#;
+        let mut sim = unit_sim(text, 1);
+        let ger = sim.world.countries.get_mut("GER").unwrap();
+        ger.newest_models.insert("infantry".into(), 1);
+        ger.newest_models.insert("artillery".into(), 1);
+        ger.stock.manpower = 4.0;
+        ger.techs = BTreeSet::from([10]);
+        sim.world.countries.get_mut("FRA").unwrap().techs = BTreeSet::from([10, 20]);
+        sim.run_days(2);
+        let w = &sim.world;
+        let ger = &w.countries["GER"];
+        let q: Vec<(&str, i32, f32, f32)> = ger
+            .production
+            .iter()
+            .map(|i| (i.name.as_str(), i.size, i.ic, i.manpower))
+            .collect();
+        // The militia goes first (a negative cost), the series has no name.
+        assert_eq!(
+            q,
+            [("", 1, 2.5, 1.0), ("", 3, 5.0, 2.0), ("Solo", 1, 5.0, 1.0)]
+        );
+        let dh_data::production::Build::Division {
+            model, brigades, ..
+        } = &ger.production[1].build
+        else {
+            panic!()
+        };
+        assert_eq!(*model, 1);
+        assert_eq!(brigades[0].as_ref().map(|b| b.model), Some(Some(1)));
+        assert_eq!(ger.stock.manpower, 0.0);
+        assert_eq!(ger.stock.transports, 25.0);
+        assert_eq!(w.countries["FRA"].stock.escorts, -5.0);
+        assert!(ger.research.blueprints.contains(&20));
+
+        // Without the manpower of one unit nothing is ordered.
+        let mut sim = unit_sim(text, 1);
+        sim.world.countries.get_mut("GER").unwrap().stock.manpower = 0.5;
+        sim.run_days(2);
+        assert!(sim.world.countries["GER"].production.is_empty());
+    }
+
+    /// Without the unit data the division commands are counted as not
+    /// modelled.
+    #[test]
+    fn division_commands_need_the_unit_data() {
+        let text = "event = { id = 1 country = GER date = { day = 1 month = january year = 1936 }
+            action_a = { command = { type = add_division value = infantry }
+                         command = { type = build_division which = infantry } } }";
+        let (mut sim, _) = sim(text, 1);
+        sim.run_days(2);
+        let e = sim_events(&sim);
+        assert_eq!(e.stats.commands_unmodelled["add_division"], 1);
+        assert_eq!(e.stats.commands_unmodelled["build_division"], 1);
     }
 }

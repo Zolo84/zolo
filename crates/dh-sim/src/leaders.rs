@@ -7,6 +7,12 @@
 //! human players are not either, so every country promotes its leaders by
 //! date the way the AI does. Leaders whose `End Year` has passed are not
 //! taken out of play (the game marks them unavailable, §2.3.3).
+//!
+//! Leaders sleep and wake (`re/units-events/units-events.md` §3): the
+//! scenarios' `dormant_leaders` and the event commands `sleepleader` /
+//! `wakeleader` ([`World::sleep_leader`], [`World::wake_leader`]); a
+//! sleeping leader commands nothing, takes no stack and fails the `leader`
+//! trigger ([`LeaderState::available`]).
 
 use crate::movement::MoveContext;
 use crate::params::Params;
@@ -48,6 +54,9 @@ pub struct LeaderState {
     pub retirement_year: Option<i32>,
     /// The stack it commands (index into `World::units`).
     pub unit: Option<usize>,
+    /// Asleep (`+0x2C`): listed in a scenario's `dormant_leaders` or put to
+    /// sleep by `sleepleader`.
+    pub dormant: bool,
 }
 
 impl LeaderState {
@@ -73,6 +82,7 @@ impl LeaderState {
             traits: data.traits,
             retirement_year: data.retirement_year,
             unit: None,
+            dormant: false,
         };
         leader.set_skill(data.skill);
         leader.promote_by_date(year);
@@ -95,7 +105,16 @@ impl LeaderState {
             traits: 0,
             retirement_year: None,
             unit: None,
+            dormant: false,
         }
+    }
+
+    /// Whether it is in play (`0x732750`, the `leader` trigger, and the
+    /// check of `0x47BD80`): not asleep (`+0x2C`), not retired (`+0x2D`;
+    /// here a retired leader has no country) and with a country (`+0x62`)
+    /// or a stack (`+0x5E`).
+    pub fn available(&self) -> bool {
+        !self.dormant && (!self.country.is_empty() || self.unit.is_some())
     }
 
     pub fn has_trait(&self, mask: u32) -> bool {
@@ -216,13 +235,24 @@ impl World {
     /// Puts every CSV leader into play with its rank for the current year,
     /// then gives each stack the leader its scenario `leader = N` names
     /// (§2.3.2): the leader takes the stack owner's country; unknown or
-    /// already assigned IDs are reported and dropped.
+    /// already assigned IDs are reported and dropped. A leader in the
+    /// global set of sleeping leaders ([`World::dormant_leaders`]: the
+    /// scenario's `dormant_leaders`) starts asleep (`0x782440`, `0x76DED0`).
+    /// Every leader has his CSV country from the start, whether it exists
+    /// yet or not (the game gives a leader the country only once it exists,
+    /// `0x76DFA0`; whether a country made in game, such as Nationalist
+    /// Spain, gets its leaders before its first events is not traced).
     pub fn add_leaders(&mut self, leaders: &Leaders) -> Vec<String> {
         let year = self.date.year;
+        let asleep = self.dormant_leaders.clone();
         self.leaders = leaders
             .by_id
             .values()
-            .map(|l| (l.id, LeaderState::new(l, year)))
+            .map(|l| {
+                let mut state = LeaderState::new(l, year);
+                state.dormant = asleep.contains(&l.id);
+                (l.id, state)
+            })
             .collect();
         let mut conflicts = Vec::new();
         for i in 0..self.units.len() {
@@ -264,6 +294,73 @@ impl World {
                 leader.promote_by_date(year);
             }
         }
+    }
+
+    /// Message 0x10B (`0x47BD80`, units-events.md §1.2): leader `id` takes
+    /// command of `stack` when he is in play ([`LeaderState::available`]);
+    /// he leaves the stack he commanded, the stack's old leader goes back
+    /// to his country, and he becomes the stack owner's (`0x47BF02`,
+    /// `0x50A1D0`: another country's leader moves over). For a human
+    /// owner the stack's divisions would lose 20 % of their organisation
+    /// (`0x47BF2D`; every country is the AI's here). Returns whether he
+    /// took it.
+    pub fn assign_leader(&mut self, id: i64, stack: usize) -> bool {
+        if stack >= self.units.len() || !self.leaders.get(&id).is_some_and(|l| l.available()) {
+            return false;
+        }
+        let owner = self.units[stack].owner.clone();
+        let l = self.leaders.get_mut(&id).unwrap();
+        if let Some(old) = l.unit.replace(stack) {
+            self.units[old].unit.leader = None;
+        }
+        l.country = owner;
+        if let Some(prev) = self.units[stack].unit.leader.replace(id) {
+            if prev != id {
+                if let Some(p) = self.leaders.get_mut(&prev) {
+                    p.unit = None;
+                }
+            }
+        }
+        true
+    }
+
+    /// Whether `sleepleader` (`sleep`) or `wakeleader` may act on leader
+    /// `id` (`0x7102E0`, cases `0x7111DF` / `0x711184`): he exists, has a
+    /// country or a stack, is not retired and is awake / asleep.
+    pub fn can_sleep_leader(&self, id: i64, sleep: bool) -> bool {
+        self.leaders
+            .get(&id)
+            .is_some_and(|l| (!l.country.is_empty() || l.unit.is_some()) && l.dormant != sleep)
+    }
+
+    /// KILL_LEADER 0x91 (`0x47C0B0`, the event command `sleepleader`): the
+    /// leader leaves the stack he commands (it fights under its built-in
+    /// leader, and its battles pick their commanders anew) and falls
+    /// asleep, joining the set of sleeping leaders; he keeps his country
+    /// and retirement year.
+    pub fn sleep_leader(&mut self, id: i64) {
+        let Some(l) = self.leaders.get_mut(&id) else {
+            return;
+        };
+        if let Some(u) = l.unit.take() {
+            if self.units[u].unit.leader == Some(id) {
+                self.units[u].unit.leader = None;
+            }
+        }
+        l.dormant = true;
+        self.dormant_leaders.insert(id);
+    }
+
+    /// ACTIVATE_LEADER 0x8E without a stack (`0x482B60`, the event command
+    /// `wakeleader`): the leader wakes up and leaves the set of sleeping
+    /// leaders (and his country's leader file list `C+0x11806`, not
+    /// modelled).
+    pub fn wake_leader(&mut self, id: i64) {
+        let Some(l) = self.leaders.get_mut(&id) else {
+            return;
+        };
+        l.dormant = false;
+        self.dormant_leaders.remove(&id);
     }
 
     /// The leader a stack fights under (`0x51C220`): its own, or the

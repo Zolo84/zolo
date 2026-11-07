@@ -124,6 +124,11 @@ pub struct ProvinceSetup {
     pub weather: Option<crate::Weather>,
     /// Victory points (`points`, the province's `+0x19E`), when set.
     pub points: Option<i64>,
+    /// Naval and air base levels (`naval_base`, `air_base`: building
+    /// slots 7 and 6, `0x4ECC40` / `0x4ECC30`), when the block sets them.
+    /// A province's buildings may come in several blocks.
+    pub naval_base: Option<f64>,
+    pub air_base: Option<f64>,
 }
 
 impl ProvinceSetup {
@@ -144,6 +149,8 @@ impl ProvinceSetup {
             ic: b.get("ic").map(|_| size("ic")),
             weather: b.get_str("weather").and_then(crate::Weather::from_name),
             points: b.get_i64("points"),
+            naval_base: b.get("naval_base").map(|_| size("naval_base")),
+            air_base: b.get("air_base").map(|_| size("air_base")),
         })
     }
 }

@@ -98,6 +98,8 @@ pub struct ProvinceInfo {
     /// Its `Continent`: equal numbers for equal names (case aside), 0 for
     /// none.
     pub continent: u8,
+    /// `Port Allowed` (the province's port flag `+0x46A`).
+    pub port: bool,
 }
 
 impl ProvinceInfo {
@@ -242,6 +244,7 @@ impl MoveContext {
                 energy: amount("energy"),
                 rare_materials: amount("rare materials"),
                 continent,
+                port: num("port allowed").is_some_and(|v| v != 0),
             });
         }
 

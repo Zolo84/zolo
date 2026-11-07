@@ -660,6 +660,9 @@ pub struct Command {
     pub value: Option<String>,
     pub when: Option<String>,
     pub where_: Option<String>,
+    /// `name` and `cost` (`cmd+0x16E`), which `build_division` reads.
+    pub name: Option<String>,
+    pub cost: Option<String>,
     /// The command's own `trigger` (`cmd+0x13E`): a false one makes the
     /// command invalid.
     pub trigger: Option<Trigger>,
@@ -681,6 +684,8 @@ impl Command {
             value: text("value"),
             when: text("when"),
             where_: text("where"),
+            name: text("name"),
+            cost: text("cost"),
             trigger: has_trigger.then_some(Trigger::And(triggers)),
             line,
         }

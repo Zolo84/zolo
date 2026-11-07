@@ -194,12 +194,31 @@ impl World {
     }
 
     /// Gives every war and alliance without one an ID and moves the
-    /// counter past the highest.
+    /// counter past the highest; likewise for stacks and divisions with
+    /// IDs of [`crate::deploy::UNIT_ID_TYPE`] (those without one get one).
     pub(crate) fn assign_ids(&mut self) {
         let d = &self.diplomacy;
         let wars = d.wars.iter().filter_map(|w| w.id);
         let max = wars.chain(d.alliances.iter().filter_map(|a| a.id));
         self.next_id = self.next_id.max(max.map(|i| i.id).max().unwrap_or(0));
+        let units = self.units.iter().flat_map(|u| {
+            let divisions = u.unit.divisions.iter().map(|d| d.id);
+            std::iter::once(u.unit.id).chain(divisions)
+        });
+        let own = units
+            .flatten()
+            .filter(|i| i.kind == crate::deploy::UNIT_ID_TYPE);
+        self.next_id = self.next_id.max(own.map(|i| i.id).max().unwrap_or(0));
+        for i in 0..self.units.len() {
+            if self.units[i].unit.id.is_none() {
+                self.units[i].unit.id = Some(self.new_unit_id());
+            }
+            for k in 0..self.units[i].unit.divisions.len() {
+                if self.units[i].unit.divisions[k].id.is_none() {
+                    self.units[i].unit.divisions[k].id = Some(self.new_unit_id());
+                }
+            }
+        }
         for i in 0..self.diplomacy.wars.len() {
             if self.diplomacy.wars[i].id.is_none() {
                 self.diplomacy.wars[i].id = Some(self.new_id(WAR_ID_TYPE));
@@ -212,7 +231,7 @@ impl World {
         }
     }
 
-    fn new_id(&mut self, kind: i64) -> TypeId {
+    pub(crate) fn new_id(&mut self, kind: i64) -> TypeId {
         self.next_id += 1;
         TypeId {
             kind,

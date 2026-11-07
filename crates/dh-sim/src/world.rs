@@ -132,6 +132,11 @@ pub struct Country {
     /// scenario's `ai_settings = { flags = { … } }`), set by
     /// `local_setflag` / `local_clrflag`; a missing flag is 0.
     pub flags: BTreeMap<String, i32>,
+    /// The newest model of each division and brigade type it may build
+    /// (`0x44C410`, `0x44C460`): the highest `value` of the `new_model`
+    /// commands of its technologies, by type; a type without one builds
+    /// model 0.
+    pub newest_models: BTreeMap<String, i64>,
 }
 
 impl Country {
@@ -186,7 +191,14 @@ impl Country {
             regular_id: None,
             gov_type: None,
             flags: BTreeMap::new(),
+            newest_models: BTreeMap::new(),
         }
+    }
+
+    /// The newest model of a division or brigade type it may build
+    /// (`0x44C410` / `0x44C460`; [`Country::newest_models`]).
+    pub fn newest_model(&self, kind: &str) -> i64 {
+        self.newest_models.get(kind).copied().unwrap_or(0)
     }
 }
 
@@ -218,6 +230,11 @@ pub struct World {
     pub battles: Vec<crate::Battle>,
     /// Leaders by ID, once loaded with [`World::load_leaders`].
     pub leaders: BTreeMap<i64, crate::LeaderState>,
+    /// The sleeping leaders (`[0xD61340]+0x1C574`, units-events-verify
+    /// §8-bis): the scenario's `dormant_leaders` of every country block;
+    /// `sleepleader` adds to it, `wakeleader` takes out
+    /// ([`World::sleep_leader`], [`World::wake_leader`]).
+    pub dormant_leaders: BTreeSet<i64>,
     /// Constants from `db/misc.txt`; set them with [`World::set_params`].
     pub params: crate::Params,
     /// Weather by province id (weather.md §1); provinces past the end are clear.
@@ -248,6 +265,15 @@ pub struct World {
     /// index (`dh_data::production::BUILDINGS`): the levels it added.
     /// Province buildings are not modelled otherwise.
     pub buildings_built: BTreeMap<u32, [f32; 11]>,
+    /// Building levels the scenario's `province` blocks set, by building
+    /// index; only the naval and air bases are read
+    /// ([`World::building_level`]).
+    pub province_buildings: BTreeMap<u32, [f32; 11]>,
+    /// Countries whose production finished a series of divisions or
+    /// brigades since [`crate::Deployment`] last looked: the AI deploys
+    /// its ships, aircraft and brigades at once (`0x478A95`,
+    /// [`crate::deploy`]).
+    pub deploy_requests: Vec<String>,
     /// Guarantees as `(guarantor, guaranteed)` with the day given (the
     /// guarantor's relation record about the other, `rec+0xE`): the
     /// scenario's `relation = { tag = B guaranteed = { … } }` in A's
@@ -337,6 +363,7 @@ impl World {
             access: BTreeSet::new(),
             battles: Vec::new(),
             leaders: BTreeMap::new(),
+            dormant_leaders: BTreeSet::new(),
             params: crate::Params::default(),
             weather: Vec::new(),
             weather_fronts: Vec::new(),
@@ -350,6 +377,8 @@ impl World {
             rules: dh_data::Rules::default(),
             production_costs: dh_data::ProductionCosts::default(),
             buildings_built: BTreeMap::new(),
+            province_buildings: BTreeMap::new(),
+            deploy_requests: Vec::new(),
             guarantees: BTreeMap::new(),
             points: BTreeMap::new(),
             continents: Vec::new(),
@@ -561,6 +590,8 @@ impl World {
             let country = world.countries.get_mut(&c.tag).unwrap();
             country.research.blueprints = ids("blueprints");
             country.research.deactivated = ids("deactivate");
+            // `0x781466`: into the global set, whichever country lists them.
+            world.dormant_leaders.extend(ids("dormant_leaders"));
             for &p in &c.owned {
                 if let Some(prev) = world.owner.insert(p, c.tag.clone()) {
                     conflicts.push(format!("province {p} owned by both {prev} and {}", c.tag));
@@ -599,6 +630,12 @@ impl World {
             }
             if let Some(vp) = p.points {
                 world.points.insert(p.id, vp);
+            }
+            let slots = [(7, p.naval_base), (6, p.air_base)];
+            for (b, level) in slots {
+                if let Some(x) = level {
+                    world.province_buildings.entry(p.id).or_insert([0.0; 11])[b] = x as f32;
+                }
             }
         }
         // Provinces without an explicit controller are controlled by their owner.
@@ -651,8 +688,9 @@ impl World {
     /// `+= value · 0.01`), `research_mod` (`+= value · 0.01f`, at least
     /// 0.01), `building_prod_mod` / `convoy_prod_mod` (`−= value · 0.01`,
     /// at least 0.1), `industrial_multiplier which = energy_to_oil` (set to
-    /// `value`), and `deactivate` / `activate` (the technology `which`
-    /// joins or leaves the deactivated list).
+    /// `value`), `deactivate` / `activate` (the technology `which`
+    /// joins or leaves the deactivated list) and `new_model` (model `value`
+    /// of type `which` may be built, [`Country::newest_models`]).
     pub fn apply_tech_commands(&mut self, tag: &str, commands: &[Command]) {
         for command in commands {
             self.apply_tech_command(tag, command);
@@ -741,6 +779,16 @@ impl World {
                 if let Ok(id) = which.trim().parse::<i64>() {
                     country.research.deactivated.remove(&id);
                 }
+            }
+            // A model of type `which` may be built: the newest is the
+            // highest (assumed).
+            "new_model" if !which.trim().is_empty() => {
+                let m = command.value.unwrap_or(0.0) as i64;
+                let e = country
+                    .newest_models
+                    .entry(which.trim().to_ascii_lowercase())
+                    .or_insert(m);
+                *e = (*e).max(m);
             }
             _ => return false,
         }

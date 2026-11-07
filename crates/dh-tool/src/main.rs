@@ -506,13 +506,15 @@ fn march(args: &Args) -> Result<(), String> {
     );
     // Event checks due on a day run in its first hour, before the other
     // systems; the day's economy (with the production queue) comes before
-    // its IC, TC and supply efficiency, and those before reinforcement;
-    // research ends the day.
+    // the AI's deployment of the pools, then the IC, TC and supply
+    // efficiency, and those before reinforcement; research ends the day.
     sim.add_system(events);
     let mut economy = dh_sim::Economy::new(ctx.clone());
     economy.difficulty = dh_data::Difficulty::load(&vfs).unwrap_or_default();
     research.difficulty = economy.difficulty.clone();
     sim.add_system(economy);
+    // The AI puts what production and events add to the pools on the map.
+    sim.add_system(dh_sim::Deployment::new(ctx.clone()));
     sim.add_system(dh_sim::Logistics::new(ctx.clone()));
     sim.add_system(dh_sim::Reinforce::new(ctx.clone()));
     sim.add_system(dh_sim::WeatherSystem::new(ctx.clone()));
