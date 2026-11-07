@@ -183,7 +183,8 @@ G := misc ai[24] (ваніль 85)
 | `activate` / `deactivate` | технологія стає / перестає бути деактивованою (research.md) |
 | `gain_tech` (15) | дає **креслення**, а не саму технологію |
 | `free_*` (≈ 550) | постійний щоденний «позакартовий» дохід ресурсу |
-| `delete_unit`, `add_division`, `build_division`, `add_corps`, `construct`, `capital`, `province_revoltrisk` | 🔎 |
+| `delete_unit`, `add_division`, `build_division`, `add_corps`, `remove_division` | юніти: units-events.md §1 |
+| `construct`, `capital`, `province_revoltrisk` | 🔎 |
 
 19 типів команд без обробника (population, resistance, trade_resource тощо) нічого не роблять.
 
@@ -211,10 +212,15 @@ G := misc ai[24] (ваніль 85)
 Спрощення: `random = N` і перезасівання гри — детермінований `Rng`; перевірки одного дня — у порядку постановки;
 `offset = 0` з повтором чекає добу; рандомні події не запускаються (усі країни — ШІ); не змодельовані тригери
 (`land_percentage`, гарнізон за областю, кількість дивізій тощо) дають хибу, а не змодельовані команди (`ai`,
-`peacetime_ic_mod`, `free_*`, юніти) лише рахуються. Тригери й команди міністрів, уряду й політики — за
+`peacetime_ic_mod`, `free_*`, `convoy`, `resource`) лише рахуються. Тригери й команди міністрів, уряду й політики — за
 cabinet.md (`dh-sim::cabinet`). Дипломатичні команди (`war`, `peace`, `alliance`, `leave_alliance`, `inherit`, `make_puppet`,
 `end_mastery`, `independence`, `civil_war`, `control`, `secedeprovince`) і тригер `guarantee` — за правилами
-`dh-sim::diplomacy` (злиття воєн, союзники в чергу планувальника, `make_puppet` відкладена).
+`dh-sim::diplomacy` (злиття воєн, союзники в чергу планувальника, `make_puppet` відкладена). Команди юнітів
+(`add_corps`, `add_division`, `build_division`, `delete_unit`, `remove_division`, `steal_tech`, `transport_pool`,
+`escort_pool`), генерали (`sleepleader`, `wakeleader`, тригер `leader`) і розгортання пулу ШІ — за
+units-events.md (`dh-sim::events`, `dh-sim::deploy`, `dh-sim::leaders`): випадкові аргументи
+розв'язуються при спрацюванні (`0x70D1E0`, до перевірки доступності), `delete_unit`, `remove_division` і команди
+юнітів — негайні, порожній після `remove_division` стек і `transport_pool` / `escort_pool` / `steal_tech` — у черзі.
 
 ## 7. Відкриті питання
 1. Порядок повідомлень з однаковою міткою часу й година доби, коли перевіряються події, відносно добового обробника
